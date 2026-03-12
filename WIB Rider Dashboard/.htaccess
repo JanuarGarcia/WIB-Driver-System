@@ -1,0 +1,9 @@
+# Proxy /api and /uploads to the Rider Dashboard Node app so API requests
+# return JSON instead of HTML. Adjust 3002 to match your Node app port (see
+# server.js: PORT / DASHBOARD_PORT, or cPanel Node.js application port).
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteBase /
+  RewriteCond %{REQUEST_URI} ^/(api|uploads)/ [NC]
+  RewriteRule ^(.*)$ http://127.0.0.1:3002/$1 [P,L]
+</IfModule>

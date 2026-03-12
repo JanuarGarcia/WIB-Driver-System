@@ -19,6 +19,17 @@ npm start
 
 3. Open **http://localhost:3001** in the browser.
 
+## Live deployment (cPanel / Apache)
+
+If the dashboard is served by Apache and the Node app runs separately, requests to `/api` can return HTML (e.g. the SPA’s `index.html`) instead of JSON, so Settings save fails with “Server returned HTML instead of JSON.”
+
+**Fix:** Deploy the included **`.htaccess`** in the **document root** for the dashboard domain (same folder as your deployed app). It proxies `/api` and `/uploads` to the Node server so API calls hit the app.
+
+- **Port:** `.htaccess` uses `127.0.0.1:3002` by default. If your Node app runs on another port (e.g. the one cPanel assigns), edit `.htaccess` and change `3002` to that port.
+- If you get a 500 error, your host may not allow proxy in `.htaccess`. Then either run the Node app as the main handler for the domain (so it receives all requests) or ask the host to add a proxy for `/api` to your Node port in the server config.
+
+After deploying `.htaccess`, restart the Node app and try saving Settings again.
+
 ## Features
 
 - **Dashboard** – driver stats (total, active, offline)

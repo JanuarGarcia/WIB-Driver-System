@@ -9,7 +9,7 @@ const path = require('path');
 const axios = require('axios');
 
 const app = express();
-const PORT = process.env.DASHBOARD_PORT || 3002;
+const PORT = process.env.PORT || process.env.DASHBOARD_PORT || 3002;
 const BACKEND_URL = (process.env.BACKEND_URL || 'http://localhost:3000').replace(/\/$/, '');
 const ADMIN_SECRET = process.env.ADMIN_SECRET || '';
 

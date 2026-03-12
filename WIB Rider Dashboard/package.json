@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node server.js",
     "dev": "concurrently -n api,vite \"node server.js\" \"npm run dev:client\"",
-    "build": "cd client && npm install && npm run build",
+    "build": "cd client && npm install --include=dev && npm run build",
     "dev:client": "cd client && npm run dev"
   },
   "dependencies": {
