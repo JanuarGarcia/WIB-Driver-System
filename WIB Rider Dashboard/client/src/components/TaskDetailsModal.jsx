@@ -1,0 +1,631 @@
+import { useState, useEffect } from 'react';
+import { api, formatDate, statusDisplayClass } from '../api';
+
+/** Normalize photo filename: strip duplicate extension (e.g. .jpg.jpg -> .jpg). */
+function normalizePhotoName(photoName) {
+  if (!photoName || typeof photoName !== 'string') return '';
+  const s = photoName.trim();
+  let name = s;
+  const doubleExt = /\.(jpg|jpeg|png|gif|webp)\.(jpg|jpeg|png|gif|webp)$/i.exec(s);
+  if (doubleExt) name = s.slice(0, -(doubleExt[1].length + 1));
+  return name;
+}
+
+/** Build task photo URL. Tries task_photos subfolder first; use tryRootOnError to also try /uploads/{name} when the first 404s. */
+function taskPhotoUrl(photoName, useRoot = false) {
+  if (!photoName || typeof photoName !== 'string') return '';
+  const s = photoName.trim();
+  if (s.startsWith('http') || s.startsWith('/')) return s;
+  const name = normalizePhotoName(s);
+  if (!name) return '';
+  if (useRoot) return `/uploads/${encodeURIComponent(name)}`;
+  return `/uploads/task_photos/${encodeURIComponent(name)}`;
+}
+
+/** Renders proof-of-delivery image. Uses /api/task-photos/:id/image when photoId is set (image from DB); otherwise tries uploads paths. */
+function TaskPhotoImage({ photoId, photoName }) {
+  const [useRoot, setUseRoot] = useState(false);
+  const apiImageUrl = photoId ? `/api/task-photos/${encodeURIComponent(photoId)}/image` : null;
+  const uploadsUrl = taskPhotoUrl(photoName, useRoot);
+  const url = apiImageUrl || uploadsUrl;
+  return (
+    <div className="activity-timeline-photo-wrap">
+      <a href={url} target="_blank" rel="noopener noreferrer" className="activity-timeline-photo-link">
+        <img
+          src={url}
+          alt="Proof of delivery"
+          className="activity-timeline-photo"
+          loading="lazy"
+          onError={() => { if (!useRoot && !apiImageUrl) setUseRoot(true); }}
+        />
+      </a>
+    </div>
+  );
+}
+
+const TASK_STATUS_OPTIONS = ['unassigned', 'assigned', 'acknowledged', 'started', 'inprogress', 'successful', 'failed', 'declined', 'cancelled', 'canceled', 'delivered', 'completed'];
+
+export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTaskDeleted, onShowDirections }) {
+  const [data, setData] = useState(null);
+  const [orderHistory, setOrderHistory] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [tab, setTab] = useState('details');
+  const [error, setError] = useState(null);
+  const [actionLoading, setActionLoading] = useState(false);
+  const [assignOpen, setAssignOpen] = useState(false);
+  const [teams, setTeams] = useState([]);
+  const [drivers, setDrivers] = useState([]);
+  const [assignTeamId, setAssignTeamId] = useState('');
+  const [assignDriverId, setAssignDriverId] = useState('');
+  const [changeStatusOpen, setChangeStatusOpen] = useState(false);
+  const [changeStatusValue, setChangeStatusValue] = useState('');
+  const [changeStatusReason, setChangeStatusReason] = useState('');
+  const [editOpen, setEditOpen] = useState(false);
+  const [editForm, setEditForm] = useState({ task_description: '', delivery_address: '', customer_name: '', contact_number: '', delivery_date: '', email_address: '' });
+
+  useEffect(() => {
+    if (!taskId) {
+      setData(null);
+      setOrderHistory([]);
+      setError(null);
+      setTab('details');
+      return;
+    }
+    setData(null);
+    setOrderHistory([]);
+    setError(null);
+    setTab('details');
+    setLoading(true);
+    api(`tasks/${taskId}`)
+      .then((res) => {
+        if (res && typeof res === 'object' && !res.error) {
+          setData(res);
+          const fromTask = Array.isArray(res.order_history) ? res.order_history : Array.isArray(res.mt_order_history) ? res.mt_order_history : [];
+          if (fromTask.length > 0) {
+            setOrderHistory(fromTask);
+          }
+        } else {
+          setData(null);
+          setError(res?.error || 'Failed to load task');
+        }
+      })
+      .catch((err) => {
+        setData(null);
+        setError(err?.error || err?.message || 'Failed to load task');
+      })
+      .finally(() => setLoading(false));
+  }, [taskId]);
+
+  useEffect(() => {
+    if (!taskId || !data?.task) return;
+    const fromTask = Array.isArray(data.order_history) ? data.order_history : Array.isArray(data.mt_order_history) ? data.mt_order_history : [];
+    if (fromTask.length > 0) return;
+    api(`tasks/${taskId}/order-history`)
+      .then((list) => setOrderHistory(Array.isArray(list) ? list : Array.isArray(list?.data) ? list.data : list?.order_history || []))
+      .catch(() => setOrderHistory([]));
+  }, [taskId, data?.task, data?.order_history, data?.mt_order_history]);
+
+  if (!taskId) return null;
+
+  const handleClose = () => {
+    onClose?.();
+  };
+
+  const handleAssignDriver = () => {
+    setAssignOpen(true);
+    setChangeStatusOpen(false);
+    setEditOpen(false);
+  };
+
+  useEffect(() => {
+    if (!assignOpen) return;
+    api('teams').then((t) => setTeams(Array.isArray(t) ? t : (t?.teams || []))).catch(() => setTeams([]));
+    api('drivers').then((d) => setDrivers(Array.isArray(d) ? d : (d?.drivers || []))).catch(() => setDrivers([]));
+  }, [assignOpen]);
+
+  useEffect(() => {
+    if (!assignOpen) return;
+    // Reset driver when team changes
+    setAssignDriverId('');
+  }, [assignOpen, assignTeamId]);
+
+  const doAssign = (e) => {
+    e.preventDefault();
+    const driver_id = parseInt(assignDriverId, 10);
+    const team_id = assignTeamId ? parseInt(assignTeamId, 10) : undefined;
+    if (!driver_id) return;
+    setActionLoading(true);
+    api(`tasks/${taskId}/assign`, { method: 'PUT', body: JSON.stringify({ driver_id, team_id }) })
+      .then(() => {
+        setAssignOpen(false);
+        setAssignTeamId('');
+        setAssignDriverId('');
+        // Refresh task details to reflect assignment
+        return api(`tasks/${taskId}`);
+      })
+      .then((res) => {
+        if (res && typeof res === 'object' && !res.error) setData(res);
+      })
+      .catch((err) => alert(err?.error || err?.message || 'Assign failed'))
+      .finally(() => setActionLoading(false));
+  };
+
+  const handleDelete = () => {
+    if (!window.confirm('Delete this task? This cannot be undone.')) return;
+    setActionLoading(true);
+    api(`tasks/${taskId}`, { method: 'DELETE' })
+      .then(() => { onTaskDeleted?.(); handleClose(); })
+      .catch((err) => alert(err?.error || err?.message || 'Delete failed'))
+      .finally(() => setActionLoading(false));
+  };
+
+  const handleChangeStatus = (e) => {
+    e.preventDefault();
+    const status = (changeStatusValue || '').trim();
+    if (!status) return;
+    setActionLoading(true);
+    api(`tasks/${taskId}/status`, { method: 'PUT', body: JSON.stringify({ status, reason: (changeStatusReason || '').trim() || undefined }) })
+      .then(() => { setChangeStatusOpen(false); setChangeStatusValue(''); setChangeStatusReason(''); setData((prev) => prev && prev.task ? { ...prev, task: { ...prev.task, status } } : prev); })
+      .catch((err) => alert(err?.error || err?.message || 'Update failed'))
+      .finally(() => setActionLoading(false));
+  };
+
+  const handleAssignToAll = () => {
+    if (!window.confirm('Send this task to all drivers? They will receive a push notification.')) return;
+    setActionLoading(true);
+    api(`tasks/${taskId}/assign-all`, { method: 'POST' })
+      .then(() => {})
+      .catch((err) => alert(err?.error || err?.message || 'Failed'))
+      .finally(() => setActionLoading(false));
+  };
+
+  const handleRetryAutoAssign = () => {
+    setActionLoading(true);
+    api(`tasks/${taskId}/retry-auto-assign`, { method: 'POST' })
+      .then(() => {})
+      .catch((err) => alert(err?.error || err?.message || 'Failed'))
+      .finally(() => setActionLoading(false));
+  };
+
+  const openEdit = () => {
+    const t = data?.task ?? data;
+    if (t) {
+      setEditForm({
+        task_description: t.task_description ?? '',
+        delivery_address: t.delivery_address ?? '',
+        customer_name: t.customer_name ?? '',
+        contact_number: t.contact_number ?? '',
+        delivery_date: t.delivery_date ? (typeof t.delivery_date === 'string' && t.delivery_date.length >= 10 ? t.delivery_date.slice(0, 10) : t.delivery_date) : '',
+        email_address: t.email_address ?? '',
+      });
+      setEditOpen(true);
+    }
+  };
+
+  const handleSaveEdit = (e) => {
+    e.preventDefault();
+    setActionLoading(true);
+    api(`tasks/${taskId}`, { method: 'PUT', body: JSON.stringify(editForm) })
+      .then(() => {
+        setData((prev) => prev && prev.task ? { ...prev, task: { ...prev.task, ...editForm } } : prev);
+        setEditOpen(false);
+      })
+      .catch((err) => alert(err?.error || err?.message || 'Update failed'))
+      .finally(() => setActionLoading(false));
+  };
+
+  const directionsUrl = (() => {
+    const t = data?.task ?? data;
+    if (!t) return null;
+    const pickup = (t.pickup_address || t.drop_address || t.merchant_address || '').trim();
+    const dest = (t.delivery_address || '').trim();
+    if (!dest) return null;
+    const params = new URLSearchParams({ api: '1', destination: dest });
+    if (pickup) params.set('origin', pickup);
+    return `https://www.google.com/maps/dir/?${params.toString()}`;
+  })();
+
+  const task = data && (data.task ?? data);
+  const order = data?.order ?? null;
+  const orderDetails = Array.isArray(data?.order_details) ? data.order_details : [];
+  const merchant = data?.merchant ?? null;
+  const legacyTimeline = Array.isArray(data?.order_status_timeline) ? data.order_status_timeline : [];
+  const taskPhotos = Array.isArray(data?.task_photos) ? data.task_photos : [];
+  const historyEntries = (orderHistory || [])
+    .filter(Boolean)
+    .map((row) => ({
+      type: 'history',
+      id: row.id,
+      order_id: row.order_id,
+      status: row.status,
+      remarks: row.remarks || row.remarks2,
+      date_created: row.date_created,
+      reason: row.reason,
+      update_by_name: row.update_by_name,
+      update_by_type: row.update_by_type,
+      driver_id: row.driver_id,
+      notes: row.notes,
+    }));
+  const photoEntries = taskPhotos
+    .filter(Boolean)
+    .map((row) => ({
+      type: 'photo',
+      id: `photo-${row.id}`,
+      photo_id: row.id,
+      photo_name: row.photo_name,
+      date_created: row.date_created,
+      ip_address: row.ip_address,
+    }));
+  const combined = [...historyEntries, ...photoEntries].sort((a, b) => {
+    const da = a.date_created ? new Date(a.date_created).getTime() : 0;
+    const db = b.date_created ? new Date(b.date_created).getTime() : 0;
+    return db - da;
+  });
+  const timeline = combined.length > 0 ? combined : legacyTimeline.map((e) => ({ ...e, type: 'legacy' }));
+  const customerName = (task && task.customer_name) ?? '—';
+  const merchantName = (() => {
+    const fromMerchant = merchant && (merchant.restaurant_name || '').trim();
+    if (fromMerchant) return fromMerchant;
+    const fromTaskJoin = task && String(task.restaurant_name || '').trim();
+    if (fromTaskJoin) return fromTaskJoin;
+    const fromTask = task && String(task.dropoff_merchant || '').trim();
+    if (fromTask && !/^\d+$/.test(fromTask)) return fromTask;
+    return '—';
+  })();
+  const completeBefore = order?.delivery_date && order?.delivery_time
+    ? `${formatDate(order.delivery_date)} ${String(order.delivery_time).slice(0, 5)}`
+    : formatDate(task?.delivery_date);
+
+  return (
+    <div className={`modal-backdrop task-details-backdrop ${editOpen ? 'task-details-backdrop-edit-open' : ''}`} onClick={() => !loading && !editOpen && handleClose()}>
+      <div className="modal-box modal-box-lg task-details-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-header">
+          <h3>Task ID : {task?.task_id ?? taskId ?? '…'}</h3>
+        </div>
+        {loading && (
+          <div className="modal-body"><div className="loading">Loading…</div></div>
+        )}
+        {!loading && error && (
+          <div className="modal-body">
+            <p className="muted">{error}</p>
+            <div className="modal-footer-actions">
+              <button type="button" className="btn" onClick={handleClose}>Close</button>
+            </div>
+          </div>
+        )}
+        {!loading && !error && data && task && (
+            <>
+              <div className="modal-tabs">
+                <button type="button" className={tab === 'details' ? 'active' : ''} onClick={() => setTab('details')}>Task Details</button>
+                <button type="button" className={tab === 'timeline' ? 'active' : ''} onClick={() => setTab('timeline')}>Activity Timeline</button>
+                <button type="button" className={tab === 'order' ? 'active' : ''} onClick={() => setTab('order')}>Order Details</button>
+              </div>
+              <div className="modal-body">
+                {tab === 'details' && (
+                  <div className="task-details-content">
+                    <div className="task-detail-section task-detail-section-split">
+                      <div className="task-detail-col">
+                        <div className="task-detail-row task-detail-row-status">
+                          <span className="task-detail-label">Status</span>
+                          <span className={`task-detail-status-badge ${statusDisplayClass(task.status)}`}>{task.status ?? '—'}</span>
+                        </div>
+                        <div className="task-detail-row">
+                          <span className="task-detail-label">Transaction type</span>
+                          <span className="task-detail-value">{order?.trans_type ?? task.trans_type ?? '—'}</span>
+                        </div>
+                        <div className="task-detail-row">
+                          <span className="task-detail-label">Complete before</span>
+                          <span className="task-detail-value">{completeBefore}</span>
+                        </div>
+                      </div>
+                      <div className="task-detail-col task-detail-contact">
+                        <div className="task-detail-row">
+                          <span className="task-detail-label">Name</span>
+                          <span className="task-detail-value">{customerName}</span>
+                        </div>
+                        <div className="task-detail-row task-detail-row-icon">
+                          <span className="task-detail-icon" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M6.62 10.79c1.44 2.83 3.76 5.14 6.59 6.59l2.2-2.2c.27-.27.67-.36 1.02-.24 1.12.37 2.33.57 3.57.57.55 0 1 .45 1 1V20c0 .55-.45 1-1 1-9.39 0-17-7.61-17-17 0-.55.45-1 1-1h3.5c.55 0 1 .45 1 1 0 1.25.2 2.45.57 3.57.11.35.03.74-.25 1.02l-2.2 2.2z"/></svg></span>
+                          <span className="task-detail-value">{task.contact_number ?? order?.contact_number ?? '—'}</span>
+                        </div>
+                        <div className="task-detail-row task-detail-row-icon">
+                          <span className="task-detail-icon" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M20 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 4l-8 5-8-5V6l8 5 8-5v2z"/></svg></span>
+                          <span className="task-detail-value">{task.email_address ?? '—'}</span>
+                        </div>
+                        <div className="task-detail-row task-detail-row-icon">
+                          <span className="task-detail-icon" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/></svg></span>
+                          <span className="task-detail-value">{task.delivery_address ?? '—'}</span>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="task-detail-section task-detail-section-row">
+                      <div className="task-detail-row">
+                        <span className="task-detail-label">Order No</span>
+                        <span className="task-detail-value">{order?.order_id ?? task.order_id ?? '—'}</span>
+                      </div>
+                      <div className="task-detail-row">
+                        <span className="task-detail-label">Merchant name</span>
+                        <span className="task-detail-value">{merchantName}</span>
+                      </div>
+                    </div>
+                    <div className="task-detail-section task-detail-section-row">
+                      <div className="task-detail-row">
+                        <span className="task-detail-label">Team</span>
+                        <span className="task-detail-value">{task.team_name ?? '—'}</span>
+                      </div>
+                      <div className="task-detail-row">
+                        <span className="task-detail-label">Driver</span>
+                        <span className="task-detail-value">{task.driver_name ?? '—'}</span>
+                      </div>
+                      <div className="task-detail-row">
+                        <span className="task-detail-label">Phone</span>
+                        <span className="task-detail-value">{task.driver_phone ?? '—'}</span>
+                      </div>
+                      <div className="task-detail-row">
+                        <span className="task-detail-label">Verification code</span>
+                        <span className="task-detail-value">{task.verification_code ?? '—'}</span>
+                      </div>
+                    </div>
+                    <div className="task-detail-section">
+                      <div className="task-detail-section-title">Task description</div>
+                      <div className="task-detail-description">{task.task_description || '—'}</div>
+                    </div>
+                    <div className="task-detail-section task-detail-pickup">
+                      <div className="task-detail-section-title">Pickup details</div>
+                      <div className="task-detail-pickup-grid">
+                        <div className="task-detail-pickup-item">
+                          <span className="task-detail-label">Merchant</span>
+                          <span className="task-detail-value">{merchantName}</span>
+                        </div>
+                        <div className="task-detail-pickup-item">
+                          <span className="task-detail-label">Name</span>
+                          <span className="task-detail-value">{customerName}</span>
+                        </div>
+                        <div className="task-detail-pickup-item">
+                          <span className="task-detail-label">Contact number</span>
+                          <span className="task-detail-value">{task.contact_number ?? '—'}</span>
+                        </div>
+                        <div className="task-detail-pickup-item task-detail-pickup-address">
+                          <span className="task-detail-label">Address</span>
+                          <span className="task-detail-value">{task.delivery_address ?? (merchant ? [merchant.street, merchant.city, merchant.state, merchant.post_code].filter(Boolean).join(', ') : '—')}</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+                {tab === 'timeline' && (
+                  <div className="task-details-content">
+                    <div className="task-detail-section">
+                      <div className="activity-timeline">
+                        {timeline.length ? timeline.filter(Boolean).map((entry, i) => (
+                          <div key={entry.id ?? entry.stats_id ?? i} className={`activity-timeline-item ${entry.type === 'photo' ? 'activity-timeline-item-photo' : 'activity-timeline-item-history'}`}>
+                            {entry.type === 'photo' ? (
+                              <>
+                                <span className="tag status-green">Proof of delivery</span>
+                                <span className="activity-timeline-time">{formatDate(entry?.date_created)}</span>
+                                {(entry.photo_name || entry.photo_id) && (
+                                  <TaskPhotoImage photoId={entry.photo_id} photoName={entry.photo_name} />
+                                )}
+                              </>
+                            ) : (
+                              <>
+                                <span className={`tag ${statusDisplayClass(entry?.status ?? entry?.description)}`}>{entry?.status ?? entry?.description ?? '—'}</span>
+                                <span className="activity-timeline-time">{formatDate(entry?.date_created)}</span>
+                                {(entry?.update_by_name || entry?.update_by_type) && (
+                                  <span className="activity-timeline-by">by {entry.update_by_name || entry.update_by_type || '—'}</span>
+                                )}
+                                {(entry?.remarks || entry?.reason) && (
+                                  <div className="activity-timeline-remarks">{entry.remarks || entry.reason}</div>
+                                )}
+                                {entry?.notes && <div className="activity-timeline-notes">{entry.notes}</div>}
+                              </>
+                            )}
+                          </div>
+                        )) : (
+                          <p className="muted">No activity yet.</p>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+                {tab === 'order' && (
+                  <div className="task-details-content order-details-panel">
+                    <div className="task-detail-section">
+                      <div className="task-detail-section-title">Customer & merchant</div>
+                      <div className="task-detail-section-row">
+                        <div className="task-detail-row"><span className="task-detail-label">Customer name</span><span className="task-detail-value">{customerName}</span></div>
+                        <div className="task-detail-row"><span className="task-detail-label">Merchant name</span><span className="task-detail-value">{merchantName}</span></div>
+                        <div className="task-detail-row"><span className="task-detail-label">Telephone</span><span className="task-detail-value">{task.contact_number ?? merchant?.restaurant_phone ?? '—'}</span></div>
+                        <div className="task-detail-row"><span className="task-detail-label">Address</span><span className="task-detail-value">{task.delivery_address ?? (merchant ? [merchant.street, merchant.city, merchant.state, merchant.post_code].filter(Boolean).join(', ') : '—')}</span></div>
+                      </div>
+                    </div>
+                    <div className="task-detail-section">
+                      <div className="task-detail-section-title">Transaction</div>
+                      <div className="task-detail-section-row">
+                        <div className="task-detail-row"><span className="task-detail-label">TRN type</span><span className="task-detail-value">{order?.trans_type ?? '—'}</span></div>
+                        <div className="task-detail-row"><span className="task-detail-label">Payment type</span><span className="task-detail-value">{order?.payment_type ?? task.payment_type ?? '—'}</span></div>
+                        <div className="task-detail-row"><span className="task-detail-label">Reference #</span><span className="task-detail-value">{order?.order_id ?? task.order_id ?? '—'}</span></div>
+                        <div className="task-detail-row"><span className="task-detail-label">TRN date</span><span className="task-detail-value">{order?.date_created ? formatDate(order.date_created) : '—'}</span></div>
+                        <div className="task-detail-row"><span className="task-detail-label">Delivery date</span><span className="task-detail-value">{order?.delivery_date ? formatDate(order.delivery_date) : '—'}</span></div>
+                        <div className="task-detail-row"><span className="task-detail-label">Delivery instruction</span><span className="task-detail-value">{order?.delivery_instruction ?? task.delivery_instruction ?? '—'}</span></div>
+                        <div className="task-detail-row"><span className="task-detail-label">Contact number</span><span className="task-detail-value">{task.contact_number ?? '—'}</span></div>
+                        <div className="task-detail-row"><span className="task-detail-label">Change</span><span className="task-detail-value">{order?.order_change != null ? `₱${Number(order.order_change).toFixed(2)}` : '—'}</span></div>
+                      </div>
+                    </div>
+                    {orderDetails.length > 0 && (
+                      <div className="task-detail-section order-items-block">
+                        <div className="task-detail-section-title">Ordered items</div>
+                        <ul className="order-items-list">
+                          {orderDetails.filter(Boolean).map((item, i) => (
+                            <li key={item.id ?? i}>
+                              {item.qty ?? 0}× {item.item_name ?? 'Item'}{item.size ? ` (${item.size})` : ''} — {item.discounted_price != null ? `₱${Number(item.discounted_price).toFixed(2)}` : item.normal_price != null ? `₱${Number(item.normal_price).toFixed(2)}` : '—'}
+                              {item.order_notes ? <span className="order-item-notes"> — {item.order_notes}</span> : null}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                    {(order?.sub_total != null || order?.total_w_tax != null) && (
+                      <div className="task-detail-section order-summary-block">
+                        <div className="task-detail-section-title">Order summary</div>
+                        <div className="task-detail-section-row">
+                          <div className="task-detail-row"><span className="task-detail-label">Sub total</span><span className="task-detail-value">{order.sub_total != null ? `₱${Number(order.sub_total).toFixed(2)}` : '—'}</span></div>
+                          <div className="task-detail-row"><span className="task-detail-label">Convenience / delivery</span><span className="task-detail-value">{order?.delivery_charge != null ? `₱${Number(order.delivery_charge).toFixed(2)}` : '—'}</span></div>
+                          <div className="task-detail-row"><span className="task-detail-label">Total</span><span className="task-detail-value task-detail-value-total">{order?.total_w_tax != null ? `₱${Number(order.total_w_tax).toFixed(2)}` : '—'}</span></div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+                {changeStatusOpen && (
+                  <div className="task-detail-change-status-wrap task-detail-inner-form" style={{ borderTop: '1px solid var(--border-soft)', paddingTop: '1rem', marginTop: '1rem' }}>
+                    <form onSubmit={handleChangeStatus} className="task-detail-change-status-form">
+                      <label className="modal-label" htmlFor="task-change-status-select">Change status</label>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', alignItems: 'flex-start' }}>
+                        <select
+                          id="task-change-status-select"
+                          className="form-control"
+                          value={changeStatusValue}
+                          onChange={(e) => setChangeStatusValue(e.target.value)}
+                          required
+                          style={{ minWidth: '140px' }}
+                        >
+                          <option value="">Select status</option>
+                          {TASK_STATUS_OPTIONS.map((s) => (
+                            <option key={s} value={s}>{s}</option>
+                          ))}
+                        </select>
+                        <input
+                          type="text"
+                          className="form-control"
+                          placeholder="Reason (optional)"
+                          value={changeStatusReason}
+                          onChange={(e) => setChangeStatusReason(e.target.value)}
+                          style={{ minWidth: '160px', flex: 1 }}
+                        />
+                        <button type="submit" className="btn btn-primary" disabled={actionLoading}>Update</button>
+                        <button type="button" className="btn" onClick={() => { setChangeStatusOpen(false); setChangeStatusValue(''); setChangeStatusReason(''); }} disabled={actionLoading}>Cancel</button>
+                      </div>
+                    </form>
+                  </div>
+                )}
+                {assignOpen && (
+                  <div className="task-detail-assign-wrap task-detail-inner-form" style={{ borderTop: '1px solid var(--border-soft)', paddingTop: '1rem', marginTop: '1rem' }}>
+                    <form onSubmit={doAssign} className="task-detail-assign-form">
+                      <label className="modal-label" htmlFor="task-assign-team">Assign to team</label>
+                      <select
+                        id="task-assign-team"
+                        className="form-control"
+                        value={assignTeamId}
+                        onChange={(e) => setAssignTeamId(e.target.value)}
+                        disabled={actionLoading}
+                      >
+                        <option value="">All teams</option>
+                        {(teams || []).map((t) => (
+                          <option key={t.team_id ?? t.id} value={String(t.team_id ?? t.id)}>
+                            {t.team_name ?? t.name ?? `Team ${t.team_id ?? t.id}`}
+                          </option>
+                        ))}
+                      </select>
+
+                      <label className="modal-label" htmlFor="task-assign-driver" style={{ marginTop: '0.75rem' }}>Assign to driver</label>
+                      <select
+                        id="task-assign-driver"
+                        className="form-control"
+                        value={assignDriverId}
+                        onChange={(e) => setAssignDriverId(e.target.value)}
+                        disabled={actionLoading}
+                        required
+                      >
+                        <option value="">Select driver…</option>
+                        {(drivers || [])
+                          .filter((d) => !assignTeamId || String(d.team_id ?? d.team) === String(assignTeamId))
+                          .map((d) => (
+                            <option key={d.driver_id ?? d.id} value={String(d.driver_id ?? d.id)}>
+                              {d.full_name || [d.first_name, d.last_name].filter(Boolean).join(' ') || d.username || d.email || `Driver ${d.driver_id ?? d.id}`}
+                            </option>
+                          ))}
+                      </select>
+
+                      <div className="modal-actions" style={{ marginTop: '0.75rem' }}>
+                        <button type="submit" className="btn btn-primary" disabled={actionLoading || !assignDriverId}>
+                          {actionLoading ? 'Assigning…' : 'Assign'}
+                        </button>
+                        <button
+                          type="button"
+                          className="btn"
+                          onClick={() => { setAssignOpen(false); setAssignTeamId(''); setAssignDriverId(''); }}
+                          disabled={actionLoading}
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </form>
+                  </div>
+                )}
+              </div>
+              <div className="modal-footer-actions">
+                {(String(task.status || '').toLowerCase() === 'unassigned') && (
+                  <>
+                    <button type="button" className="btn btn-primary" onClick={handleAssignDriver} disabled={actionLoading}>Assign driver</button>
+                    <button type="button" className="btn" onClick={handleAssignToAll} disabled={actionLoading}>Assign to all drivers</button>
+                    <button type="button" className="btn" onClick={handleRetryAutoAssign} disabled={actionLoading}>Retry auto-assign</button>
+                  </>
+                )}
+                {!changeStatusOpen && !editOpen && !assignOpen && (
+                  <button type="button" className="btn" onClick={openEdit} disabled={actionLoading}>Edit</button>
+                )}
+                {!changeStatusOpen && !editOpen && !assignOpen && (
+                  <button type="button" className="btn" onClick={() => setChangeStatusOpen(true)} disabled={actionLoading}>Change status</button>
+                )}
+                {onShowDirections && (
+                  <button
+                    type="button"
+                    className="btn"
+                    onClick={() => onShowDirections?.({ task, order, merchant })}
+                    disabled={actionLoading}
+                  >
+                    Get directions
+                  </button>
+                )}
+                {directionsUrl && (
+                  <a href={directionsUrl} target="_blank" rel="noopener noreferrer" className="btn">Open in Google Maps</a>
+                )}
+                <button type="button" className="btn" onClick={handleDelete} disabled={actionLoading}>Delete task</button>
+                <button type="button" className="btn" onClick={handleClose}>Close</button>
+              </div>
+            </>
+        )}
+      </div>
+      {editOpen && (
+        <div className="modal-box modal-box-lg task-detail-edit-modal" onClick={(e) => e.stopPropagation()}>
+          <div className="modal-header">
+            <h3>Edit task</h3>
+            <button type="button" className="task-detail-edit-modal-close" onClick={() => setEditOpen(false)} aria-label="Close">×</button>
+          </div>
+          <div className="modal-body">
+            <form onSubmit={handleSaveEdit} className="task-detail-edit-form">
+              <div className="task-detail-edit-fields">
+                <label className="modal-label" htmlFor="edit-task-description">Task description</label>
+                <textarea id="edit-task-description" className="form-control" rows={2} value={editForm.task_description} onChange={(e) => setEditForm((f) => ({ ...f, task_description: e.target.value }))} />
+                <label className="modal-label" htmlFor="edit-delivery-address">Delivery address</label>
+                <input id="edit-delivery-address" type="text" className="form-control" value={editForm.delivery_address} onChange={(e) => setEditForm((f) => ({ ...f, delivery_address: e.target.value }))} />
+                <label className="modal-label" htmlFor="edit-customer-name">Customer name</label>
+                <input id="edit-customer-name" type="text" className="form-control" value={editForm.customer_name} onChange={(e) => setEditForm((f) => ({ ...f, customer_name: e.target.value }))} />
+                <label className="modal-label" htmlFor="edit-contact-number">Contact number</label>
+                <input id="edit-contact-number" type="text" className="form-control" value={editForm.contact_number} onChange={(e) => setEditForm((f) => ({ ...f, contact_number: e.target.value }))} />
+                <label className="modal-label" htmlFor="edit-email">Email</label>
+                <input id="edit-email" type="email" className="form-control" value={editForm.email_address} onChange={(e) => setEditForm((f) => ({ ...f, email_address: e.target.value }))} />
+                <label className="modal-label" htmlFor="edit-delivery-date">Delivery date</label>
+                <input id="edit-delivery-date" type="date" className="form-control" value={editForm.delivery_date} onChange={(e) => setEditForm((f) => ({ ...f, delivery_date: e.target.value }))} />
+              </div>
+              <div className="modal-footer-actions">
+                <button type="submit" className="btn btn-primary" disabled={actionLoading}>Save</button>
+                <button type="button" className="btn" onClick={() => setEditOpen(false)} disabled={actionLoading}>Cancel</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

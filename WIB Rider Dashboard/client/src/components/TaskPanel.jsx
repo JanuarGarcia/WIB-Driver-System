@@ -1,0 +1,621 @@
+import { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
+import { createPortal } from 'react-dom';
+import { useNavigate } from 'react-router-dom';
+import { api, statusClass, statusLabel } from '../api';
+import { useTableAutoRefresh } from '../hooks/useTableAutoRefresh';
+
+const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+const MONTH_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const DAY_HEADERS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+function toDisplayDateTime(date) {
+  const d = date instanceof Date ? date : new Date(date);
+  const dateStr = d.toISOString().slice(0, 10);
+  const timeStr = d.toTimeString().slice(0, 8);
+  return `${dateStr} - ${timeStr}`;
+}
+function toInputDateTime(date) {
+  const d = date instanceof Date ? date : new Date(date);
+  return `${d.toISOString().slice(0, 10)}T${d.toTimeString().slice(0, 5)}`;
+}
+function toDatePickerLabel(date) {
+  const d = date instanceof Date ? date : new Date(date);
+  const day = d.getDate();
+  const month = MONTH_SHORT[d.getMonth()];
+  const year = d.getFullYear();
+  return `${String(day).padStart(2, '0')} ${month} ${year}`;
+}
+
+function getCalendarGrid(viewYear, viewMonth) {
+  const first = new Date(viewYear, viewMonth - 1, 1);
+  const last = new Date(viewYear, viewMonth, 0);
+  const firstDay = first.getDay();
+  const daysInMonth = last.getDate();
+  const prevMonth = viewMonth === 1 ? 12 : viewMonth - 1;
+  const prevYear = viewMonth === 1 ? viewYear - 1 : viewYear;
+  const prevLast = new Date(prevYear, prevMonth, 0);
+  const prevDays = prevLast.getDate();
+  const leading = [];
+  for (let i = firstDay - 1; i >= 0; i--) {
+    leading.push({ day: prevDays - i, month: prevMonth, year: prevYear, isOther: true });
+  }
+  const current = [];
+  for (let d = 1; d <= daysInMonth; d++) {
+    current.push({ day: d, month: viewMonth, year: viewYear, isOther: false });
+  }
+  const all = [...leading, ...current];
+  const remainder = 42 - all.length;
+  const trailing = [];
+  const nextMonth = viewMonth === 12 ? 1 : viewMonth + 1;
+  const nextYear = viewMonth === 12 ? viewYear + 1 : viewYear;
+  for (let d = 1; d <= remainder; d++) {
+    trailing.push({ day: d, month: nextMonth, year: nextYear, isOther: true });
+  }
+  return [...all, ...trailing];
+}
+
+const TABS = ['unassigned', 'assigned', 'completed'];
+const SORT_ORDER_OPTIONS = [
+  { key: 'rfp', label: 'RFP' },
+  { key: 'manual', label: 'Manual' },
+  { key: 'direction', label: 'Direction' },
+];
+const SORT_DIRECTION_OPTIONS = [
+  { key: 'oldest', label: 'Oldest first' },
+  { key: 'latest', label: 'Latest first' },
+];
+
+/** Baguio center [lat, lng] – used as reference to compute delivery direction from coordinates */
+const BAGUIO_CENTER_LAT = 16.4023;
+const BAGUIO_CENTER_LNG = 120.596;
+
+/** Bearing in degrees (0–360) from point A to B. North = 0, East = 90. */
+function getBearing(fromLat, fromLng, toLat, toLng) {
+  const lat1 = (fromLat * Math.PI) / 180;
+  const lat2 = (toLat * Math.PI) / 180;
+  const dLng = ((toLng - fromLng) * Math.PI) / 180;
+  const y = Math.sin(dLng) * Math.cos(lat2);
+  const x = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLng);
+  let br = (Math.atan2(y, x) * 180) / Math.PI;
+  return (br + 360) % 360;
+}
+
+/** Compass label from bearing 0–360 (matches backend: "North east", "South west", etc.). */
+function bearingToCompass(bearing) {
+  if (bearing == null || Number.isNaN(bearing)) return null;
+  const b = ((Number(bearing) % 360) + 360) % 360;
+  const labels = [
+    { max: 22.5, label: 'North' },
+    { max: 67.5, label: 'North east' },
+    { max: 112.5, label: 'East' },
+    { max: 157.5, label: 'South east' },
+    { max: 202.5, label: 'South' },
+    { max: 247.5, label: 'South west' },
+    { max: 292.5, label: 'West' },
+    { max: 337.5, label: 'North west' },
+    { max: 360, label: 'North' },
+  ];
+  for (const { max, label } of labels) {
+    if (b <= max) return label;
+  }
+  return 'North';
+}
+
+/** Resolve direction for a task: use API direction, or derive from task_lat/task_lng vs Baguio center. */
+function getDirectionFromTask(t) {
+  const fromApi = (t.direction != null && String(t.direction).trim() !== '') ? String(t.direction).trim() : null;
+  if (fromApi) return fromApi;
+  const lat = t.task_lat != null ? parseFloat(t.task_lat) : null;
+  const lng = t.task_lng != null ? parseFloat(t.task_lng) : null;
+  if (lat == null || lng == null || Number.isNaN(lat) || Number.isNaN(lng)) return null;
+  const bearing = getBearing(BAGUIO_CENTER_LAT, BAGUIO_CENTER_LNG, lat, lng);
+  return bearingToCompass(bearing);
+}
+
+/** Arrow rotation (deg) from direction label - matches compass (up = North) */
+function directionArrowRotation(dir) {
+  if (!dir || typeof dir !== 'string') return 135;
+  const v = dir.trim().toLowerCase().replace(/\s+/g, ' ');
+  const map = {
+    'north': 0, 'n': 0,
+    'north-east': 45, 'north east': 45, 'ne': 45,
+    'east': 90, 'e': 90,
+    'south-east': 135, 'south east': 135, 'se': 135,
+    'south': 180, 's': 180,
+    'south-west': 225, 'south west': 225, 'sw': 225,
+    'west': 270, 'w': 270,
+    'north-west': 315, 'north west': 315, 'nw': 315,
+  };
+  return map[v] ?? 135;
+}
+
+/** Display direction label like live system: "North-West", "South-East", etc. */
+function directionDisplayLabel(dir) {
+  if (!dir || typeof dir !== 'string' || !dir.trim()) return '—';
+  const v = dir.trim().toLowerCase().replace(/\s+/g, ' ');
+  const map = {
+    'north': 'North', 'n': 'North',
+    'north-east': 'North-East', 'north east': 'North-East', 'ne': 'North-East',
+    'east': 'East', 'e': 'East',
+    'south-east': 'South-East', 'south east': 'South-East', 'se': 'South-East',
+    'south': 'South', 's': 'South',
+    'south-west': 'South-West', 'south west': 'South-West', 'sw': 'South-West',
+    'west': 'West', 'w': 'West',
+    'north-west': 'North-West', 'north west': 'North-West', 'nw': 'North-West',
+  };
+  return map[v] ?? dir.trim().split(/\s+/).map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join('-');
+}
+
+export default function TaskPanel({ onOpenTaskDetails }) {
+  const navigate = useNavigate();
+  const [tasks, setTasks] = useState([]);
+  const [counts, setCounts] = useState({ unassigned: 0, assigned: 0, completed: 0 });
+  const [activeTab, setActiveTab] = useState('unassigned');
+  const [loading, setLoading] = useState(true);
+  const [selectedDateTime, setSelectedDateTime] = useState(() => new Date());
+  const [calendarOpen, setCalendarOpen] = useState(false);
+  const [viewMonth, setViewMonth] = useState(() => new Date().getMonth() + 1);
+  const [viewYear, setViewYear] = useState(() => new Date().getFullYear());
+  const [popoverRect, setPopoverRect] = useState({ top: 0, left: 0, width: 0, height: 0 });
+  const [sortOrder, setSortOrder] = useState('rfp');
+  const [sortDirection, setSortDirection] = useState('latest');
+  const [sortDropdownOpen, setSortDropdownOpen] = useState(false);
+  const [activityRefreshIntervalMs, setActivityRefreshIntervalMs] = useState(30000);
+  const [taskCriticalEnabled, setTaskCriticalEnabled] = useState(false);
+  const [taskCriticalMinutes, setTaskCriticalMinutes] = useState(5);
+  const calendarRef = useRef(null);
+  const sortRef = useRef(null);
+
+  useEffect(() => {
+    api('settings')
+      .then((s) => {
+        const disabled = s.disable_activity_tracking === '1';
+        const sec = parseInt(s.activity_refresh_interval, 10);
+        const intervalSec = Number.isFinite(sec) && sec >= 5 ? sec : 60;
+        setActivityRefreshIntervalMs(disabled ? 86400000 : Math.max(5000, intervalSec * 1000));
+        setTaskCriticalEnabled(s.task_critical_options_enabled === '1');
+        const mins = parseInt(s.task_critical_options_minutes, 10);
+        setTaskCriticalMinutes(Number.isFinite(mins) && mins >= 1 ? mins : 5);
+      })
+      .catch(() => setActivityRefreshIntervalMs(30000));
+  }, []);
+
+  useEffect(() => {
+    function handleClickOutside(e) {
+      if (sortRef.current && !sortRef.current.contains(e.target)) {
+        setSortDropdownOpen(false);
+      }
+    }
+    if (sortDropdownOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+      return () => document.removeEventListener('mousedown', handleClickOutside);
+    }
+  }, [sortDropdownOpen]);
+
+  useLayoutEffect(() => {
+    if (calendarOpen && calendarRef.current) {
+      const rect = calendarRef.current.getBoundingClientRect();
+      setPopoverRect({ top: rect.bottom, left: rect.left, width: rect.width, height: rect.height });
+    }
+  }, [calendarOpen]);
+
+  useEffect(() => {
+    if (!calendarOpen) return;
+    const onResize = () => {
+      if (calendarRef.current) {
+        const rect = calendarRef.current.getBoundingClientRect();
+        setPopoverRect({ top: rect.bottom, left: rect.left, width: rect.width, height: rect.height });
+      }
+    };
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, [calendarOpen]);
+
+  const openCalendar = () => {
+    const d = selectedDateTime;
+    setViewMonth(d.getMonth() + 1);
+    setViewYear(d.getFullYear());
+    setCalendarOpen(true);
+  };
+  const goPrevMonth = () => {
+    if (viewMonth === 1) {
+      setViewMonth(12);
+      setViewYear((y) => y - 1);
+    } else setViewMonth((m) => m - 1);
+  };
+  const goNextMonth = () => {
+    if (viewMonth === 12) {
+      setViewMonth(1);
+      setViewYear((y) => y + 1);
+    } else setViewMonth((m) => m + 1);
+  };
+  const goToday = () => {
+    const now = new Date();
+    setViewMonth(now.getMonth() + 1);
+    setViewYear(now.getFullYear());
+    setSelectedDateTime(now);
+  };
+  const selectDay = (cell) => {
+    const d = new Date(selectedDateTime);
+    d.setFullYear(cell.year);
+    d.setMonth(cell.month - 1);
+    d.setDate(cell.day);
+    setSelectedDateTime(d);
+    setViewMonth(cell.month);
+    setViewYear(cell.year);
+  };
+  const isSelected = (cell) => {
+    const d = selectedDateTime;
+    return d.getDate() === cell.day && d.getMonth() + 1 === cell.month && d.getFullYear() === cell.year;
+  };
+  const calendarGrid = getCalendarGrid(viewYear, viewMonth);
+
+  useEffect(() => {
+    function handleClickOutside(e) {
+      const inTrigger = calendarRef.current && calendarRef.current.contains(e.target);
+      const inPopover = e.target.closest('[data-calendar-popover]');
+      if (!inTrigger && !inPopover) setCalendarOpen(false);
+    }
+    if (calendarOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+      return () => document.removeEventListener('mousedown', handleClickOutside);
+    }
+  }, [calendarOpen]);
+
+  const toDateString = (d) => {
+    const x = d instanceof Date ? d : new Date(d);
+    const y = x.getFullYear();
+    const m = String(x.getMonth() + 1).padStart(2, '0');
+    const day = String(x.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  };
+
+  const fetchTasks = useCallback(() => {
+    setLoading(true);
+    const dateStr = toDateString(selectedDateTime);
+    const url = `tasks?date=${encodeURIComponent(dateStr)}`;
+    api(url)
+      .then((list) => {
+        setTasks(list || []);
+        const u = (list || []).filter(t => (t.status || '').toLowerCase() === 'unassigned').length;
+        const a = (list || []).filter(t => (t.status || '').toLowerCase() === 'assigned').length;
+        const c = (list || []).filter(t => ['completed', 'delivered', 'successful'].includes((t.status || '').toLowerCase())).length;
+        setCounts({ unassigned: u, assigned: a, completed: c });
+      })
+      .catch(() => setTasks([]))
+      .finally(() => setLoading(false));
+  }, [selectedDateTime]);
+
+  useEffect(() => {
+    fetchTasks();
+  }, [fetchTasks]);
+
+  useTableAutoRefresh(fetchTasks, activityRefreshIntervalMs);
+
+  const filteredByTab = tasks.filter(t => {
+    const s = (t.status || '').toLowerCase();
+    if (activeTab === 'unassigned') return s === 'unassigned';
+    if (activeTab === 'assigned') return s === 'assigned';
+    return ['completed', 'delivered', 'successful'].includes(s);
+  });
+
+  const filtered = [...filteredByTab].sort((a, b) => {
+    const dateA = a.date_created ? new Date(a.date_created).getTime() : 0;
+    const dateB = b.date_created ? new Date(b.date_created).getTime() : 0;
+    const dirA = (getDirectionFromTask(a) || '').toLowerCase();
+    const dirB = (getDirectionFromTask(b) || '').toLowerCase();
+    const orderA = a.order_id ?? a.task_id ?? 0;
+    const orderB = b.order_id ?? b.task_id ?? 0;
+    let cmp = 0;
+    if (sortOrder === 'rfp') cmp = Number(orderA) - Number(orderB);
+    else if (sortOrder === 'manual') cmp = dateA - dateB;
+    else if (sortOrder === 'direction') cmp = dirA.localeCompare(dirB);
+    else cmp = dateA - dateB;
+    return sortDirection === 'latest' ? -cmp : cmp;
+  });
+
+  const statItems = [
+    { key: 'unassigned', label: 'Unassigned', count: counts.unassigned ?? 0, highlight: activeTab === 'unassigned', icon: 'clock' },
+    { key: 'assigned', label: 'Assigned', count: counts.assigned ?? 0, highlight: activeTab === 'assigned', icon: 'user-check' },
+    { key: 'completed', label: 'Completed', count: counts.completed ?? 0, highlight: activeTab === 'completed', icon: 'check' },
+  ];
+
+  return (
+    <div className="panel tasks-panel">
+      <div className="panel-header tasks-panel-header">
+        <span className="tasks-panel-header-title">Tasks</span>
+        <div className="tasks-panel-date-wrap" ref={calendarRef}>
+          <button
+            type="button"
+            className="panel-header-date tasks-panel-header-date tasks-panel-date-trigger"
+            onClick={() => (calendarOpen ? setCalendarOpen(false) : openCalendar())}
+            aria-label="Select date and time"
+            aria-expanded={calendarOpen}
+          >
+            <span className="panel-header-date-icon" aria-hidden="true">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M19 4h-1V2h-2v2H8V2H6v2H5c-1.11 0-1.99.9-1.99 2L3 20c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 16H5V9h14v11z"/></svg>
+            </span>
+            <span className="tasks-panel-date-text">{toDisplayDateTime(selectedDateTime)}</span>
+          </button>
+          {calendarOpen && createPortal(
+            <div
+              className="tasks-panel-calendar-popover tasks-panel-calendar-widget tasks-panel-calendar-portal"
+              data-calendar-popover
+              style={{
+                position: 'fixed',
+                left: popoverRect.left,
+                top: popoverRect.top + 4,
+                zIndex: 10000,
+                width: 320,
+                minWidth: 320,
+              }}
+              onKeyDown={(e) => e.key === 'Escape' && setCalendarOpen(false)}
+              role="dialog"
+              aria-label="Choose date"
+            >
+              <div className="tasks-panel-calendar-input-bar">
+                {toDatePickerLabel(selectedDateTime)}
+              </div>
+              <div className="tasks-panel-calendar-nav">
+                <button type="button" className="tasks-panel-calendar-nav-btn" onClick={goPrevMonth} aria-label="Previous month">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>
+                </button>
+                <button type="button" className="tasks-panel-calendar-nav-btn" onClick={goToday} aria-label="Today">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>
+                </button>
+                <select
+                  className="tasks-panel-calendar-month-select"
+                  value={viewMonth}
+                  onChange={(e) => {
+                    const m = parseInt(e.target.value, 10);
+                    setViewMonth(m);
+                    const d = new Date(selectedDateTime);
+                    d.setMonth(m - 1);
+                    if (d.getMonth() !== m - 1) d.setDate(0);
+                    setSelectedDateTime(d);
+                  }}
+                  aria-label="Select month"
+                >
+                  {MONTH_NAMES.map((name, i) => (
+                    <option key={i} value={i + 1}>{name}</option>
+                  ))}
+                </select>
+                <select
+                  className="tasks-panel-calendar-year-select"
+                  value={viewYear}
+                  onChange={(e) => {
+                    const y = parseInt(e.target.value, 10);
+                    setViewYear(y);
+                    const d = new Date(selectedDateTime);
+                    d.setFullYear(y);
+                    if (d.getFullYear() !== y) d.setDate(0);
+                    setSelectedDateTime(d);
+                  }}
+                  aria-label="Select year"
+                >
+                  {(() => {
+                    const y = new Date().getFullYear();
+                    const years = [];
+                    for (let i = y - 10; i <= y + 2; i++) years.push(i);
+                    return years.map((yr) => <option key={yr} value={yr}>{yr}</option>);
+                  })()}
+                </select>
+                <button type="button" className="tasks-panel-calendar-nav-btn" onClick={goNextMonth} aria-label="Next month">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M8.59 16.59L10 18l6-6-6-6-1.41 1.41L13.17 12z"/></svg>
+                </button>
+              </div>
+              <div className="tasks-panel-calendar-headers">
+                {DAY_HEADERS.map((h) => (
+                  <span key={h} className="tasks-panel-calendar-day-header">{h}</span>
+                ))}
+              </div>
+              <div className="tasks-panel-calendar-grid">
+                {calendarGrid.map((cell, idx) => (
+                  <button
+                    key={`${cell.year}-${cell.month}-${cell.day}-${idx}`}
+                    type="button"
+                    className={`tasks-panel-calendar-day ${cell.isOther ? 'tasks-panel-calendar-day-other' : ''} ${isSelected(cell) ? 'tasks-panel-calendar-day-selected' : ''}`}
+                    onClick={() => selectDay(cell)}
+                  >
+                    {cell.day}
+                  </button>
+                ))}
+              </div>
+              <div className="tasks-panel-calendar-time-row">
+                <label className="tasks-panel-calendar-label">Time</label>
+                <input
+                  type="time"
+                  className="tasks-panel-time-input"
+                  value={selectedDateTime.toTimeString().slice(0, 5)}
+                  onChange={(e) => {
+                    const [h, m] = (e.target.value || '00:00').split(':').map(Number);
+                    const d = new Date(selectedDateTime);
+                    d.setHours(h, m, 0, 0);
+                    setSelectedDateTime(d);
+                  }}
+                />
+              </div>
+              <div className="tasks-panel-calendar-actions">
+                <button type="button" className="tasks-panel-calendar-today" onClick={() => { setSelectedDateTime(new Date()); setCalendarOpen(false); }}>
+                  Today
+                </button>
+                <button type="button" className="tasks-panel-calendar-close" onClick={() => setCalendarOpen(false)}>
+                  Close
+                </button>
+              </div>
+            </div>,
+            document.body
+          )}
+        </div>
+        <div className="tasks-panel-header-actions tasks-panel-sort-wrap" ref={sortRef}>
+          <button
+            type="button"
+            className={`tasks-panel-header-icon ${sortDropdownOpen ? 'active' : ''}`}
+            aria-label="Sort tasks"
+            aria-expanded={sortDropdownOpen}
+            onClick={() => setSortDropdownOpen((o) => !o)}
+          >
+            <svg width="25" height="25" viewBox="0 0 24 24" fill="currentColor"><path d="M3 18h6v-2H3v2zm0-5h12v-2H3v2zm0-7v2h18V6H3z"/></svg>
+          </button>
+          {sortDropdownOpen && (
+            <div className="tasks-panel-sort-dropdown">
+              <div className="tasks-panel-sort-section">
+                <span className="tasks-panel-sort-label">Sorting order</span>
+                {SORT_ORDER_OPTIONS.map(({ key, label }) => (
+                  <button
+                    key={key}
+                    type="button"
+                    className={`tasks-panel-sort-option ${sortOrder === key ? 'active' : ''}`}
+                    onClick={() => { setSortOrder(key); setSortDropdownOpen(false); }}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <div className="tasks-panel-sort-section">
+                <span className="tasks-panel-sort-label">Order</span>
+                {SORT_DIRECTION_OPTIONS.map(({ key, label }) => (
+                  <button
+                    key={key}
+                    type="button"
+                    className={`tasks-panel-sort-option ${sortDirection === key ? 'active' : ''}`}
+                    onClick={() => { setSortDirection(key); setSortDropdownOpen(false); }}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+      <div className="tasks-panel-sort-indicator">
+        <span className="tasks-panel-sort-indicator-text">
+          Sorted by {SORT_ORDER_OPTIONS.find((o) => o.key === sortOrder)?.label ?? sortOrder} · {sortDirection === 'latest' ? 'Latest first' : 'Oldest first'}
+        </span>
+      </div>
+      <div className="panel-stats panel-stats--tasks">
+        {statItems.map(({ key, label, count, highlight, icon }) => (
+          <button
+            key={key}
+            type="button"
+            className={`panel-stats-item ${highlight ? 'highlight' : ''} ${activeTab === key ? 'active' : ''}`}
+            data-stat-key={key}
+            onClick={() => setActiveTab(key)}
+            aria-pressed={activeTab === key}
+            aria-label={`${label}: ${count}`}
+          >
+            <span className="panel-stats-icon" aria-hidden="true">
+              {icon === 'clock' && (
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+              )}
+              {icon === 'user-check' && (
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="m16 11 2 2 4-4"/></svg>
+              )}
+              {icon === 'check' && (
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+              )}
+            </span>
+            <span className="panel-stats-number">{count}</span>
+            <span className="panel-stats-label">{label}</span>
+          </button>
+        ))}
+      </div>
+      <div className={`panel-body ${filtered.length === 0 ? 'empty' : ''}`}>
+        {loading && 'Loading…'}
+        {!loading && filtered.length === 0 && 'No tasks'}
+        {!loading && filtered.length > 0 && (
+          <ul className="task-card-list">
+            {filtered.slice(0, 20).map((t) => {
+              const statusLower = (t.status || '').toLowerCase();
+              const created = t.date_created ? new Date(t.date_created) : null;
+              const minsWaiting = created ? Math.max(0, Math.floor((Date.now() - created.getTime()) / 60000)) : null;
+              const waitingMins = minsWaiting !== null ? (minsWaiting >= 60 ? `${Math.floor(minsWaiting / 60)} hr ${minsWaiting % 60} mins` : `${minsWaiting}mins`) : null;
+              const isUnassigned = statusLower === 'unassigned';
+              const isAssigned = statusLower === 'assigned';
+              const isCompleted = ['completed', 'delivered', 'successful'].includes(statusLower);
+              const isCritical = taskCriticalEnabled && isUnassigned && minsWaiting !== null && minsWaiting >= taskCriticalMinutes;
+              const driverName = (t.driver_name || '').trim();
+              return (
+                <li key={t.task_id} className={`task-card-v2${isCritical ? ' task-card-v2-critical' : ''}`}>
+                  <div className="task-card-v2-top">
+                    <div className="task-card-v2-direction" title="Delivery direction">
+                      <span className="task-card-v2-direction-icon" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" fill="currentColor" style={{ transform: `rotate(${directionArrowRotation(getDirectionFromTask(t))}deg)` }}>
+                          <path d="M12 4l-6 8h4v8h4v-8h4L12 4z"/>
+                        </svg>
+                      </span>
+                      <span className="task-card-v2-direction-label">{directionDisplayLabel(getDirectionFromTask(t))}</span>
+                    </div>
+                    <span className="task-card-v2-order">
+                      <span className="task-card-v2-order-label">Order No.</span>
+                      <span className="task-card-v2-order-num">{t.order_id ?? t.task_id}</span>
+                    </span>
+                  </div>
+                  <div className="task-card-v2-merchant-row">
+                    <span className="task-card-v2-icon task-card-v2-icon-pin" aria-hidden="true">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/></svg>
+                    </span>
+                    <span className="task-card-v2-merchant-name">{(() => { const name = t.restaurant_name || (t.dropoff_merchant && !/^\d+$/.test(String(t.dropoff_merchant).trim()) ? t.dropoff_merchant : null) || '—'; const s = String(name).slice(0, 40); return s + (String(name).length > 40 ? '…' : ''); })()}</span>
+                    {isUnassigned && (
+                      <button
+                        type="button"
+                        className="btn-assign-driver"
+                        onClick={() => (onOpenTaskDetails ? onOpenTaskDetails(t.task_id) : navigate(`/tasks?highlight=${t.task_id}`))}
+                      >
+                        Assign Driver
+                      </button>
+                    )}
+                  </div>
+                  <div className="task-card-v2-row task-card-v2-customer-row">
+                    <span className="task-card-v2-icon task-card-v2-icon-user" aria-hidden="true">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>
+                    </span>
+                    <span className="task-card-v2-customer">{t.customer_name || '—'}</span>
+                  </div>
+                  <div className="task-card-v2-address-wrap">
+                    <div
+                      className="task-card-v2-address"
+                      title={t.delivery_address || undefined}
+                    >
+                      {(() => {
+                        const addr = t.delivery_address || '—';
+                        const maxLen = 90;
+                        return addr.length > maxLen ? `${addr.slice(0, maxLen)}…` : addr;
+                      })()}
+                    </div>
+                  </div>
+                  {isUnassigned && waitingMins && (
+                    <div className="task-card-v2-waiting">
+                      <span className="task-card-v2-icon" aria-hidden="true">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z"/></svg>
+                      </span>
+                      <span className="task-card-v2-waiting-duration">{waitingMins}</span> waiting
+                    </div>
+                  )}
+                  {(isAssigned || isCompleted) && (
+                    <div className="task-card-v2-driver task-card-v2-status">
+                      <span className={`task-card-v2-status-badge ${statusClass(t.status)}`}>{statusLabel(t.status)}</span>
+                      {driverName && <span className="task-card-v2-driver-name">{driverName}</span>}
+                    </div>
+                  )}
+                  <div className="task-card-v2-footer">
+                    <button
+                      type="button"
+                      className="task-card-details"
+                      onClick={() => onOpenTaskDetails ? onOpenTaskDetails(t.task_id) : navigate(`/tasks?highlight=${t.task_id}`)}
+                      aria-label={`View details for order ${t.order_id ?? t.task_id}`}
+                    >
+                      <span>View details</span>
+                      <svg className="task-card-details-arrow" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+                    </button>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </div>
+    </div>
+  );
+}
