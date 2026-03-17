@@ -335,7 +335,10 @@ export default function AgentPanel({ onOpenTaskDetails }) {
             type="button"
             className={`panel-stats-item ${highlight ? 'highlight' : ''} ${activeTab === key ? 'active' : ''}`}
             data-stat-key={key}
-            onClick={() => setActiveTab(key)}
+            onClick={() => {
+              setActiveTab(key);
+              setAllTasksView(false);
+            }}
             aria-pressed={activeTab === key}
             aria-label={`${label}: ${count}`}
           >

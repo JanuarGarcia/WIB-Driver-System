@@ -451,25 +451,74 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
                         <div className="task-detail-row"><span className="task-detail-label">Change</span><span className="task-detail-value">{order?.order_change != null ? `₱${Number(order.order_change).toFixed(2)}` : '—'}</span></div>
                       </div>
                     </div>
-                    {orderDetails.length > 0 && (
-                      <div className="task-detail-section order-items-block">
-                        <div className="task-detail-section-title">Ordered items</div>
-                        <ul className="order-items-list">
-                          {orderDetails.filter(Boolean).map((item, i) => (
-                            <li key={item.id ?? i}>
-                              {item.qty ?? 0}× {item.item_name ?? 'Item'}{item.size ? ` (${item.size})` : ''} — {item.discounted_price != null ? `₱${Number(item.discounted_price).toFixed(2)}` : item.normal_price != null ? `₱${Number(item.normal_price).toFixed(2)}` : '—'}
-                              {item.order_notes ? <span className="order-item-notes"> — {item.order_notes}</span> : null}
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    )}
+                    {orderDetails.length > 0 && (() => {
+                      const details = orderDetails.filter(Boolean);
+                      const getCategory = (item) => (item.category_name || item.category || item.item_category || '').toString().trim().toUpperCase() || 'Items';
+                      const groups = {};
+                      const categoryOrder = [];
+                      details.forEach((item, i) => {
+                        const cat = getCategory(item);
+                        if (!groups[cat]) {
+                          groups[cat] = [];
+                          categoryOrder.push(cat);
+                        }
+                        groups[cat].push({ ...item, _idx: i });
+                      });
+                      return (
+                        <div className="task-detail-section order-items-block">
+                          <div className="task-detail-section-title">Ordered items</div>
+                          <div className="order-items-by-category">
+                            {categoryOrder.map((cat) => (
+                              <div key={cat} className="order-items-category">
+                                <div className="order-items-category-header">{cat}</div>
+                                <ul className="order-items-list">
+                                  {(groups[cat] || []).map((item) => {
+                                    const qty = Number(item.qty) || 0;
+                                    const unitPrice = item.discounted_price != null ? Number(item.discounted_price) : item.normal_price != null ? Number(item.normal_price) : null;
+                                    const subtotal = unitPrice != null && !Number.isNaN(unitPrice) ? qty * unitPrice : null;
+                                    const unitStr = unitPrice != null && !Number.isNaN(unitPrice) ? `₱${unitPrice.toFixed(2)}` : '—';
+                                    const subtotalStr = subtotal != null ? `₱${subtotal.toFixed(2)}` : '—';
+                                    return (
+                                      <li key={item.id ?? item._idx} className="order-item-row">
+                                        <div className="order-item-line">
+                                          <span className="order-item-name">{qty} {item.item_name ?? 'Item'}{item.size ? ` (${item.size})` : ''}</span>
+                                          <span className="order-item-unit-price">{unitStr}</span>
+                                        </div>
+                                        <div className="order-item-subtotal">{subtotalStr}</div>
+                                        {item.order_notes && (
+                                          <div className="order-item-notes">{item.order_notes}</div>
+                                        )}
+                                      </li>
+                                    );
+                                  })}
+                                </ul>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })()}
                     {(order?.sub_total != null || order?.total_w_tax != null) && (
                       <div className="task-detail-section order-summary-block">
                         <div className="task-detail-section-title">Order summary</div>
                         <div className="task-detail-section-row">
                           <div className="task-detail-row"><span className="task-detail-label">Sub total</span><span className="task-detail-value">{order.sub_total != null ? `₱${Number(order.sub_total).toFixed(2)}` : '—'}</span></div>
-                          <div className="task-detail-row"><span className="task-detail-label">Convenience / delivery</span><span className="task-detail-value">{order?.delivery_charge != null ? `₱${Number(order.delivery_charge).toFixed(2)}` : '—'}</span></div>
+                          <div className="task-detail-row">
+                            <span className="task-detail-label">Convenience</span>
+                            <span className="task-detail-value">
+                              {order.convenience_fee != null && order.convenience_fee !== '' && !Number.isNaN(Number(order.convenience_fee))
+                                ? `₱${Number(order.convenience_fee).toFixed(2)}`
+                                : '—'}
+                            </span>
+                          </div>
+                          <div className="task-detail-row">
+                            <span className="task-detail-label">Delivery</span>
+                            <span className="task-detail-value">
+                              {order.delivery_charge != null && !Number.isNaN(Number(order.delivery_charge))
+                                ? `₱${Number(order.delivery_charge).toFixed(2)}`
+                                : '—'}
+                            </span>
+                          </div>
                           <div className="task-detail-row"><span className="task-detail-label">Total</span><span className="task-detail-value task-detail-value-total">{order?.total_w_tax != null ? `₱${Number(order.total_w_tax).toFixed(2)}` : '—'}</span></div>
                         </div>
                       </div>

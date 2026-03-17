@@ -542,93 +542,72 @@ export default function TaskPanel({ onOpenTaskDetails }) {
         {loading && 'Loading…'}
         {!loading && filtered.length === 0 && 'No tasks'}
         {!loading && filtered.length > 0 && (
-          <ul className="task-card-list">
+          <ul className="task-card-list task-card-list--all-tasks">
             {filtered.slice(0, 20).map((t) => {
               const statusNorm = normStatus(t.status);
               const created = t.date_created ? new Date(t.date_created) : null;
               const minsWaiting = created ? Math.max(0, Math.floor((Date.now() - created.getTime()) / 60000)) : null;
               const waitingMins = minsWaiting !== null ? (minsWaiting >= 60 ? `${Math.floor(minsWaiting / 60)} hr ${minsWaiting % 60} mins` : `${minsWaiting}mins`) : null;
-              const isUnassigned = statusNorm === 'unassigned';
-              const isAssigned = statusNorm === 'assigned';
-              const isAcknowledged = statusNorm === 'acknowledged';
-              const isStarted = statusNorm === 'started';
-              const isInProgress = statusNorm === 'inprogress';
-              const isCompleted = ['completed', 'delivered', 'successful'].includes(statusNorm);
-              const isCritical = taskCriticalEnabled && isUnassigned && minsWaiting !== null && minsWaiting >= taskCriticalMinutes;
-              const driverName = (t.driver_name || '').trim();
+              const isCritical = taskCriticalEnabled && statusNorm === 'unassigned' && minsWaiting !== null && minsWaiting >= taskCriticalMinutes;
+              const customerName = t.customer_name || '—';
+              const initial = (String(customerName).match(/\b\w/g) || [customerName[0] || '?']).slice(0, 2).join('').toUpperCase();
+              const avatarUrl = t.customer_photo || t.customer_image || t.driver_photo || null;
+              const location = t.delivery_address || t.restaurant_name || (t.dropoff_merchant && !/^\d+$/.test(String(t.dropoff_merchant).trim()) ? t.dropoff_merchant : null) || '—';
+              const locationShort = location.length > 50 ? `${location.slice(0, 50)}…` : location;
+              const orderedTime = created ? created.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit', hour12: true }) : null;
               return (
-                <li key={t.task_id} className={`task-card-v2${isCritical ? ' task-card-v2-critical' : ''}`}>
-                  <div className="task-card-v2-top">
-                    <div className="task-card-v2-direction" title="Delivery direction">
-                      <span className="task-card-v2-direction-icon" aria-hidden="true">
-                        <svg viewBox="0 0 24 24" fill="currentColor" style={{ transform: `rotate(${directionArrowRotation(getDirectionFromTask(t))}deg)` }}>
-                          <path d="M12 4l-6 8h4v8h4v-8h4L12 4z"/>
-                        </svg>
-                      </span>
-                      <span className="task-card-v2-direction-label">{directionDisplayLabel(getDirectionFromTask(t))}</span>
+                <li key={t.task_id} className={`task-card-all-tasks${isCritical ? ' task-card-all-tasks-critical' : ''}`}>
+                  <div className="task-card-all-tasks-inner">
+                    <div className="task-card-all-tasks-avatar" aria-hidden="true">
+                      {avatarUrl ? (
+                        <img src={avatarUrl} alt="" />
+                      ) : (
+                        <span className="task-card-all-tasks-avatar-initials">{initial}</span>
+                      )}
                     </div>
-                    <span className="task-card-v2-order">
-                      <span className="task-card-v2-order-label">Order No.</span>
-                      <span className="task-card-v2-order-num">{(() => { const raw = String(t.order_id ?? t.task_id ?? ''); return raw.length >= 3 ? raw.slice(-3) : raw || '—'; })()}</span>
-                    </span>
-                  </div>
-                  <div className="task-card-v2-merchant-row">
-                    <span className="task-card-v2-icon task-card-v2-icon-pin" aria-hidden="true">
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/></svg>
-                    </span>
-                    <span className="task-card-v2-merchant-name">{(() => { const name = t.restaurant_name || (t.dropoff_merchant && !/^\d+$/.test(String(t.dropoff_merchant).trim()) ? t.dropoff_merchant : null) || '—'; const s = String(name).slice(0, 40); return s + (String(name).length > 40 ? '…' : ''); })()}</span>
-                    {isUnassigned && (
+                    <div className="task-card-all-tasks-body">
+                      <div className="task-card-all-tasks-badges">
+                        {statusNorm === 'assigned' && (
+                          <>
+                            <span className="task-card-all-tasks-badge status-green">READY FOR PICKUP</span>
+                            <span className={`task-card-all-tasks-badge ${statusClass(statusNorm)}`}>assigned</span>
+                          </>
+                        )}
+                        {statusNorm !== 'assigned' && (
+                          <span className={`task-card-all-tasks-badge ${statusClass(statusNorm)}`}>{statusLabel(statusNorm)}</span>
+                        )}
+                      </div>
+                      {location !== '—' && (
+                        <div className="task-card-all-tasks-location" title={location}>{locationShort}</div>
+                      )}
+                      {orderedTime && (
+                        <div className="task-card-all-tasks-order-time">Ordered Time {orderedTime}</div>
+                      )}
+                      {waitingMins && (
+                        <div className="task-card-all-tasks-waiting">
+                          <span className="task-card-all-tasks-arrow" aria-hidden="true" style={{ color: 'var(--color-primary)' }}>
+                            <svg viewBox="0 0 24 24" fill="currentColor" style={{ transform: `rotate(${directionArrowRotation(getDirectionFromTask(t))}deg)` }}>
+                              <path d="M12 4l-6 8h4v8h4v-8h4L12 4z"/>
+                            </svg>
+                          </span>
+                          <span className="task-card-all-tasks-waiting-text">
+                            <span className="task-card-all-tasks-waiting-mins">{waitingMins}</span> waiting ni cx
+                          </span>
+                        </div>
+                      )}
+                      {(t.driver_name || '').trim() && (
+                        <div className="task-card-all-tasks-driver">{(t.driver_name || '').trim()}</div>
+                      )}
+                      <div className="task-card-all-tasks-name">{customerName}</div>
                       <button
                         type="button"
-                        className="btn-assign-driver"
-                        onClick={() => (onOpenTaskDetails ? onOpenTaskDetails(t.task_id) : navigate(`/tasks?highlight=${t.task_id}`))}
+                        className="task-card-all-tasks-details"
+                        onClick={() => onOpenTaskDetails ? onOpenTaskDetails(t.task_id) : navigate(`/tasks?highlight=${t.task_id}`)}
+                        aria-label={`View details for order ${t.order_id ?? t.task_id}`}
                       >
-                        Assign Driver
+                        Details
                       </button>
-                    )}
-                  </div>
-                  <div className="task-card-v2-row task-card-v2-customer-row">
-                    <span className="task-card-v2-icon task-card-v2-icon-user" aria-hidden="true">
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>
-                    </span>
-                    <span className="task-card-v2-customer">{t.customer_name || '—'}</span>
-                  </div>
-                  <div className="task-card-v2-address-wrap">
-                    <div
-                      className="task-card-v2-address"
-                      title={t.delivery_address || undefined}
-                    >
-                      {(() => {
-                        const addr = t.delivery_address || '—';
-                        const maxLen = 90;
-                        return addr.length > maxLen ? `${addr.slice(0, maxLen)}…` : addr;
-                      })()}
                     </div>
-                  </div>
-                  {isUnassigned && waitingMins && (
-                    <div className="task-card-v2-waiting">
-                      <span className="task-card-v2-icon" aria-hidden="true">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z"/></svg>
-                      </span>
-                      <span className="task-card-v2-waiting-duration">{waitingMins}</span> waiting
-                    </div>
-                  )}
-                  {(isAssigned || isAcknowledged || isStarted || isInProgress || isCompleted) && (
-                    <div className="task-card-v2-driver task-card-v2-status">
-                      <span className={`task-card-v2-status-badge ${statusClass(statusNorm)}`}>{statusLabel(statusNorm)}</span>
-                      {driverName && <span className="task-card-v2-driver-name">{driverName}</span>}
-                    </div>
-                  )}
-                  <div className="task-card-v2-footer">
-                    <button
-                      type="button"
-                      className="task-card-details"
-                      onClick={() => onOpenTaskDetails ? onOpenTaskDetails(t.task_id) : navigate(`/tasks?highlight=${t.task_id}`)}
-                      aria-label={`View details for order ${t.order_id ?? t.task_id}`}
-                    >
-                      <span>View details</span>
-                      <svg className="task-card-details-arrow" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
-                    </button>
                   </div>
                 </li>
               );
