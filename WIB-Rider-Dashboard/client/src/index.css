@@ -4389,7 +4389,9 @@ tr:hover { background: var(--bg-hover) !important; }
   flex-wrap: nowrap;
 }
 .order-item-name { font-size: 0.9375rem; color: var(--text-dark); flex: 1; min-width: 0; }
-.order-item-unit-price { font-size: 0.9375rem; color: var(--text-dark); flex-shrink: 0; font-variant-numeric: tabular-nums; }
+.order-item-line-total { font-size: 0.9375rem; color: var(--text-dark); flex-shrink: 0; font-variant-numeric: tabular-nums; }
+/* Unit price shown under the item name */
+.order-item-unit-price { font-size: 0.875rem; color: var(--text-muted-strong, var(--text-muted)); margin-top: 0.15rem; font-variant-numeric: tabular-nums; }
 .order-item-subtotal { font-size: 0.875rem; color: var(--text-muted-strong, var(--text-muted)); margin-top: 0.15rem; }
 .order-item-notes { font-size: 0.8125rem; color: var(--color-primary); margin-top: 0.2rem; line-height: 1.35; }
 .order-summary-block { margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border-soft); }

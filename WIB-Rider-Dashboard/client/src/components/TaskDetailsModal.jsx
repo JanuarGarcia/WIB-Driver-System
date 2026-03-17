@@ -481,10 +481,10 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
                                     return (
                                       <li key={item.id ?? item._idx} className="order-item-row">
                                         <div className="order-item-line">
-                                          <span className="order-item-name">{qty} {item.item_name ?? 'Item'}{item.size ? ` (${item.size})` : ''}</span>
-                                          <span className="order-item-unit-price">{unitStr}</span>
+                                          <span className="order-item-name">{qty}x {item.item_name ?? 'Item'}{item.size ? ` (${item.size})` : ''}</span>
+                                          <span className="order-item-line-total">{subtotalStr}</span>
                                         </div>
-                                        <div className="order-item-subtotal">{subtotalStr}</div>
+                                        <div className="order-item-unit-price">{unitStr}</div>
                                         {item.order_notes && (
                                           <div className="order-item-notes">{item.order_notes}</div>
                                         )}
