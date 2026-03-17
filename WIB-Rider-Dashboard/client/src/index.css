@@ -2555,9 +2555,9 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
 }
-/* When showing All tasks (task cards), match Tasks panel design */
+/* When showing All tasks (task cards), match Tasks panel design; no side/top/bottom padding so cards use full space */
 .panel.agent-panel.agent-panel--all-tasks .panel-body {
-  padding: 0.6rem 1rem;
+  padding: 0;
   background: #ebebe8;
 }
 [data-theme="dark"] .panel.agent-panel.agent-panel--all-tasks .panel-body {
