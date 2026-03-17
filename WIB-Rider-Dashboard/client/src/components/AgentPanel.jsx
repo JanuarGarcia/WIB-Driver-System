@@ -1,10 +1,86 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { api } from '../api';
+import { api, statusClass, statusLabel } from '../api';
 import { useTeamFilter } from '../context/TeamFilterContext';
 import { useTableAutoRefresh } from '../hooks/useTableAutoRefresh';
 
 const TABS = ['active', 'offline', 'total'];
+
+/** Baguio center [lat, lng] – used to compute delivery direction from coordinates */
+const BAGUIO_CENTER_LAT = 16.4023;
+const BAGUIO_CENTER_LNG = 120.596;
+
+function getBearing(fromLat, fromLng, toLat, toLng) {
+  const lat1 = (fromLat * Math.PI) / 180;
+  const lat2 = (toLat * Math.PI) / 180;
+  const dLng = ((toLng - fromLng) * Math.PI) / 180;
+  const y = Math.sin(dLng) * Math.cos(lat2);
+  const x = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLng);
+  let br = (Math.atan2(y, x) * 180) / Math.PI;
+  return (br + 360) % 360;
+}
+
+function bearingToCompass(bearing) {
+  if (bearing == null || Number.isNaN(bearing)) return null;
+  const b = ((Number(bearing) % 360) + 360) % 360;
+  const labels = [
+    { max: 22.5, label: 'North' },
+    { max: 67.5, label: 'North east' },
+    { max: 112.5, label: 'East' },
+    { max: 157.5, label: 'South east' },
+    { max: 202.5, label: 'South' },
+    { max: 247.5, label: 'South west' },
+    { max: 292.5, label: 'West' },
+    { max: 337.5, label: 'North west' },
+    { max: 360, label: 'North' },
+  ];
+  for (const { max, label } of labels) {
+    if (b <= max) return label;
+  }
+  return 'North';
+}
+
+function getDirectionFromTask(t) {
+  const fromApi = (t.direction != null && String(t.direction).trim() !== '') ? String(t.direction).trim() : null;
+  if (fromApi) return fromApi;
+  const lat = t.task_lat != null ? parseFloat(t.task_lat) : null;
+  const lng = t.task_lng != null ? parseFloat(t.task_lng) : null;
+  if (lat == null || lng == null || Number.isNaN(lat) || Number.isNaN(lng)) return null;
+  const bearing = getBearing(BAGUIO_CENTER_LAT, BAGUIO_CENTER_LNG, lat, lng);
+  return bearingToCompass(bearing);
+}
+
+function directionArrowRotation(dir) {
+  if (!dir || typeof dir !== 'string') return 135;
+  const v = dir.trim().toLowerCase().replace(/\s+/g, ' ');
+  const map = {
+    'north': 0, 'n': 0,
+    'north-east': 45, 'north east': 45, 'ne': 45,
+    'east': 90, 'e': 90,
+    'south-east': 135, 'south east': 135, 'se': 135,
+    'south': 180, 's': 180,
+    'south-west': 225, 'south west': 225, 'sw': 225,
+    'west': 270, 'w': 270,
+    'north-west': 315, 'north west': 315, 'nw': 315,
+  };
+  return map[v] ?? 135;
+}
+
+function directionDisplayLabel(dir) {
+  if (!dir || typeof dir !== 'string' || !dir.trim()) return '—';
+  const v = dir.trim().toLowerCase().replace(/\s+/g, ' ');
+  const map = {
+    'north': 'North', 'n': 'North',
+    'north-east': 'North-East', 'north east': 'North-East', 'ne': 'North-East',
+    'east': 'East', 'e': 'East',
+    'south-east': 'South-East', 'south east': 'South-East', 'se': 'South-East',
+    'south': 'South', 's': 'South',
+    'south-west': 'South-West', 'south west': 'South-West', 'sw': 'South-West',
+    'west': 'West', 'w': 'West',
+    'north-west': 'North-West', 'north west': 'North-West', 'nw': 'North-West',
+  };
+  return map[v] ?? dir.trim().split(/\s+/).map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join('-');
+}
 const SORT_OPTIONS = [
   { key: 'name-asc', label: 'Name A–Z' },
   { key: 'name-desc', label: 'Name Z–A' },
@@ -15,7 +91,12 @@ function todayStr() {
   return new Date().toISOString().slice(0, 10);
 }
 
-export default function AgentPanel() {
+const ASSIGNED_STATUSES = ['assigned', 'acknowledged', 'started', 'inprogress'];
+function normStatus(status) {
+  return (status || '').toLowerCase().replace(/\s+/g, '').replace(/_/g, '');
+}
+
+export default function AgentPanel({ onOpenTaskDetails }) {
   const navigate = useNavigate();
   const { selectedTeamId } = useTeamFilter();
   const [details, setDetails] = useState({ active: [], offline: [], total: [] });
@@ -27,9 +108,32 @@ export default function AgentPanel() {
   const [sortBy, setSortBy] = useState('name-asc');
   const [selectedDriver, setSelectedDriver] = useState(null);
   const [allTasksView, setAllTasksView] = useState(false);
+  const [assignedTasks, setAssignedTasks] = useState([]);
+  const [tasksLoading, setTasksLoading] = useState(false);
   const searchInputRef = useRef(null);
   const filterRef = useRef(null);
   const detailModalRef = useRef(null);
+
+  const fetchAssignedTasks = useCallback(() => {
+    setTasksLoading(true);
+    const dateStr = todayStr();
+    api(`tasks?date=${encodeURIComponent(dateStr)}`)
+      .then((list) => {
+        const tasks = Array.isArray(list) ? list : [];
+        const assigned = tasks.filter((t) => ASSIGNED_STATUSES.includes(normStatus(t.status)));
+        setAssignedTasks(assigned.sort((a, b) => {
+          const dateA = a.date_created ? new Date(a.date_created).getTime() : 0;
+          const dateB = b.date_created ? new Date(b.date_created).getTime() : 0;
+          return dateB - dateA;
+        }));
+      })
+      .catch(() => setAssignedTasks([]))
+      .finally(() => setTasksLoading(false));
+  }, []);
+
+  useEffect(() => {
+    if (allTasksView) fetchAssignedTasks();
+  }, [allTasksView, fetchAssignedTasks]);
 
   function loadAgents() {
     setLoading(true);
@@ -131,7 +235,7 @@ export default function AgentPanel() {
   };
 
   return (
-    <div className="panel agent-panel">
+    <div className={`panel agent-panel ${allTasksView ? 'agent-panel--all-tasks' : ''}`}>
       <div className="panel-header agent-header">
         <span className="panel-header-title-wrap">Agent</span>
         <div className="panel-header-actions agent-header-icons">
@@ -207,7 +311,7 @@ export default function AgentPanel() {
           </div>
         </div>
       </div>
-      <div className="panel-all-task-wrap">
+      <div className={`panel-all-task-wrap ${allTasksView ? 'panel-all-task-wrap--active' : ''}`}>
         <label className="btn-all-task btn-all-task-toggle">
           <input
             type="checkbox"
@@ -251,65 +355,87 @@ export default function AgentPanel() {
           </button>
         ))}
       </div>
-      <div className={`panel-body ${filtered.length === 0 ? 'empty' : ''}`}>
-        {loading && 'Loading…'}
-        {!loading && filtered.length === 0 && 'No agents'}
-        {!loading && filtered.length > 0 && allTasksView && (
-          <ul className="agent-card-list">
-            {filtered.slice(0, 25).map((d) => {
-              const name = d.full_name || d.username || `Driver #${d.id}`;
-              const initial = (name.match(/\b\w/g) || [name[0] || '?']).slice(0, 2).join('').toUpperCase();
-              const avatarUrl = d.avatar_url || d.photo_url || d.image_url;
-              const isActive = d.is_online === 1 || d.on_duty === 1;
-              const statusLabel = isActive ? 'Active' : 'Offline';
-              const lastSeen = d.last_seen ?? '—';
-              const onlineStatus = d.online_status === 'online' ? 'Online' : d.online_status === 'lost_connection' ? 'Lost connection' : null;
-              const statusLine = !isActive
-                ? `Last seen: ${lastSeen}`
-                : onlineStatus
-                  ? `${onlineStatus} · ${lastSeen}`
-                  : lastSeen;
-              const taskCount = d.total_task ?? d.task_count ?? 0;
-              return (
-                <li key={d.id} className={`agent-card ${!isActive ? 'agent-card-offline' : ''}`}>
-                  <div className="agent-card-inner">
-                    <div className="agent-card-avatar" aria-hidden="true">
-                      {avatarUrl ? (
-                        <img src={avatarUrl} alt="" />
-                      ) : (
-                        <span className="agent-card-avatar-initials">{initial}</span>
-                      )}
-                    </div>
-                    <div className="agent-card-body">
-                      <div className="agent-card-name">{name}</div>
-                      <div className="agent-card-meta">
-                        <span className={`agent-card-status agent-card-status--${isActive ? 'active' : 'offline'}`}>
-                          <span className="agent-card-status-dot" aria-hidden="true" />
-                          {statusLabel}
+      <div className={`panel-body ${allTasksView ? (!tasksLoading && assignedTasks.length === 0 ? 'empty' : '') : (filtered.length === 0 ? 'empty' : '')}`}>
+        {!allTasksView && loading && 'Loading…'}
+        {!allTasksView && !loading && filtered.length === 0 && 'No agents'}
+        {!loading && allTasksView && (
+          <>
+            {tasksLoading && 'Loading…'}
+            {!tasksLoading && assignedTasks.length === 0 && 'No assigned tasks'}
+            {!tasksLoading && assignedTasks.length > 0 && (
+              <ul className="task-card-list">
+                {assignedTasks.slice(0, 25).map((t) => {
+                  const statusNorm = normStatus(t.status);
+                  const created = t.date_created ? new Date(t.date_created) : null;
+                  const minsWaiting = created ? Math.max(0, Math.floor((Date.now() - created.getTime()) / 60000)) : null;
+                  const waitingMins = minsWaiting !== null ? (minsWaiting >= 60 ? `${Math.floor(minsWaiting / 60)} hr ${minsWaiting % 60} mins` : `${minsWaiting}mins`) : null;
+                  const driverName = (t.driver_name || '').trim();
+                  return (
+                    <li key={t.task_id} className="task-card-v2">
+                      <div className="task-card-v2-top">
+                        <div className="task-card-v2-direction" title="Delivery direction">
+                          <span className="task-card-v2-direction-icon" aria-hidden="true">
+                            <svg viewBox="0 0 24 24" fill="currentColor" style={{ transform: `rotate(${directionArrowRotation(getDirectionFromTask(t))}deg)` }}>
+                              <path d="M12 4l-6 8h4v8h4v-8h4L12 4z"/>
+                            </svg>
+                          </span>
+                          <span className="task-card-v2-direction-label">{directionDisplayLabel(getDirectionFromTask(t))}</span>
+                        </div>
+                        <span className="task-card-v2-order">
+                          <span className="task-card-v2-order-label">Order No.</span>
+                          <span className="task-card-v2-order-num">{(() => { const raw = String(t.order_id ?? t.task_id ?? ''); return raw.length >= 3 ? raw.slice(-3) : raw || '—'; })()}</span>
                         </span>
-                        <span className="agent-card-location">{d.current_location || d.location_address || '—'}</span>
-                        <span className="agent-card-waiting" title="Last seen">{statusLine}</span>
-                        {taskCount > 0 && (
-                          <span className="agent-card-tasks">Tasks today: {taskCount}</span>
-                        )}
                       </div>
-                    </div>
-                    <button
-                      type="button"
-                      className="agent-card-details"
-                      onClick={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        setSelectedDriver(d);
-                      }}
-                    >
-                      Details
-                    </button>
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
+                      <div className="task-card-v2-merchant-row">
+                        <span className="task-card-v2-icon task-card-v2-icon-pin" aria-hidden="true">
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/></svg>
+                        </span>
+                        <span className="task-card-v2-merchant-name">{(() => { const name = t.restaurant_name || (t.dropoff_merchant && !/^\d+$/.test(String(t.dropoff_merchant).trim()) ? t.dropoff_merchant : null) || '—'; const s = String(name).slice(0, 40); return s + (String(name).length > 40 ? '…' : ''); })()}</span>
+                      </div>
+                      <div className="task-card-v2-row task-card-v2-customer-row">
+                        <span className="task-card-v2-icon task-card-v2-icon-user" aria-hidden="true">
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>
+                        </span>
+                        <span className="task-card-v2-customer">{t.customer_name || '—'}</span>
+                      </div>
+                      <div className="task-card-v2-address-wrap">
+                        <div className="task-card-v2-address" title={t.delivery_address || undefined}>
+                          {(() => {
+                            const addr = t.delivery_address || '—';
+                            const maxLen = 90;
+                            return addr.length > maxLen ? `${addr.slice(0, maxLen)}…` : addr;
+                          })()}
+                        </div>
+                      </div>
+                      {waitingMins && (
+                        <div className="task-card-v2-waiting">
+                          <span className="task-card-v2-icon" aria-hidden="true">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z"/></svg>
+                          </span>
+                          <span className="task-card-v2-waiting-duration">{waitingMins}</span> waiting
+                        </div>
+                      )}
+                      <div className="task-card-v2-driver task-card-v2-status">
+                        <span className={`task-card-v2-status-badge ${statusClass(statusNorm)}`}>{statusLabel(statusNorm)}</span>
+                        {driverName && <span className="task-card-v2-driver-name">{driverName}</span>}
+                      </div>
+                      <div className="task-card-v2-footer">
+                        <button
+                          type="button"
+                          className="task-card-details"
+                          onClick={() => onOpenTaskDetails ? onOpenTaskDetails(t.task_id) : navigate(`/tasks?highlight=${t.task_id}`)}
+                          aria-label={`View details for order ${t.order_id ?? t.task_id}`}
+                        >
+                          <span>View details</span>
+                          <svg className="task-card-details-arrow" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+                        </button>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </>
         )}
         {!loading && filtered.length > 0 && !allTasksView && activeTab === 'active' && (
           <ul className="agent-detail-card-list agent-active-detail-list">

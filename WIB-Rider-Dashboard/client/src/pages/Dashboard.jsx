@@ -289,7 +289,7 @@ export default function Dashboard() {
       </div>
       </div>
       <div className="dashboard-layout-panel dashboard-layout-agents">
-        <AgentPanel />
+        <AgentPanel onOpenTaskDetails={setTaskDetailsId} />
       </div>
     </div>
   );
