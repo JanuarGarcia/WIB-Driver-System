@@ -1862,12 +1862,17 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
   gap: 0.35rem;
 }
 .panel-header-date-icon { display: inline-flex; color: var(--color-primary); }
-/* Tasks panel: brand header, elevated body */
+/* Tasks panel: brand header, elevated body; only task list scrolls */
 .panel.tasks-panel {
   background: var(--bg-panel);
   border-right: 1px solid var(--border-soft);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
 }
 .panel.tasks-panel .tasks-panel-header {
+  flex-shrink: 0;
   background: var(--color-primary);
   color: #fff;
   border-bottom: none;
@@ -2347,7 +2352,7 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
   color: var(--color-primary);
   font-weight: 500;
 }
-/* Sort indicator and All tasks bar: same row alignment (matching height, padding, typography) */
+/* Sort indicator and All tasks bar: same row alignment (matching height, padding, typography); fixed so only task list scrolls */
 .tasks-panel-sort-indicator {
   display: flex;
   align-items: center;
@@ -2357,6 +2362,9 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
   padding: 0.4rem 0.75rem;
   flex-shrink: 0;
 }
+.panel.tasks-panel .tasks-panel-sort-indicator {
+  flex-shrink: 0;
+}
 .tasks-panel-sort-indicator-text {
   font-size: 0.75rem;
   font-weight: 500;
@@ -2364,6 +2372,7 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
   color: var(--color-primary);
 }
 .panel.tasks-panel .panel-stats {
+  flex-shrink: 0;
   background: var(--bg-card);
   border-bottom: 1px solid var(--border-soft);
   flex-wrap: wrap;
@@ -2637,9 +2646,8 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
   height: 1rem;
   accent-color: var(--color-primary);
 }
-/* When All tasks view is active: remove the check (hide checkbox and icon), just show "All tasks" label */
-.panel-all-task-wrap--active .btn-all-task-toggle input[type="checkbox"],
-.panel-all-task-wrap--active .btn-all-task-icon {
+/* When All tasks view is active: hide only the unchecked box (first image), keep the green checkmark (second image) visible */
+.panel-all-task-wrap--active .btn-all-task-toggle input[type="checkbox"] {
   display: none;
 }
 [data-theme="dark"] .panel-all-task-wrap {
@@ -2803,9 +2811,17 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
   flex-shrink: 0;
 }
 .panel-filters .filter-pill { margin: 0; }
-.panel-body { flex: 1; overflow-y: auto; padding: 0.5rem 0.75rem; min-height: 0; }
+.panel-body { flex: 1; overflow-y: auto; padding: 0.5rem 0.75rem; min-height: 0; -webkit-overflow-scrolling: touch; }
 .panel-body.empty { display: flex; align-items: center; justify-content: center; color: var(--text-muted); font-size: 0.9rem; padding: 2rem; }
-.panel.tasks-panel .panel-body { padding: 0.6rem 1rem; background: #ebebe8; }
+/* Tasks panel: only this body scrolls (task list); header + sort + stats stay fixed */
+.panel.tasks-panel .panel-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 0.6rem 1rem;
+  background: #ebebe8;
+}
 
 /* Task list: card-style items with clear hierarchy */
 .task-card-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.75rem; }
@@ -2975,6 +2991,171 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
 .task-card-v2-footer .task-card-details:hover .task-card-details-arrow {
   transform: translateX(2px);
 }
+
+/* All-tasks card layout (image layout: avatar left, status/location/waiting/name/Details) – system design */
+.task-card-list--all-tasks {
+  gap: 0;
+  padding: 0;
+}
+.task-card-all-tasks {
+  padding: 0.75rem 0;
+  margin: 0;
+  list-style: none;
+  border-bottom: 1px solid var(--border-soft);
+  background: var(--bg-card);
+  transition: background 0.15s ease;
+}
+.task-card-all-tasks:last-child {
+  border-bottom: none;
+}
+.task-card-all-tasks:hover {
+  background: rgba(158, 195, 76, 0.04);
+}
+[data-theme="dark"] .task-card-all-tasks:hover {
+  background: rgba(158, 195, 76, 0.06);
+}
+.task-card-all-tasks-inner {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  min-width: 0;
+}
+.task-card-all-tasks-avatar {
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  min-height: 44px;
+  border-radius: 8px;
+  overflow: hidden;
+  flex-shrink: 0;
+  background: linear-gradient(160deg, rgba(158, 195, 76, 0.22), rgba(107, 140, 58, 0.12));
+  border: 1.5px solid rgba(158, 195, 76, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.task-card-all-tasks-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.task-card-all-tasks-avatar-initials {
+  font-weight: 600;
+  font-size: 0.875rem;
+  letter-spacing: 0.03em;
+  color: #3d4e24;
+}
+[data-theme="dark"] .task-card-all-tasks-avatar {
+  background: linear-gradient(160deg, rgba(158, 195, 76, 0.2), rgba(107, 140, 58, 0.1));
+  border-color: rgba(158, 195, 76, 0.4);
+}
+[data-theme="dark"] .task-card-all-tasks-avatar-initials {
+  color: #b8d96a;
+}
+.task-card-all-tasks-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  align-items: flex-start;
+}
+.task-card-all-tasks-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  align-items: center;
+}
+.task-card-all-tasks-badge {
+  padding: 0.2rem 0.5rem;
+  border-radius: 6px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+.task-card-all-tasks-badge.status-green {
+  background: var(--color-success-bg);
+  color: var(--color-success);
+}
+.task-card-all-tasks-badge.status-blue {
+  background: var(--color-info-bg);
+  color: var(--color-info);
+}
+.task-card-all-tasks-badge.status-red {
+  background: var(--color-danger-bg);
+  color: var(--color-danger);
+}
+.task-card-all-tasks-badge.status-amber {
+  background: var(--color-warning-bg);
+  color: var(--color-warning);
+}
+.task-card-all-tasks-badge.status-default {
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-soft);
+}
+.task-card-all-tasks-location {
+  font-size: 0.8125rem;
+  color: var(--text-dark);
+  line-height: 1.35;
+  word-break: break-word;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.task-card-all-tasks-order-time {
+  font-size: 0.75rem;
+  color: var(--color-primary);
+  font-weight: 500;
+}
+.task-card-all-tasks-waiting {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+}
+.task-card-all-tasks-arrow {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+}
+.task-card-all-tasks-arrow svg {
+  width: 14px;
+  height: 14px;
+}
+.task-card-all-tasks-waiting-mins {
+  color: var(--color-danger);
+  font-weight: 600;
+}
+.task-card-all-tasks-name {
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--text-dark);
+  line-height: 1.25;
+}
+.task-card-all-tasks-details {
+  font-size: 0.8125rem;
+  padding: 0.2rem 0;
+  background: transparent;
+  border: none;
+  color: var(--color-primary);
+  font-weight: 400;
+  text-decoration: underline;
+  cursor: pointer;
+  font-family: var(--font-family);
+  transition: color 0.15s;
+  margin-top: 0.15rem;
+}
+.task-card-all-tasks-details:hover {
+  color: var(--color-primary-hover);
+}
+
 /* Assign Driver: pill-shaped, light green bg, dark text (reference) */
 .btn-assign-driver {
   background: rgba(79, 99, 45, 0.2);
