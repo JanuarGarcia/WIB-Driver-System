@@ -1763,7 +1763,7 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
 /* Dashboard layout: Tasks | Map | Agent - three columns, map in center (fills viewport) */
 .dashboard-layout {
   display: grid;
-  grid-template-columns: 360px 1fr 280px;
+  grid-template-columns: 360px 1fr 340px;
   grid-template-rows: 1fr;
   flex: 1;
   min-height: 0;
@@ -5174,7 +5174,7 @@ tr:hover { background: var(--bg-hover) !important; }
 /* Responsive: dashboard sidebars collapse or stack, map remains focus */
 @media (max-width: 1200px) {
   .dashboard-layout {
-    grid-template-columns: 320px 1fr 240px;
+    grid-template-columns: 320px 1fr 280px;
   }
 }
 @media (max-width: 992px) {
