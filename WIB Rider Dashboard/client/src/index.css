@@ -2441,6 +2441,14 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
 .panel-stats--tasks .panel-stats-item[data-stat-key="assigned"].highlight .panel-stats-number,
 .panel-stats--tasks .panel-stats-item[data-stat-key="assigned"].highlight .panel-stats-label,
 .panel-stats--tasks .panel-stats-item[data-stat-key="assigned"].highlight .panel-stats-icon { color: var(--color-info); }
+.panel-stats--tasks .panel-stats-item[data-stat-key="started"] .panel-stats-icon { color: var(--color-info); }
+.panel-stats--tasks .panel-stats-item[data-stat-key="started"].highlight .panel-stats-number,
+.panel-stats--tasks .panel-stats-item[data-stat-key="started"].highlight .panel-stats-label,
+.panel-stats--tasks .panel-stats-item[data-stat-key="started"].highlight .panel-stats-icon { color: var(--color-info); }
+.panel-stats--tasks .panel-stats-item[data-stat-key="inprogress"] .panel-stats-icon { color: var(--color-primary); }
+.panel-stats--tasks .panel-stats-item[data-stat-key="inprogress"].highlight .panel-stats-number,
+.panel-stats--tasks .panel-stats-item[data-stat-key="inprogress"].highlight .panel-stats-label,
+.panel-stats--tasks .panel-stats-item[data-stat-key="inprogress"].highlight .panel-stats-icon { color: var(--color-primary); }
 .panel-stats--tasks .panel-stats-item[data-stat-key="completed"] .panel-stats-icon { color: var(--color-success); }
 .panel-stats--tasks .panel-stats-item[data-stat-key="completed"].highlight .panel-stats-number,
 .panel-stats--tasks .panel-stats-item[data-stat-key="completed"].highlight .panel-stats-label,
@@ -2513,6 +2521,14 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
 [data-theme="dark"] .panel-stats--tasks .panel-stats-item[data-stat-key="assigned"].highlight .panel-stats-number,
 [data-theme="dark"] .panel-stats--tasks .panel-stats-item[data-stat-key="assigned"].highlight .panel-stats-label,
 [data-theme="dark"] .panel-stats--tasks .panel-stats-item[data-stat-key="assigned"].highlight .panel-stats-icon { color: var(--color-info); }
+[data-theme="dark"] .panel-stats--tasks .panel-stats-item[data-stat-key="started"] .panel-stats-icon { color: var(--color-info); }
+[data-theme="dark"] .panel-stats--tasks .panel-stats-item[data-stat-key="started"].highlight .panel-stats-number,
+[data-theme="dark"] .panel-stats--tasks .panel-stats-item[data-stat-key="started"].highlight .panel-stats-label,
+[data-theme="dark"] .panel-stats--tasks .panel-stats-item[data-stat-key="started"].highlight .panel-stats-icon { color: var(--color-info); }
+[data-theme="dark"] .panel-stats--tasks .panel-stats-item[data-stat-key="inprogress"] .panel-stats-icon { color: var(--color-primary); }
+[data-theme="dark"] .panel-stats--tasks .panel-stats-item[data-stat-key="inprogress"].highlight .panel-stats-number,
+[data-theme="dark"] .panel-stats--tasks .panel-stats-item[data-stat-key="inprogress"].highlight .panel-stats-label,
+[data-theme="dark"] .panel-stats--tasks .panel-stats-item[data-stat-key="inprogress"].highlight .panel-stats-icon { color: var(--color-primary); }
 [data-theme="dark"] .panel-stats--tasks .panel-stats-item[data-stat-key="completed"] .panel-stats-icon { color: var(--color-success); }
 [data-theme="dark"] .panel-stats--tasks .panel-stats-item[data-stat-key="completed"].highlight .panel-stats-number,
 [data-theme="dark"] .panel-stats--tasks .panel-stats-item[data-stat-key="completed"].highlight .panel-stats-label,

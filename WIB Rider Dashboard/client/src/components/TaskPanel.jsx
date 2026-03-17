@@ -54,7 +54,7 @@ function getCalendarGrid(viewYear, viewMonth) {
   return [...all, ...trailing];
 }
 
-const TABS = ['unassigned', 'assigned', 'completed'];
+const TABS = ['unassigned', 'assigned', 'started', 'inprogress', 'completed'];
 const SORT_ORDER_OPTIONS = [
   { key: 'rfp', label: 'RFP' },
   { key: 'manual', label: 'Manual' },
@@ -149,7 +149,7 @@ function directionDisplayLabel(dir) {
 export default function TaskPanel({ onOpenTaskDetails }) {
   const navigate = useNavigate();
   const [tasks, setTasks] = useState([]);
-  const [counts, setCounts] = useState({ unassigned: 0, assigned: 0, completed: 0 });
+  const [counts, setCounts] = useState({ unassigned: 0, assigned: 0, started: 0, inprogress: 0, completed: 0 });
   const [activeTab, setActiveTab] = useState('unassigned');
   const [loading, setLoading] = useState(true);
   const [selectedDateTime, setSelectedDateTime] = useState(() => new Date());
@@ -279,8 +279,10 @@ export default function TaskPanel({ onOpenTaskDetails }) {
         setTasks(list || []);
         const u = (list || []).filter(t => (t.status || '').toLowerCase() === 'unassigned').length;
         const a = (list || []).filter(t => (t.status || '').toLowerCase() === 'assigned').length;
+        const st = (list || []).filter(t => (t.status || '').toLowerCase() === 'started').length;
+        const ip = (list || []).filter(t => (t.status || '').toLowerCase() === 'inprogress').length;
         const c = (list || []).filter(t => ['completed', 'delivered', 'successful'].includes((t.status || '').toLowerCase())).length;
-        setCounts({ unassigned: u, assigned: a, completed: c });
+        setCounts({ unassigned: u, assigned: a, started: st, inprogress: ip, completed: c });
       })
       .catch(() => setTasks([]))
       .finally(() => setLoading(false));
@@ -296,6 +298,8 @@ export default function TaskPanel({ onOpenTaskDetails }) {
     const s = (t.status || '').toLowerCase();
     if (activeTab === 'unassigned') return s === 'unassigned';
     if (activeTab === 'assigned') return s === 'assigned';
+    if (activeTab === 'started') return s === 'started';
+    if (activeTab === 'inprogress') return s === 'inprogress';
     return ['completed', 'delivered', 'successful'].includes(s);
   });
 
@@ -317,6 +321,8 @@ export default function TaskPanel({ onOpenTaskDetails }) {
   const statItems = [
     { key: 'unassigned', label: 'Unassigned', count: counts.unassigned ?? 0, highlight: activeTab === 'unassigned', icon: 'clock' },
     { key: 'assigned', label: 'Assigned', count: counts.assigned ?? 0, highlight: activeTab === 'assigned', icon: 'user-check' },
+    { key: 'started', label: 'Started', count: counts.started ?? 0, highlight: activeTab === 'started', icon: 'play' },
+    { key: 'inprogress', label: 'In progress', count: counts.inprogress ?? 0, highlight: activeTab === 'inprogress', icon: 'loader' },
     { key: 'completed', label: 'Completed', count: counts.completed ?? 0, highlight: activeTab === 'completed', icon: 'check' },
   ];
 
@@ -512,6 +518,12 @@ export default function TaskPanel({ onOpenTaskDetails }) {
               {icon === 'user-check' && (
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="m16 11 2 2 4-4"/></svg>
               )}
+              {icon === 'play' && (
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+              )}
+              {icon === 'loader' && (
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+              )}
               {icon === 'check' && (
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
               )}
@@ -533,6 +545,8 @@ export default function TaskPanel({ onOpenTaskDetails }) {
               const waitingMins = minsWaiting !== null ? (minsWaiting >= 60 ? `${Math.floor(minsWaiting / 60)} hr ${minsWaiting % 60} mins` : `${minsWaiting}mins`) : null;
               const isUnassigned = statusLower === 'unassigned';
               const isAssigned = statusLower === 'assigned';
+              const isStarted = statusLower === 'started';
+              const isInProgress = statusLower === 'inprogress';
               const isCompleted = ['completed', 'delivered', 'successful'].includes(statusLower);
               const isCritical = taskCriticalEnabled && isUnassigned && minsWaiting !== null && minsWaiting >= taskCriticalMinutes;
               const driverName = (t.driver_name || '').trim();
@@ -593,7 +607,7 @@ export default function TaskPanel({ onOpenTaskDetails }) {
                       <span className="task-card-v2-waiting-duration">{waitingMins}</span> waiting
                     </div>
                   )}
-                  {(isAssigned || isCompleted) && (
+                  {(isAssigned || isStarted || isInProgress || isCompleted) && (
                     <div className="task-card-v2-driver task-card-v2-status">
                       <span className={`task-card-v2-status-badge ${statusClass(t.status)}`}>{statusLabel(t.status)}</span>
                       {driverName && <span className="task-card-v2-driver-name">{driverName}</span>}
