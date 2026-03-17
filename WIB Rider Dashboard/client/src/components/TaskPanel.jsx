@@ -278,9 +278,10 @@ export default function TaskPanel({ onOpenTaskDetails }) {
       .then((list) => {
         setTasks(list || []);
         const u = (list || []).filter(t => (t.status || '').toLowerCase() === 'unassigned').length;
-        const a = (list || []).filter(t => (t.status || '').toLowerCase() === 'assigned').length;
-        const st = (list || []).filter(t => (t.status || '').toLowerCase() === 'started').length;
-        const ip = (list || []).filter(t => (t.status || '').toLowerCase() === 'inprogress').length;
+        const a = (list || []).filter(t => ['assigned', 'acknowledged'].includes((t.status || '').toLowerCase())).length;
+        const norm = (status) => (status || '').toLowerCase().replace(/\s+/g, '').replace(/_/g, '');
+        const st = (list || []).filter(t => norm(t.status) === 'started').length;
+        const ip = (list || []).filter(t => norm(t.status) === 'inprogress').length;
         const c = (list || []).filter(t => ['completed', 'delivered', 'successful'].includes((t.status || '').toLowerCase())).length;
         setCounts({ unassigned: u, assigned: a, started: st, inprogress: ip, completed: c });
       })
@@ -294,10 +295,11 @@ export default function TaskPanel({ onOpenTaskDetails }) {
 
   useTableAutoRefresh(fetchTasks, activityRefreshIntervalMs);
 
+  const normStatus = (status) => (status || '').toLowerCase().replace(/\s+/g, '').replace(/_/g, '');
   const filteredByTab = tasks.filter(t => {
-    const s = (t.status || '').toLowerCase();
+    const s = normStatus(t.status);
     if (activeTab === 'unassigned') return s === 'unassigned';
-    if (activeTab === 'assigned') return s === 'assigned';
+    if (activeTab === 'assigned') return ['assigned', 'acknowledged'].includes(s);
     if (activeTab === 'started') return s === 'started';
     if (activeTab === 'inprogress') return s === 'inprogress';
     return ['completed', 'delivered', 'successful'].includes(s);
@@ -539,15 +541,16 @@ export default function TaskPanel({ onOpenTaskDetails }) {
         {!loading && filtered.length > 0 && (
           <ul className="task-card-list">
             {filtered.slice(0, 20).map((t) => {
-              const statusLower = (t.status || '').toLowerCase();
+              const statusNorm = normStatus(t.status);
               const created = t.date_created ? new Date(t.date_created) : null;
               const minsWaiting = created ? Math.max(0, Math.floor((Date.now() - created.getTime()) / 60000)) : null;
               const waitingMins = minsWaiting !== null ? (minsWaiting >= 60 ? `${Math.floor(minsWaiting / 60)} hr ${minsWaiting % 60} mins` : `${minsWaiting}mins`) : null;
-              const isUnassigned = statusLower === 'unassigned';
-              const isAssigned = statusLower === 'assigned';
-              const isStarted = statusLower === 'started';
-              const isInProgress = statusLower === 'inprogress';
-              const isCompleted = ['completed', 'delivered', 'successful'].includes(statusLower);
+              const isUnassigned = statusNorm === 'unassigned';
+              const isAssigned = statusNorm === 'assigned';
+              const isAcknowledged = statusNorm === 'acknowledged';
+              const isStarted = statusNorm === 'started';
+              const isInProgress = statusNorm === 'inprogress';
+              const isCompleted = ['completed', 'delivered', 'successful'].includes(statusNorm);
               const isCritical = taskCriticalEnabled && isUnassigned && minsWaiting !== null && minsWaiting >= taskCriticalMinutes;
               const driverName = (t.driver_name || '').trim();
               return (
@@ -607,9 +610,9 @@ export default function TaskPanel({ onOpenTaskDetails }) {
                       <span className="task-card-v2-waiting-duration">{waitingMins}</span> waiting
                     </div>
                   )}
-                  {(isAssigned || isStarted || isInProgress || isCompleted) && (
+                  {(isAssigned || isAcknowledged || isStarted || isInProgress || isCompleted) && (
                     <div className="task-card-v2-driver task-card-v2-status">
-                      <span className={`task-card-v2-status-badge ${statusClass(t.status)}`}>{statusLabel(t.status)}</span>
+                      <span className={`task-card-v2-status-badge ${statusClass(statusNorm)}`}>{statusLabel(statusNorm)}</span>
                       {driverName && <span className="task-card-v2-driver-name">{driverName}</span>}
                     </div>
                   )}
