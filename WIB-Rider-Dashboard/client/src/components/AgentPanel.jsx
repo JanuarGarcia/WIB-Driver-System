@@ -26,6 +26,7 @@ export default function AgentPanel() {
   const [filterDropdownOpen, setFilterDropdownOpen] = useState(false);
   const [sortBy, setSortBy] = useState('name-asc');
   const [selectedDriver, setSelectedDriver] = useState(null);
+  const [allTasksView, setAllTasksView] = useState(false);
   const searchInputRef = useRef(null);
   const filterRef = useRef(null);
   const detailModalRef = useRef(null);
@@ -207,7 +208,13 @@ export default function AgentPanel() {
         </div>
       </div>
       <div className="panel-all-task-wrap">
-        <Link to="/tasks" className="btn-all-task" aria-label="View all tasks">
+        <label className="btn-all-task btn-all-task-toggle">
+          <input
+            type="checkbox"
+            checked={allTasksView}
+            onChange={(e) => setAllTasksView(e.target.checked)}
+            aria-label="Show all tasks view"
+          />
           <span className="btn-all-task-icon" aria-hidden="true">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M9 11l3 3L22 4" />
@@ -215,7 +222,7 @@ export default function AgentPanel() {
             </svg>
           </span>
           <span className="btn-all-task-text">All tasks</span>
-        </Link>
+        </label>
       </div>
       <div className="panel-stats panel-stats--agents">
         {agentStatItems.map(({ key, label, count, highlight, icon }) => (
@@ -247,7 +254,7 @@ export default function AgentPanel() {
       <div className={`panel-body ${filtered.length === 0 ? 'empty' : ''}`}>
         {loading && 'Loading…'}
         {!loading && filtered.length === 0 && 'No agents'}
-        {!loading && filtered.length > 0 && activeTab === 'active' && (
+        {!loading && filtered.length > 0 && allTasksView && (
           <ul className="agent-card-list">
             {filtered.slice(0, 25).map((d) => {
               const name = d.full_name || d.username || `Driver #${d.id}`;
@@ -304,7 +311,49 @@ export default function AgentPanel() {
             })}
           </ul>
         )}
-        {!loading && filtered.length > 0 && (activeTab === 'offline' || activeTab === 'total') && (
+        {!loading && filtered.length > 0 && !allTasksView && activeTab === 'active' && (
+          <ul className="agent-detail-card-list agent-active-detail-list">
+            {filtered.slice(0, 25).map((d) => {
+              const name = d.full_name || d.username || `Driver #${d.id}`;
+              const taskCount = d.total_task ?? d.task_count ?? d.assigned_tasks ?? 0;
+              const lastSeen = d.last_seen ?? d.last_activity ?? 'Moments ago';
+              const device = (d.device ?? d.platform ?? 'android').toString().toLowerCase();
+              return (
+                <li key={d.id} className="agent-detail-card agent-active-detail-row">
+                  <div className="agent-active-detail-left">
+                    <span className="agent-active-detail-dot" aria-hidden="true" />
+                    <div className="agent-active-detail-info">
+                      <div className="agent-active-detail-name">{name}</div>
+                      <div className="agent-active-detail-meta">Online</div>
+                      <div className="agent-active-detail-meta agent-active-detail-muted">{lastSeen}</div>
+                      <div className="agent-active-detail-device">{device}</div>
+                      <div className="agent-active-detail-duty">
+                        <span className="agent-active-detail-duty-check" aria-hidden="true">✓</span>
+                        On-Duty
+                      </div>
+                      <div className="agent-detail-card-actions agent-active-detail-actions">
+                        <button
+                          type="button"
+                          className="agent-detail-card-link"
+                          onClick={(e) => { e.preventDefault(); e.stopPropagation(); setSelectedDriver(d); }}
+                        >
+                          Details
+                        </button>
+                        <span className="agent-detail-card-link-sep"> </span>
+                        <button type="button" className="agent-detail-card-link" onClick={() => navigate('/broadcast-logs')}>Send Push</button>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="agent-active-detail-right">
+                    <span className="agent-active-detail-task-num">{taskCount}</span>
+                    <span className="agent-active-detail-task-label">Task{taskCount !== 1 ? 's' : ''}</span>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+        {!loading && filtered.length > 0 && !allTasksView && (activeTab === 'offline' || activeTab === 'total') && (
           <ul className="agent-detail-card-list">
             {filtered.slice(0, 25).map((d) => {
               const name = d.full_name || d.username || `Driver #${d.id}`;

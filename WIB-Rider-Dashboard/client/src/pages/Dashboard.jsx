@@ -14,6 +14,7 @@ export default function Dashboard() {
   const navigate = useNavigate();
   const { selectedTeamId } = useTeamFilter();
   const [taskDetailsId, setTaskDetailsId] = useState(null);
+  const [mobileSection, setMobileSection] = useState('tasks'); // 'tasks' | 'map' | 'agents' for small screens
   const [locations, setLocations] = useState([]);
   const [merchants, setMerchants] = useState([]);
   const [mapProvider, setMapProvider] = useState('mapbox');
@@ -189,8 +190,36 @@ export default function Dashboard() {
   };
 
   return (
-    <div className="dashboard-layout">
-      <TaskPanel onOpenTaskDetails={setTaskDetailsId} />
+    <div className="dashboard-layout" data-mobile-section={mobileSection}>
+      <nav className="dashboard-mobile-tabs" aria-label="Dashboard sections">
+        <button
+          type="button"
+          className={`dashboard-mobile-tab ${mobileSection === 'tasks' ? 'active' : ''}`}
+          onClick={() => setMobileSection('tasks')}
+          aria-pressed={mobileSection === 'tasks'}
+        >
+          Tasks
+        </button>
+        <button
+          type="button"
+          className={`dashboard-mobile-tab ${mobileSection === 'map' ? 'active' : ''}`}
+          onClick={() => setMobileSection('map')}
+          aria-pressed={mobileSection === 'map'}
+        >
+          Map
+        </button>
+        <button
+          type="button"
+          className={`dashboard-mobile-tab ${mobileSection === 'agents' ? 'active' : ''}`}
+          onClick={() => setMobileSection('agents')}
+          aria-pressed={mobileSection === 'agents'}
+        >
+          Agents
+        </button>
+      </nav>
+      <div className="dashboard-layout-panel dashboard-layout-tasks">
+        <TaskPanel onOpenTaskDetails={setTaskDetailsId} />
+      </div>
       {taskDetailsId != null &&
         createPortal(
           <TaskDetailsModal
@@ -205,6 +234,7 @@ export default function Dashboard() {
           />,
           document.body
         )}
+      <div className="dashboard-layout-panel dashboard-layout-map">
       <div className="dashboard-map-wrap">
         <div id="map" className="dashboard-map-inner">
           <MapErrorBoundary
@@ -257,7 +287,10 @@ export default function Dashboard() {
           </div>
         )}
       </div>
-      <AgentPanel />
+      </div>
+      <div className="dashboard-layout-panel dashboard-layout-agents">
+        <AgentPanel />
+      </div>
     </div>
   );
 }

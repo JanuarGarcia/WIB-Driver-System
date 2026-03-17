@@ -8,10 +8,18 @@ const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'Ju
 const MONTH_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const DAY_HEADERS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
+function toDisplayDate(date) {
+  const d = date instanceof Date ? date : new Date(date);
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+}
+function toDisplayTime12h(date) {
+  const d = date instanceof Date ? date : new Date(date);
+  return d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit', hour12: true });
+}
 function toDisplayDateTime(date) {
   const d = date instanceof Date ? date : new Date(date);
   const dateStr = d.toISOString().slice(0, 10);
-  const timeStr = d.toTimeString().slice(0, 8);
+  const timeStr = d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit', hour12: true });
   return `${dateStr} - ${timeStr}`;
 }
 function toInputDateTime(date) {
@@ -163,6 +171,7 @@ export default function TaskPanel({ onOpenTaskDetails }) {
   const [activityRefreshIntervalMs, setActivityRefreshIntervalMs] = useState(30000);
   const [taskCriticalEnabled, setTaskCriticalEnabled] = useState(false);
   const [taskCriticalMinutes, setTaskCriticalMinutes] = useState(5);
+  const [liveTime, setLiveTime] = useState(() => new Date());
   const calendarRef = useRef(null);
   const sortRef = useRef(null);
 
@@ -291,6 +300,12 @@ export default function TaskPanel({ onOpenTaskDetails }) {
     fetchTasks();
   }, [fetchTasks]);
 
+  useEffect(() => {
+    const tick = () => setLiveTime(new Date());
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, []);
+
   useTableAutoRefresh(fetchTasks, activityRefreshIntervalMs);
 
   const normStatus = (status) => (status || '').toLowerCase().replace(/\s+/g, '').replace(/_/g, '');
@@ -337,7 +352,7 @@ export default function TaskPanel({ onOpenTaskDetails }) {
             <span className="panel-header-date-icon" aria-hidden="true">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M19 4h-1V2h-2v2H8V2H6v2H5c-1.11 0-1.99.9-1.99 2L3 20c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 16H5V9h14v11z"/></svg>
             </span>
-            <span className="tasks-panel-date-text">{toDisplayDateTime(selectedDateTime)}</span>
+            <span className="tasks-panel-date-text">{toDisplayDate(selectedDateTime)} · {toDisplayTime12h(liveTime)}</span>
           </button>
           {calendarOpen && createPortal(
             <div
@@ -554,7 +569,7 @@ export default function TaskPanel({ onOpenTaskDetails }) {
                     </div>
                     <span className="task-card-v2-order">
                       <span className="task-card-v2-order-label">Order No.</span>
-                      <span className="task-card-v2-order-num">{t.order_id ?? t.task_id}</span>
+                      <span className="task-card-v2-order-num">{(() => { const raw = String(t.order_id ?? t.task_id ?? ''); return raw.length >= 3 ? raw.slice(-3) : raw || '—'; })()}</span>
                     </span>
                   </div>
                   <div className="task-card-v2-merchant-row">
