@@ -1758,16 +1758,14 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
 
 /* Main content */
 .main { flex: 1; display: flex; flex-direction: column; min-height: 0; overflow-x: hidden; overflow-y: auto; }
-.main:has(.dashboard-layout) { overflow: hidden; display: flex; flex-direction: column; min-height: 0; }
-/* Let the main content area (Routes wrapper) fill so dashboard can stretch */
-.main:has(.dashboard-layout) > * { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-.main:has(.dashboard-layout) .dashboard-layout { flex: 1; min-height: 0; }
+.main:has(.dashboard-layout) { overflow: hidden; }
 
-/* Dashboard layout: Tasks | Map | Agent - three columns, map in center (fills viewport). Equal side panel widths for symmetry. */
+/* Dashboard layout: Tasks | Map | Agent - three columns, map in center (fills viewport) */
 .dashboard-layout {
   display: grid;
-  grid-template-columns: 360px 1fr 360px;
+  grid-template-columns: 360px 1fr 340px;
   grid-template-rows: 1fr;
+  flex: 1;
   min-height: 0;
   height: 100%;
   margin: 0 -1rem -1rem -1rem;
@@ -1779,63 +1777,14 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
   overflow: hidden;
 }
 .dashboard-layout .dashboard-layout-tasks { grid-area: tasks; min-height: 0; display: flex; flex-direction: column; }
-.dashboard-layout .dashboard-layout-tasks .tasks-panel { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.dashboard-layout .dashboard-layout-tasks .tasks-panel { flex: 1; min-height: 0; }
 .dashboard-layout .dashboard-layout-map { grid-area: map; min-height: 0; display: flex; flex-direction: column; }
 .dashboard-layout .dashboard-layout-map .dashboard-map-wrap { flex: 1; min-height: 0; }
 .dashboard-layout .dashboard-layout-agents { grid-area: agents; min-height: 0; display: flex; flex-direction: column; }
-.dashboard-layout .dashboard-layout-agents .agent-panel { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.dashboard-layout .dashboard-layout-agents .agent-panel { flex: 1; min-height: 0; }
 .dashboard-layout {
   grid-template-areas: "tasks map agents";
-  align-items: stretch;
 }
-/* Side panels: identical heights and row alignment so Tasks and Agent match exactly */
-.dashboard-layout .tasks-panel .tasks-panel-header,
-.dashboard-layout .agent-panel .panel-header.agent-header {
-  box-sizing: border-box;
-  height: 52px;
-  min-height: 52px;
-  padding: 0.75rem 0.75rem;
-  flex-shrink: 0;
-}
-.dashboard-layout .tasks-panel-sort-indicator,
-.dashboard-layout .panel-all-task-wrap {
-  box-sizing: border-box;
-  height: 2.5rem;
-  min-height: 2.5rem;
-  padding: 0 0.75rem;
-  display: flex;
-  align-items: center;
-  flex-shrink: 0;
-  background: rgba(79, 99, 45, 0.08);
-  border-bottom: 1px solid var(--border-soft);
-}
-.dashboard-layout .tasks-panel-sort-indicator { justify-content: flex-start; }
-.dashboard-layout .panel-all-task-wrap { justify-content: flex-end; }
-.dashboard-layout .tasks-panel-sort-indicator .tasks-panel-sort-indicator-text,
-.dashboard-layout .panel-all-task-wrap .btn-all-task-text { font-size: 0.75rem; font-weight: 500; }
-.dashboard-layout .tasks-panel .panel-stats,
-.dashboard-layout .agent-panel .panel-stats {
-  flex-shrink: 0;
-  padding: 0.75rem;
-  gap: 0.5rem;
-}
-.dashboard-layout .tasks-panel .panel-stats .panel-stats-number,
-.dashboard-layout .agent-panel .panel-stats .panel-stats-number {
-  font-size: 2.125rem;
-  font-weight: 700;
-}
-.dashboard-layout .tasks-panel .panel-stats .panel-stats-label,
-.dashboard-layout .agent-panel .panel-stats .panel-stats-label {
-  font-size: 0.8125rem;
-  font-weight: 400;
-}
-.dashboard-layout .tasks-panel .panel-body,
-.dashboard-layout .agent-panel .panel-body {
-  flex: 1 1 0;
-  min-height: 0;
-  padding: 0.6rem 1rem;
-}
-.dashboard-layout .agent-panel.agent-panel--all-tasks .panel-body { padding: 0; }
 .dashboard-mobile-tabs {
   display: none;
 }
@@ -1927,7 +1876,7 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
   background: var(--color-primary);
   color: #fff;
   border-bottom: none;
-  padding: 0.8rem 0.75rem;
+  padding: 0.8rem 0.65rem;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -2433,11 +2382,11 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
 .panel.tasks-panel .panel-stats .panel-stats-item {
   flex: 1 1 4.5rem;
   min-width: 4.5rem;
-  padding: 0.75rem 0.5rem;
-  gap: 0.35rem;
+  padding: 0.6rem 0.4rem;
+  gap: 0.25rem;
 }
-.panel.tasks-panel .panel-stats .panel-stats-number { font-size: 2.125rem; font-weight: 700; }
-.panel.tasks-panel .panel-stats .panel-stats-label { font-size: 0.8125rem; font-weight: 400; }
+.panel.tasks-panel .panel-stats .panel-stats-number { font-size: 1.5rem; }
+.panel.tasks-panel .panel-stats .panel-stats-label { font-size: 0.65rem; }
 .panel.tasks-panel .panel-filters { background: #ebebe8; border-bottom: 1px solid var(--border-soft); }
 
 /* Stats bar (Unassigned | Assigned | Started | In progress | Completed / Active | Offline | Total) – professional */
@@ -2566,14 +2515,13 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
   background: var(--color-primary);
   color: #fff;
   border-bottom: none;
-  padding: 0.8rem 0.75rem;
+  padding: 0.8rem 1rem;
   overflow: visible;
   display: flex;
   align-items: center;
   justify-content: space-between;
   min-height: 52px;
   box-sizing: border-box;
-  flex-shrink: 0;
 }
 .panel.agent-panel .panel-header.agent-header .agent-header-icons {
   overflow: visible;
@@ -2593,23 +2541,7 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
   background: rgba(255,255,255,.2);
 }
 .panel.agent-panel .panel-filters { background: var(--bg-card); border-bottom: 1px solid var(--border-soft); }
-/* Agent panel stats: same structure and typography as Tasks panel for side-by-side alignment */
-.panel.agent-panel .panel-stats {
-  flex-shrink: 0;
-  background: var(--bg-card);
-  border-bottom: 1px solid var(--border-soft);
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  padding: 0.5rem 0.75rem;
-}
-.panel.agent-panel .panel-stats .panel-stats-item {
-  flex: 1 1 4.5rem;
-  min-width: 4.5rem;
-  padding: 0.75rem 0.5rem;
-  gap: 0.35rem;
-}
-.panel.agent-panel .panel-stats .panel-stats-number { font-size: 2.125rem; font-weight: 700; }
-.panel.agent-panel .panel-stats .panel-stats-label { font-size: 0.8125rem; font-weight: 400; }
+.panel.agent-panel .panel-stats { background: var(--bg-card); }
 
 .panel.agent-panel {
   display: flex;
@@ -2622,8 +2554,6 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
   min-height: 0;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
-  padding: 0.6rem 1rem;
-  background: #ebebe8;
 }
 /* When showing All tasks (task cards), match Tasks panel design; no side/top/bottom padding so cards use full space */
 .panel.agent-panel.agent-panel--all-tasks .panel-body {
@@ -5394,25 +5324,7 @@ tr:hover { background: var(--bg-hover) !important; }
     background: var(--bg-panel);
     -webkit-overflow-scrolling: touch;
   }
-  .dashboard-layout .panel.agent-panel .panel-stats {
-    padding: 0.65rem 0.85rem;
-    gap: 0.6rem;
-  }
-  .dashboard-layout .panel.agent-panel .panel-stats .panel-stats-item {
-    min-width: 5rem;
-    padding: 0.7rem 0.5rem;
-    gap: 0.35rem;
-  }
-  .dashboard-layout .panel.agent-panel .panel-stats .panel-stats-number {
-    font-size: 1.625rem;
-    font-weight: 700;
-  }
-  .dashboard-layout .panel.agent-panel .panel-stats .panel-stats-label {
-    font-size: 0.6875rem;
-    letter-spacing: 0.06em;
-  }
   .dashboard-layout .panel.agent-panel .panel-body {
-    padding: 0.75rem 0.85rem;
     background: var(--bg-panel);
     -webkit-overflow-scrolling: touch;
   }
