@@ -391,8 +391,9 @@ async function getDriverByStats(stats, transactionDate, trackingType, filters = 
   const nowSec = Math.floor(now.getTime() / 1000);
   const dateOnly = (transactionDate || now.toISOString().slice(0, 10)).slice(0, 10);
 
-  // Only drivers with status = active; exclude suspended, pending, expired, blocked (matches Drivers table Active filter).
-  const statusClause = " AND (LOWER(TRIM(COALESCE(d.status, ''))) = 'active')";
+  // Agent panel should treat NULL/blank status as active, same as the client-side fallback.
+  // This makes Total/Offline counts accurate when deployments store status as NULL/'' for active drivers.
+  const statusClause = " AND (LOWER(TRIM(COALESCE(d.status, ''))) IN ('active', ''))";
   const params = [];
   let filterClause = statusClause;
   if (team_id != null && team_id !== '' && Number.isFinite(Number(team_id))) {
@@ -432,10 +433,10 @@ async function getDriverByStats(stats, transactionDate, trackingType, filters = 
     }
   } else if (stats === 'offline') {
     if (type === 1) {
-      timeClause = ` AND (d.last_login < ? OR d.on_duty = 0 OR d.on_duty = 2 OR d.on_duty IS NULL)`;
+      timeClause = ` AND (d.last_login IS NULL OR d.last_login < ? OR d.on_duty = 0 OR d.on_duty = 2 OR d.on_duty IS NULL)`;
       paramsTime.push(elevenMinAgo);
     } else {
-      timeClause = ` AND (d.on_duty = 2 OR d.on_duty = 0 OR d.on_duty IS NULL OR d.last_login < ?)`;
+      timeClause = ` AND (d.on_duty = 2 OR d.on_duty = 0 OR d.on_duty IS NULL OR d.last_login IS NULL OR d.last_login < ?)`;
       paramsTime.push(thirtyOneMinAgo);
     }
   }
@@ -1374,14 +1375,55 @@ router.get('/drivers/:id/details', async (req, res) => {
   if (!Number.isFinite(driverId)) return res.status(400).json({ error: 'Invalid driver id' });
   try {
     const [driverRows] = await pool.query(
-      `SELECT d.driver_id AS id, d.username, CONCAT(COALESCE(d.first_name,''), ' ', COALESCE(d.last_name,'')) AS full_name,
-       d.phone, d.on_duty, d.team_id, t.team_name, COALESCE(d.email, d.email_address) AS email,
-       COALESCE(d.last_login, d.date_modified) AS last_seen
-       FROM mt_driver d LEFT JOIN mt_driver_team t ON d.team_id = t.team_id WHERE d.driver_id = ?`,
+      `SELECT 
+         d.driver_id AS id,
+         d.username,
+         CONCAT(COALESCE(d.first_name,''), ' ', COALESCE(d.last_name,'')) AS full_name,
+         d.first_name,
+         d.last_name,
+         COALESCE(d.email, d.email_address) AS email,
+         d.phone,
+         d.on_duty,
+         d.team_id,
+         t.team_name,
+         d.transport_type_id,
+         COALESCE(d.transport_description, '') AS transport_description,
+         COALESCE(d.licence_plate, '') AS licence_plate,
+         COALESCE(d.color, '') AS color,
+         COALESCE(d.device_platform, d.device_type) AS device_platform,
+         COALESCE(d.app_version, '') AS app_version,
+         d.location_lat,
+         d.location_lng,
+         COALESCE(d.last_login, d.date_modified) AS last_seen
+       FROM mt_driver d 
+       LEFT JOIN mt_driver_team t ON d.team_id = t.team_id 
+       WHERE d.driver_id = ?`,
       [driverId]
     );
     if (!driverRows || !driverRows.length) return res.status(404).json({ error: 'Driver not found' });
-    const driver = driverRows[0];
+    const d = driverRows[0];
+    const driver = {
+      id: d.id,
+      username: d.username,
+      full_name: d.full_name,
+      first_name: d.first_name,
+      last_name: d.last_name,
+      email: d.email,
+      phone: d.phone,
+      on_duty: d.on_duty,
+      team_id: d.team_id,
+      team_name: d.team_name,
+      transport_type_id: d.transport_type_id,
+      transport_type: d.transport_description, // alias for frontend display
+      transport_description: d.transport_description,
+      licence_plate: d.licence_plate,
+      color: d.color,
+      device_platform: d.device_platform,
+      app_version: d.app_version,
+      location_lat: d.location_lat,
+      location_lng: d.location_lng,
+      last_seen: d.last_seen,
+    };
     const [taskRows] = await pool.query(
       `SELECT t.task_id, t.task_description, t.status, t.delivery_date, t.delivery_address, t.customer_name
        FROM mt_driver_task t WHERE t.driver_id = ? AND (t.delivery_date = ? OR DATE(t.delivery_date) = ?) ORDER BY t.task_id DESC`,

@@ -107,6 +107,7 @@ export default function AgentPanel({ onOpenTaskDetails }) {
   const [filterDropdownOpen, setFilterDropdownOpen] = useState(false);
   const [sortBy, setSortBy] = useState('name-asc');
   const [selectedDriver, setSelectedDriver] = useState(null);
+  const [selectedDriverDetails, setSelectedDriverDetails] = useState({ loading: false, driver: null, tasks: [], error: null });
   const [allTasksView, setAllTasksView] = useState(false);
   const [assignedTasks, setAssignedTasks] = useState([]);
   const [tasksLoading, setTasksLoading] = useState(false);
@@ -194,6 +195,31 @@ export default function AgentPanel({ onOpenTaskDetails }) {
       document.addEventListener('keydown', handleEscape);
       return () => document.removeEventListener('keydown', handleEscape);
     }
+  }, [selectedDriver]);
+
+  useEffect(() => {
+    const driverId = selectedDriver?.id ?? selectedDriver?.driver_id;
+    if (!selectedDriver || driverId == null) {
+      setSelectedDriverDetails({ loading: false, driver: null, tasks: [], error: null });
+      return;
+    }
+
+    const dateStr = todayStr();
+    setSelectedDriverDetails({ loading: true, driver: null, tasks: [], error: null });
+    api(`drivers/${encodeURIComponent(driverId)}/details?date=${encodeURIComponent(dateStr)}`)
+      .then((res) => {
+        const driver = res?.driver ?? null;
+        const tasks = Array.isArray(res?.tasks) ? res.tasks : [];
+        setSelectedDriverDetails({ loading: false, driver, tasks, error: null });
+      })
+      .catch((err) => {
+        setSelectedDriverDetails({
+          loading: false,
+          driver: null,
+          tasks: [],
+          error: err?.error || err?.message || 'Failed to load driver details',
+        });
+      });
   }, [selectedDriver]);
 
   // Statistics: only drivers with status = active; normalize status/online fields safely.
@@ -571,7 +597,7 @@ export default function AgentPanel({ onOpenTaskDetails }) {
           <div className="agent-detail-modal-card" ref={detailModalRef} onClick={(e) => e.stopPropagation()}>
             <div className="agent-detail-modal-header">
               <h2 id="agent-detail-modal-title" className="agent-detail-modal-title">
-                {selectedDriver.full_name || selectedDriver.username || `Driver #${selectedDriver.id}`}
+                Driver Details
               </h2>
               <button
                 type="button"
@@ -583,43 +609,115 @@ export default function AgentPanel({ onOpenTaskDetails }) {
               </button>
             </div>
             <div className="agent-detail-modal-body">
-              <div className="agent-detail-modal-row">
-                <span className="agent-detail-modal-label">Status</span>
-                <span className={`agent-detail-modal-value agent-detail-modal-status--${selectedDriver.is_online === 1 || selectedDriver.on_duty === 1 ? 'active' : 'offline'}`}>
-                  {selectedDriver.is_online === 1 || selectedDriver.on_duty === 1 ? 'Active' : 'Offline'}
-                </span>
-              </div>
-              <div className="agent-detail-modal-row">
-                <span className="agent-detail-modal-label">Connection</span>
-                <span className={`agent-detail-modal-value ${selectedDriver.online_status === 'lost_connection' ? 'agent-detail-modal-value--lost' : ''}`}>
-                  {selectedDriver.online_status === 'online' ? 'Online' : 'Connection Lost'}
-                </span>
-              </div>
-              <div className="agent-detail-modal-row">
-                <span className="agent-detail-modal-label">Last seen</span>
-                <span className="agent-detail-modal-value">{selectedDriver.last_seen ?? '—'}</span>
-              </div>
-              <div className="agent-detail-modal-row">
-                <span className="agent-detail-modal-label">Tasks today</span>
-                <span className="agent-detail-modal-value">{selectedDriver.total_task ?? selectedDriver.task_count ?? 0}</span>
-              </div>
-              {selectedDriver.phone && (
-                <div className="agent-detail-modal-row">
-                  <span className="agent-detail-modal-label">Phone</span>
-                  <span className="agent-detail-modal-value">{selectedDriver.phone}</span>
-                </div>
+              {selectedDriverDetails.loading && (
+                <div className="agent-detail-modal-loading">Loading…</div>
               )}
-              <div className="agent-detail-modal-row">
-                <span className="agent-detail-modal-label">Device</span>
-                <span className="agent-detail-modal-value">{selectedDriver.device ?? selectedDriver.device_platform ?? '—'}</span>
-              </div>
-              {(selectedDriver.location_lat != null && selectedDriver.location_lng != null) && (
-                <div className="agent-detail-modal-row">
-                  <span className="agent-detail-modal-label">Location</span>
-                  <span className="agent-detail-modal-value agent-detail-modal-muted">
-                    {selectedDriver.location_lat}, {selectedDriver.location_lng}
-                  </span>
-                </div>
+
+              {!selectedDriverDetails.loading && selectedDriverDetails.error && (
+                <div className="agent-detail-modal-error">{selectedDriverDetails.error}</div>
+              )}
+
+              {!selectedDriverDetails.loading && !selectedDriverDetails.error && (
+                <>
+                  <div className="agent-driver-details-grid">
+                    <div className="agent-driver-details-row">
+                      <div className="agent-driver-details-label">Name :</div>
+                      <div className="agent-driver-details-value">
+                        {selectedDriverDetails.driver?.full_name || selectedDriver.full_name || selectedDriver.username || `Driver #${selectedDriver.id ?? selectedDriver.driver_id}`}
+                      </div>
+                    </div>
+                    <div className="agent-driver-details-row">
+                      <div className="agent-driver-details-label">Phone :</div>
+                      <div className="agent-driver-details-value">
+                        {selectedDriverDetails.driver?.phone ?? selectedDriver.phone ?? '—'}
+                      </div>
+                    </div>
+
+                    <div className="agent-driver-details-row">
+                      <div className="agent-driver-details-label">Email address :</div>
+                      <div className="agent-driver-details-value">
+                        {selectedDriverDetails.driver?.email ?? selectedDriver.email ?? '—'}
+                      </div>
+                    </div>
+                    <div className="agent-driver-details-row">
+                      <div className="agent-driver-details-label">Team :</div>
+                      <div className="agent-driver-details-value">
+                        {selectedDriverDetails.driver?.team_name ?? '—'}
+                      </div>
+                    </div>
+
+                    <div className="agent-driver-details-row">
+                      <div className="agent-driver-details-label">Transport Type :</div>
+                      <div className="agent-driver-details-value">
+                        {selectedDriverDetails.driver?.transport_type ?? '—'}
+                      </div>
+                    </div>
+                    <div className="agent-driver-details-row">
+                      <div className="agent-driver-details-label">License Plate :</div>
+                      <div className="agent-driver-details-value">
+                        {selectedDriverDetails.driver?.licence_plate ?? selectedDriverDetails.driver?.license_plate ?? '—'}
+                      </div>
+                    </div>
+
+                    <div className="agent-driver-details-row">
+                      <div className="agent-driver-details-label">Device Platform :</div>
+                      <div className="agent-driver-details-value">
+                        {selectedDriverDetails.driver?.device_platform ?? selectedDriver.device_platform ?? selectedDriver.device ?? '—'}
+                      </div>
+                    </div>
+                    <div className="agent-driver-details-row">
+                      <div className="agent-driver-details-label">App Version :</div>
+                      <div className="agent-driver-details-value">
+                        {selectedDriverDetails.driver?.app_version ?? '—'}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="agent-driver-details-section-title">Task</div>
+
+                  <div className="agent-driver-details-table-wrap">
+                    <table className="agent-driver-details-table">
+                      <thead>
+                        <tr>
+                          <th>Task ID</th>
+                          <th>Name</th>
+                          <th>Type</th>
+                          <th>Address</th>
+                          <th>Status</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {selectedDriverDetails.tasks.length === 0 ? (
+                          <tr>
+                            <td colSpan={5} className="agent-driver-details-table-empty">No tasks</td>
+                          </tr>
+                        ) : (
+                          selectedDriverDetails.tasks.map((t) => (
+                            <tr key={t.task_id ?? t.id}>
+                              <td>
+                                <button
+                                  type="button"
+                                  className="agent-driver-details-task-link"
+                                  onClick={() => onOpenTaskDetails?.(t.task_id ?? t.id)}
+                                >
+                                  {t.task_id ?? t.id}
+                                </button>
+                              </td>
+                              <td>{t.customer_name ?? t.task_description ?? '—'}</td>
+                              <td>{t.trans_type ?? t.task_type ?? t.type ?? '—'}</td>
+                              <td>{t.delivery_address ?? '—'}</td>
+                              <td>
+                                <span className={`agent-driver-details-task-status ${statusClass(t.status)}`}>
+                                  {statusLabel(t.status)}
+                                </span>
+                              </td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
               )}
             </div>
             <div className="agent-detail-modal-actions">

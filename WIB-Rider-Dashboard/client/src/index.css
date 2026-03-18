@@ -3728,6 +3728,101 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
   border-color: rgba(158, 195, 76, 0.55);
 }
 
+/* Driver Details layout inside Agent modal (match old layout, keep current theme) */
+.agent-detail-modal-loading,
+.agent-detail-modal-error {
+  font-size: 0.875rem;
+  color: var(--text-muted);
+}
+.agent-detail-modal-error {
+  color: #b91c1c;
+}
+.agent-driver-details-grid {
+  background: var(--border-soft);
+  border-radius: 8px;
+  padding: 0.75rem;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem 1.25rem;
+}
+.agent-driver-details-row {
+  display: flex;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+}
+.agent-driver-details-label {
+  font-weight: 600;
+  color: var(--text-dark);
+}
+.agent-driver-details-value {
+  color: var(--text-muted-strong, var(--text-muted));
+  font-weight: 400;
+}
+.agent-driver-details-section-title {
+  margin-top: 0.75rem;
+  font-size: 1.125rem;
+  font-weight: 500;
+  color: var(--text-dark);
+}
+.agent-driver-details-table-wrap {
+  margin-top: 0.5rem;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--bg-card);
+}
+.agent-driver-details-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+.agent-driver-details-table thead th {
+  text-align: left;
+  padding: 0.6rem 0.75rem;
+  background: rgba(0, 0, 0, 0.03);
+  border-bottom: 1px solid var(--border-soft);
+  color: var(--text-dark);
+  font-weight: 600;
+}
+.agent-driver-details-table tbody td {
+  padding: 0.6rem 0.75rem;
+  border-bottom: 1px solid var(--border-soft);
+  color: var(--text-dark);
+  vertical-align: middle;
+}
+.agent-driver-details-table tbody tr:last-child td {
+  border-bottom: none;
+}
+.agent-driver-details-table-empty {
+  text-align: center;
+  color: var(--text-muted);
+}
+.agent-driver-details-task-link {
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--color-primary);
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+}
+.agent-driver-details-task-status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 86px;
+  padding: 0.25rem 0.6rem;
+  border-radius: 4px;
+  font-weight: 600;
+  text-transform: lowercase;
+}
+
+@media (max-width: 520px) {
+  .agent-driver-details-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* Map */
 .map-container {
   flex: 1;
