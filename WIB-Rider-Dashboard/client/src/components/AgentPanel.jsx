@@ -218,9 +218,14 @@ export default function AgentPanel({ onOpenTaskDetails }) {
   });
 
   const derivedStats = {
-    active: (details.active || []).length,
-    offline: (details.offline || []).length,
-    total: (details.total || []).length,
+    // Enforce the rules explicitly:
+    // - Total = status === 'active'
+    // - Offline = status === 'active' AND online_status === 'offline'
+    active: (details.active || []).filter((a) => normStatus(a.status) === 'active').length,
+    offline: (details.offline || []).filter(
+      (a) => normStatus(a.status) === 'active' && normStatus(a.online_status) === 'offline'
+    ).length,
+    total: (details.total || []).filter((a) => normStatus(a.status) === 'active').length,
   };
 
   const agentStatItems = [

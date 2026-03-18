@@ -281,8 +281,11 @@ export default function TaskPanel({ onOpenTaskDetails }) {
 
   const fetchTasks = useCallback(() => {
     setLoading(true);
-    const dateStr = toDateString(selectedDateTime);
-    const url = `tasks?date=${encodeURIComponent(dateStr)}`;
+    // For the Completed panel we must show ALL historical completed/delivered/successful tasks.
+    // For other tabs, keep the current selected date behavior.
+    const url = activeTab === 'completed'
+      ? 'tasks'
+      : `tasks?date=${encodeURIComponent(toDateString(selectedDateTime))}`;
     api(url)
       .then((list) => {
         setTasks(list || []);
@@ -294,7 +297,7 @@ export default function TaskPanel({ onOpenTaskDetails }) {
       })
       .catch(() => setTasks([]))
       .finally(() => setLoading(false));
-  }, [selectedDateTime]);
+  }, [selectedDateTime, activeTab]);
 
   useEffect(() => {
     fetchTasks();
@@ -543,7 +546,7 @@ export default function TaskPanel({ onOpenTaskDetails }) {
         {!loading && filtered.length === 0 && 'No tasks'}
         {!loading && filtered.length > 0 && (
           <ul className="task-card-list">
-            {filtered.slice(0, 20).map((t) => {
+            {(activeTab === 'completed' ? filtered : filtered.slice(0, 20)).map((t) => {
               const statusNorm = normStatus(t.status);
               const created = t.date_created ? new Date(t.date_created) : null;
               const minsWaiting = created ? Math.max(0, Math.floor((Date.now() - created.getTime()) / 60000)) : null;
