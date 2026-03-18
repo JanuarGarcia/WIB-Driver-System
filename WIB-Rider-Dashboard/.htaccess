@@ -6,4 +6,5 @@
   RewriteBase /
   RewriteCond %{REQUEST_URI} ^/(api|uploads)/ [NC]
   RewriteRule ^(.*)$ http://127.0.0.1:3002/$1 [P,L]
+  CacheDisable public /api/
 </IfModule>
