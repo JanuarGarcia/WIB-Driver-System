@@ -196,17 +196,6 @@ export default function AgentPanel({ onOpenTaskDetails }) {
     }
   }, [selectedDriver]);
 
-  // Do not rely on backend-provided buckets (active/offline/total) because
-  // they can include non-active statuses. Instead, compute the list from
-  // `details.total` using the same rules as the stat counters.
-  const allAgents = Array.isArray(details.total) ? details.total : [];
-  const filteredByTab =
-    activeTab === 'active'
-      ? allAgents.filter((a) => isActiveAgent(a))
-      : activeTab === 'offline'
-        ? allAgents.filter((a) => isActiveAgent(a) && isOfflineAgent(a))
-        : allAgents.filter((a) => isActiveAgent(a));
-
   const searchLower = (searchQuery || '').trim().toLowerCase();
   const filteredBySearch =
     searchLower === ''
@@ -230,22 +219,22 @@ export default function AgentPanel({ onOpenTaskDetails }) {
   // - Active: on_duty === true (fallback: status === 'active')
   // - Offline: Active AND online_status is offline/lost_connection
   // - Exclude: suspended/pending/expired/blocked
-  const isExcludedStatus = (a) => {
+  function isExcludedStatus(a) {
     const s = normStatus(a?.status);
     return ['suspended', 'pending', 'expired', 'blocked'].includes(s);
-  };
-  const isActiveAgent = (a) => {
+  }
+  function isActiveAgent(a) {
     if (!a) return false;
     if (isExcludedStatus(a)) return false;
     // Backend may send on_duty as boolean, number, or string
     const onDutyVal = a.on_duty;
     const isOnDuty = onDutyVal === true || onDutyVal === 1 || onDutyVal === '1' || onDutyVal === 'true';
     return isOnDuty || normStatus(a?.status) === 'active';
-  };
-  const isOfflineAgent = (a) => {
+  }
+  function isOfflineAgent(a) {
     const os = normStatus(a?.online_status);
     return os === 'offline' || os === 'lost_connection';
-  };
+  }
 
   // Use the same source list + rules as `filteredByTab` so counters match the cards.
   const allAgentsForStats = Array.isArray(details.total) ? details.total : [];
