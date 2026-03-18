@@ -247,10 +247,12 @@ export default function AgentPanel({ onOpenTaskDetails }) {
     return os === 'offline' || os === 'lost_connection';
   };
 
+  // Use the same source list + rules as `filteredByTab` so counters match the cards.
+  const allAgentsForStats = Array.isArray(details.total) ? details.total : [];
   const derivedStats = {
-    active: (details.active || []).filter((a) => isActiveAgent(a)).length,
-    offline: (details.offline || []).filter((a) => isActiveAgent(a) && isOfflineAgent(a)).length,
-    total: (details.total || []).filter((a) => isActiveAgent(a)).length,
+    active: allAgentsForStats.filter((a) => isActiveAgent(a)).length,
+    offline: allAgentsForStats.filter((a) => isActiveAgent(a) && isOfflineAgent(a)).length,
+    total: allAgentsForStats.filter((a) => isActiveAgent(a)).length,
   };
 
   const agentStatItems = [
