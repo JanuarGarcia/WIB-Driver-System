@@ -440,7 +440,9 @@ async function getDriverByStats(stats, transactionDate, trackingType, filters = 
   }
 
   const selectColsFull = `d.driver_id, d.first_name, d.last_name, d.phone, d.on_duty, d.last_login, d.location_lat, d.location_lng, d.team_id, d.user_type, d.user_id, d.device_platform, d.device_type`;
-  const selectColsMinimal = `d.driver_id, d.first_name, d.last_name, d.phone, d.on_duty, d.last_login, d.location_lat, d.location_lng, d.team_id`;
+  // Include mt_driver status so Agent dashboard can mirror Drivers table filters.
+  // status_updated_at may not exist in some deployments, so we try to select it and gracefully fall back via existing error handlers.
+  const selectColsMinimal = `d.driver_id, d.first_name, d.last_name, d.phone, d.on_duty, d.last_login, d.location_lat, d.location_lng, d.team_id, d.status, d.status_updated_at`;
   const fromClauseFull = `FROM mt_driver d WHERE 1=1${filterClause}`;
   const orderClause = ` ORDER BY d.first_name, d.last_name`;
 
@@ -522,7 +524,7 @@ async function getDriverByStats(stats, transactionDate, trackingType, filters = 
     const lostThreshold = type === 1 ? lostThresholdSec1 : lostThresholdSec2;
     const onlineStatus = lastActivitySec >= nowSec - lostThreshold ? 'online' : 'lost_connection';
 
-    return {
+      return {
       driver_id: r.driver_id,
       id: r.driver_id,
       first_name: r.first_name,
@@ -530,6 +532,8 @@ async function getDriverByStats(stats, transactionDate, trackingType, filters = 
       full_name: [r.first_name, r.last_name].filter(Boolean).join(' ').trim() || null,
       phone: r.phone,
       on_duty: r.on_duty,
+        status: r.status,
+        status_updated_at: r.status_updated_at,
       last_login: r.last_login,
       last_online: r.last_online,
       location_lat: r.location_lat,
