@@ -1374,32 +1374,87 @@ router.get('/drivers/:id/details', async (req, res) => {
   const dateStr = (req.query.date || '').toString().trim() || new Date().toISOString().slice(0, 10);
   if (!Number.isFinite(driverId)) return res.status(400).json({ error: 'Invalid driver id' });
   try {
-    const [driverRows] = await pool.query(
-      `SELECT 
-         d.driver_id AS id,
-         d.username,
-         CONCAT(COALESCE(d.first_name,''), ' ', COALESCE(d.last_name,'')) AS full_name,
-         d.first_name,
-         d.last_name,
-         COALESCE(d.email, d.email_address) AS email,
-         d.phone,
-         d.on_duty,
-         d.team_id,
-         t.team_name,
-         d.transport_type_id,
-         COALESCE(d.transport_description, '') AS transport_description,
-         COALESCE(d.licence_plate, '') AS licence_plate,
-         COALESCE(d.color, '') AS color,
-         COALESCE(d.device_platform, d.device_type) AS device_platform,
-         COALESCE(d.app_version, '') AS app_version,
-         d.location_lat,
-         d.location_lng,
-         COALESCE(d.last_login, d.date_modified) AS last_seen
-       FROM mt_driver d 
-       LEFT JOIN mt_driver_team t ON d.team_id = t.team_id 
-       WHERE d.driver_id = ?`,
-      [driverId]
-    );
+    let driverRows;
+    try {
+      [driverRows] = await pool.query(
+        `SELECT 
+           d.driver_id AS id,
+           d.username,
+           CONCAT(COALESCE(d.first_name,''), ' ', COALESCE(d.last_name,'')) AS full_name,
+           d.first_name,
+           d.last_name,
+           COALESCE(d.email, d.email_address) AS email,
+           d.phone,
+           d.on_duty,
+           d.team_id,
+           t.team_name,
+           d.transport_type_id,
+           COALESCE(d.transport_description, '') AS transport_description,
+           COALESCE(d.licence_plate, '') AS licence_plate,
+           COALESCE(d.color, '') AS color,
+           COALESCE(d.device_platform, d.device_type) AS device_platform,
+           COALESCE(d.app_version, '') AS app_version,
+           d.location_lat,
+           d.location_lng,
+           COALESCE(d.last_login, d.date_modified) AS last_seen
+         FROM mt_driver d 
+         LEFT JOIN mt_driver_team t ON d.team_id = t.team_id 
+         WHERE d.driver_id = ?`,
+        [driverId]
+      );
+    } catch (e1) {
+      // Fallback if mt_driver_team or some columns don't exist in this deployment.
+      if (e1.code !== 'ER_NO_SUCH_TABLE' && e1.code !== 'ER_BAD_FIELD_ERROR') throw e1;
+      try {
+        [driverRows] = await pool.query(
+          `SELECT 
+             d.driver_id AS id,
+             d.username,
+             CONCAT(COALESCE(d.first_name,''), ' ', COALESCE(d.last_name,'')) AS full_name,
+             d.first_name,
+             d.last_name,
+             d.email AS email,
+             d.phone,
+             d.on_duty,
+             d.team_id,
+             NULL AS team_name,
+             d.transport_type_id,
+             COALESCE(d.transport_description, '') AS transport_description,
+             COALESCE(d.licence_plate, '') AS licence_plate,
+             COALESCE(d.color, '') AS color,
+             d.device_platform AS device_platform,
+             COALESCE(d.app_version, '') AS app_version,
+             d.location_lat,
+             d.location_lng,
+             COALESCE(d.last_login, d.date_modified) AS last_seen
+           FROM mt_driver d
+           WHERE d.driver_id = ?`,
+          [driverId]
+        );
+      } catch (e2) {
+        if (e2.code === 'ER_NO_SUCH_TABLE' || e2.code === 'ER_BAD_FIELD_ERROR') {
+          // Final fallback: bare minimum columns
+          [driverRows] = await pool.query(
+            `SELECT 
+               d.driver_id AS id,
+               d.username,
+               CONCAT(COALESCE(d.first_name,''), ' ', COALESCE(d.last_name,'')) AS full_name,
+               d.first_name,
+               d.last_name,
+               d.phone,
+               d.on_duty,
+               d.team_id,
+               NULL AS team_name,
+               COALESCE(d.last_login, d.date_modified) AS last_seen
+             FROM mt_driver d
+             WHERE d.driver_id = ?`,
+            [driverId]
+          );
+        } else {
+          throw e2;
+        }
+      }
+    }
     if (!driverRows || !driverRows.length) return res.status(404).json({ error: 'Driver not found' });
     const d = driverRows[0];
     const driver = {
