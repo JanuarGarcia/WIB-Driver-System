@@ -217,27 +217,28 @@ export default function AgentPanel({ onOpenTaskDetails }) {
     return 0;
   });
 
+  // Backend fields aren't consistent across statuses, so we enforce explicitly.
+  // - Active: on_duty === true (fallback: status === 'active')
+  // - Offline: Active AND online_status is offline/lost_connection
+  // - Exclude: suspended/pending/expired/blocked
+  const isExcludedStatus = (a) => {
+    const s = normStatus(a?.status);
+    return ['suspended', 'pending', 'expired', 'blocked'].includes(s);
+  };
+  const isActiveAgent = (a) => {
+    if (!a) return false;
+    if (isExcludedStatus(a)) return false;
+    return a.on_duty === true || normStatus(a?.status) === 'active';
+  };
+  const isOfflineAgent = (a) => {
+    const os = normStatus(a?.online_status);
+    return os === 'offline' || os === 'lost_connection';
+  };
+
   const derivedStats = {
-    // Backend fields aren't consistent across statuses, so we enforce explicitly:
-    // - Active: on_duty === true (fallback: status === 'active')
-    // - Offline: Active AND online_status is offline/lost_connection
-    // - Exclude: suspended/pending/expired/blocked
-    _isExcludedStatus: (a) => {
-      const s = normStatus(a?.status);
-      return ['suspended', 'pending', 'expired', 'blocked'].includes(s);
-    },
-    _isActiveAgent: (a) => {
-      if (!a) return false;
-      if (derivedStats._isExcludedStatus(a)) return false;
-      return a.on_duty === true || normStatus(a?.status) === 'active';
-    },
-    _isOfflineAgent: (a) => {
-      const os = normStatus(a?.online_status);
-      return os === 'offline' || os === 'lost_connection';
-    },
-    active: (details.active || []).filter((a) => derivedStats._isActiveAgent(a)).length,
-    offline: (details.offline || []).filter((a) => derivedStats._isActiveAgent(a) && derivedStats._isOfflineAgent(a)).length,
-    total: (details.total || []).filter((a) => derivedStats._isActiveAgent(a)).length,
+    active: (details.active || []).filter((a) => isActiveAgent(a)).length,
+    offline: (details.offline || []).filter((a) => isActiveAgent(a) && isOfflineAgent(a)).length,
+    total: (details.total || []).filter((a) => isActiveAgent(a)).length,
   };
 
   const agentStatItems = [
