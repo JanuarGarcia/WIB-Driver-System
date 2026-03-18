@@ -227,29 +227,40 @@ export default function AgentPanel({ onOpenTaskDetails }) {
   // - Active: on_duty === true (fallback: status === 'active')
   // - Offline: Active AND online_status is offline/lost_connection
   // - Exclude: suspended/pending/expired/blocked
+  function isOnDuty(a) {
+    const onDutyVal = a?.on_duty;
+    return onDutyVal === true || onDutyVal === 1 || onDutyVal === '1' || onDutyVal === 'true' || onDutyVal === 2 || onDutyVal === '2';
+  }
+
+  // Exclude: suspended/pending/expired/blocked
+  // (These typically appear in `status`, but backend fields may be inconsistent—so we only exclude if status exists.)
   function isExcludedStatus(a) {
     const s = normStatus(a?.status);
     return ['suspended', 'pending', 'expired', 'blocked'].includes(s);
   }
+
+  // Requirement:
+  // Active = on_duty AND online (not lost_connection)
   function isActiveAgent(a) {
-    if (!a) return false;
-    if (isExcludedStatus(a)) return false;
-    // Backend may send on_duty as boolean, number, or string
-    const onDutyVal = a.on_duty;
-    const isOnDuty = onDutyVal === true || onDutyVal === 1 || onDutyVal === '1' || onDutyVal === 'true';
-    return isOnDuty || normStatus(a?.status) === 'active';
+    if (!a || isExcludedStatus(a)) return false;
+    if (!isOnDuty(a)) return false;
+    return normStatus(a?.online_status) === 'online';
   }
+
+  // Offline = on_duty AND lost_connection/offline-ish
   function isOfflineAgent(a) {
+    if (!a || isExcludedStatus(a)) return false;
+    if (!isOnDuty(a)) return false;
     const os = normStatus(a?.online_status);
-    return os === 'offline' || os === 'lost_connection';
+    return os === 'lost_connection';
   }
 
   // Use the same source list + rules as `filteredByTab` so counters match the cards.
   const allAgentsForStats = Array.isArray(details.total) ? details.total : [];
   const derivedStats = {
+    total: allAgentsForStats.filter((a) => !isExcludedStatus(a) && isOnDuty(a)).length,
     active: allAgentsForStats.filter((a) => isActiveAgent(a)).length,
-    offline: allAgentsForStats.filter((a) => isActiveAgent(a) && isOfflineAgent(a)).length,
-    total: allAgentsForStats.filter((a) => isActiveAgent(a)).length,
+    offline: allAgentsForStats.filter((a) => isOfflineAgent(a)).length,
   };
 
   const agentStatItems = [
