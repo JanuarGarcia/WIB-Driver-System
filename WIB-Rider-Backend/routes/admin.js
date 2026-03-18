@@ -532,7 +532,7 @@ async function getDriverByStats(stats, transactionDate, trackingType, filters = 
       full_name: [r.first_name, r.last_name].filter(Boolean).join(' ').trim() || null,
       phone: r.phone,
       on_duty: r.on_duty,
-        status: r.status,
+        status: r.status != null && String(r.status).trim() !== '' ? r.status : 'active',
         status_updated_at: r.status_updated_at,
       last_login: r.last_login,
       last_online: r.last_online,

@@ -196,12 +196,13 @@ export default function AgentPanel({ onOpenTaskDetails }) {
     }
   }, [selectedDriver]);
 
-  // Match old system: only count agents with active status (no on_duty fallback).
+  // Match old system: only count agents with active status.
   // Total = active status only; Active = active + online; Offline = active + offline/lost.
+  // When backend omits status (e.g. fallback query), treat as active so counts don't show 0.
   function isActiveStatus(a) {
     if (!a) return false;
     const s = normStatus(a?.status);
-    return s === 'active';
+    return s === 'active' || s === '';
   }
   function isActiveAgent(a) {
     if (!a || !isActiveStatus(a)) return false;
