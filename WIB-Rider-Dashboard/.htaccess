@@ -6,5 +6,9 @@
   RewriteBase /
   RewriteCond %{REQUEST_URI} ^/(api|uploads)/ [NC]
   RewriteRule ^(.*)$ http://127.0.0.1:3002/$1 [P,L]
+</IfModule>
+
+<IfModule LiteSpeed>
+  # Prevent LSCache from caching API responses on this domain.
   CacheDisable public /api/
 </IfModule>
