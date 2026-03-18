@@ -196,6 +196,14 @@ export default function AgentPanel({ onOpenTaskDetails }) {
     }
   }, [selectedDriver]);
 
+  const allAgents = Array.isArray(details.total) ? details.total : [];
+  const filteredByTab =
+    activeTab === 'active'
+      ? allAgents.filter((a) => isActiveAgent(a))
+      : activeTab === 'offline'
+        ? allAgents.filter((a) => isActiveAgent(a) && isOfflineAgent(a))
+        : allAgents.filter((a) => isActiveAgent(a));
+
   const searchLower = (searchQuery || '').trim().toLowerCase();
   const filteredBySearch =
     searchLower === ''
