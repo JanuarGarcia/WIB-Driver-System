@@ -240,28 +240,25 @@ export default function AgentPanel({ onOpenTaskDetails }) {
   }
 
   // Requirement:
-  // Active = status === "active" AND online
+  // Total = status === "active" (exclude pending/suspended/expired/blocked)
+  // Active tab = status === "active" AND online
   function isActiveAgent(a) {
     if (!a) return false;
     if (isExcludedStatus(a)) return false;
     const s = normStatus(a?.status);
-    // If backend didn't provide `status`, fall back to on_duty semantics
-    if (!s) {
-      return isOnDuty(a) && normStatus(a?.online_status) === 'online';
-    }
-    return s === 'active' && normStatus(a?.online_status) === 'online';
+    if (s) return s === 'active' && normStatus(a?.online_status) === 'online';
+    // Backend fallback (status missing): use on_duty semantics
+    return isOnDuty(a) && normStatus(a?.online_status) === 'online';
   }
 
-  // Offline = on_duty AND lost_connection/offline-ish
+  // Offline = status === "active" AND connection lost
   function isOfflineAgent(a) {
     if (!a) return false;
     if (isExcludedStatus(a)) return false;
     const s = normStatus(a?.status);
-    // If backend didn't provide `status`, fall back to on_duty semantics
-    if (!s) {
-      return isOnDuty(a) && normStatus(a?.online_status) === 'lost_connection';
-    }
-    return s === 'active' && normStatus(a?.online_status) === 'lost_connection';
+    if (s) return s === 'active' && normStatus(a?.online_status) === 'lost_connection';
+    // Backend fallback (status missing): use on_duty semantics
+    return isOnDuty(a) && normStatus(a?.online_status) === 'lost_connection';
   }
 
   // Use the same source list + rules as `filteredByTab` so counters match the cards.
@@ -271,8 +268,7 @@ export default function AgentPanel({ onOpenTaskDetails }) {
       if (!a) return false;
       if (isExcludedStatus(a)) return false;
       const s = normStatus(a?.status);
-      // If status is missing, fall back to on_duty semantics
-      return !s ? isOnDuty(a) : s === 'active';
+      return s ? s === 'active' : isOnDuty(a);
     }).length,
     active: allAgentsForStats.filter((a) => isActiveAgent(a)).length,
     offline: allAgentsForStats.filter((a) => isOfflineAgent(a)).length,
