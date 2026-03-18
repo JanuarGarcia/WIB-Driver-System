@@ -391,7 +391,8 @@ async function getDriverByStats(stats, transactionDate, trackingType, filters = 
   const nowSec = Math.floor(now.getTime() / 1000);
   const dateOnly = (transactionDate || now.toISOString().slice(0, 10)).slice(0, 10);
 
-  const statusClause = " AND (d.status IS NULL OR d.status = '' OR LOWER(TRIM(d.status)) = 'active')";
+  // Only drivers with status = active; exclude suspended, pending, expired, blocked (matches Drivers table Active filter).
+  const statusClause = " AND (LOWER(TRIM(COALESCE(d.status, ''))) = 'active')";
   const params = [];
   let filterClause = statusClause;
   if (team_id != null && team_id !== '' && Number.isFinite(Number(team_id))) {

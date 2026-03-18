@@ -196,33 +196,38 @@ export default function AgentPanel({ onOpenTaskDetails }) {
     }
   }, [selectedDriver]);
 
-  // Match old system: only count agents with active status.
-  // Total = active status only; Active = active + online; Offline = active + offline/lost.
-  // When backend omits status (e.g. fallback query), treat as active so counts don't show 0.
+  // Align with Drivers table (Active status filter): only drivers with status = active.
+  // Exclude: suspended, pending, expired, blocked.
+  // total = count(active), online = count(active AND online), offline = total - online so Offline + Online = Total.
+  const EXCLUDED_STATUSES = ['suspended', 'pending', 'expired', 'blocked'];
   function isActiveStatus(a) {
     if (!a) return false;
     const s = normStatus(a?.status);
+    if (EXCLUDED_STATUSES.includes(s)) return false;
     return s === 'active' || s === '';
   }
-  function isActiveAgent(a) {
-    if (!a || !isActiveStatus(a)) return false;
+  function isOnline(a) {
     return normStatus(a?.online_status) === 'online';
   }
+  function isActiveAgent(a) {
+    return isActiveStatus(a) && isOnline(a);
+  }
   function isOfflineAgent(a) {
-    if (!a || !isActiveStatus(a)) return false;
-    const onlineNorm = normStatus(a?.online_status);
-    return onlineNorm === 'lostconnection' || onlineNorm === 'offline';
+    return isActiveStatus(a) && !isOnline(a);
   }
   function countsAsTotal(a) {
     return isActiveStatus(a);
   }
 
   const allAgents = Array.isArray(details.total) ? details.total : [];
-  const allAgentsForStats = allAgents;
+  const activeOnly = allAgents.filter(countsAsTotal);
+  const totalCount = activeOnly.length;
+  const onlineCount = activeOnly.filter(isOnline).length;
+  const offlineCount = totalCount - onlineCount;
   const derivedStats = {
-    total: allAgentsForStats.filter(countsAsTotal).length,
-    active: allAgentsForStats.filter(isActiveAgent).length,
-    offline: allAgentsForStats.filter(isOfflineAgent).length,
+    total: totalCount,
+    active: onlineCount,
+    offline: offlineCount,
   };
 
   const filteredByTab =
