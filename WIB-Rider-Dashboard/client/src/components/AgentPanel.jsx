@@ -389,6 +389,8 @@ export default function AgentPanel({ onOpenTaskDetails }) {
             onClick={() => {
               setActiveTab(key);
               setAllTasksView(false);
+              // Ensure tab switching doesn't keep a stale search filter
+              setSearchQuery('');
             }}
             aria-pressed={activeTab === key}
             aria-label={`${label}: ${count}`}
