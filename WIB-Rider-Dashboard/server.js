@@ -21,6 +21,14 @@ function backendHeaders(req = null) {
   return h;
 }
 
+function setNoCache(res) {
+  // Avoid LiteSpeed / intermediary caching for API proxy responses.
+  res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.set('Pragma', 'no-cache');
+  res.set('Expires', '0');
+  res.set('Surrogate-Control', 'no-store');
+}
+
 // Proxy: GET /uploads/* -> BACKEND_URL/uploads/* (for merchant logos, profile photos, etc.)
 app.get('/uploads/*', async (req, res) => {
   const subPath = (req.path || '').replace(/^\/uploads\/?/, '') || '';
@@ -54,6 +62,7 @@ app.get('/api/task-photos/:id/image', async (req, res) => {
 
 // Proxy: POST /api/auth/login (no auth required)
 app.post('/api/auth/login', express.json(), async (req, res) => {
+  setNoCache(res);
   try {
     const response = await axios.post(`${BACKEND_URL}/admin/api/auth/login`, req.body, {
       headers: { 'Content-Type': 'application/json' },
@@ -69,6 +78,7 @@ app.post('/api/auth/login', express.json(), async (req, res) => {
 
 // Proxy: GET /api/auth/me (requires x-dashboard-token from client)
 app.get('/api/auth/me', async (req, res) => {
+  setNoCache(res);
   const url = `${BACKEND_URL}/admin/api/auth/me`;
   try {
     const response = await axios.get(url, {
@@ -85,6 +95,8 @@ app.get('/api/auth/me', async (req, res) => {
 
 // Proxy: GET /api/* -> BACKEND_URL/admin/api/*
 app.get('/api/*', async (req, res) => {
+  setNoCache(res);
+  res.set('X-Dashboard-Proxy', '1');
   const subPath = (req.path || '').replace(/^\/api\/?/, '') || '';
   const url = `${BACKEND_URL}/admin/api/${subPath}`;
   try {
@@ -103,6 +115,7 @@ app.get('/api/*', async (req, res) => {
 
 // Proxy: PUT /api/tasks/:id/assign
 app.put('/api/tasks/:id/assign', express.json(), async (req, res) => {
+  setNoCache(res);
   const id = req.params.id;
   const url = `${BACKEND_URL}/admin/api/tasks/${id}/assign`;
   try {
@@ -120,6 +133,7 @@ app.put('/api/tasks/:id/assign', express.json(), async (req, res) => {
 
 // Proxy: POST /api/tasks (create task)
 app.post('/api/tasks', express.json(), async (req, res) => {
+  setNoCache(res);
   try {
     const response = await axios.post(`${BACKEND_URL}/admin/api/tasks`, req.body, {
       headers: backendHeaders(req),
@@ -135,6 +149,7 @@ app.post('/api/tasks', express.json(), async (req, res) => {
 
 // Proxy: PUT /api/settings
 app.put('/api/settings', express.json(), async (req, res) => {
+  setNoCache(res);
   try {
     const response = await axios.put(`${BACKEND_URL}/admin/api/settings`, req.body, {
       headers: backendHeaders(req),
