@@ -196,33 +196,23 @@ export default function AgentPanel({ onOpenTaskDetails }) {
     }
   }, [selectedDriver]);
 
-  // Align with Drivers table (Active status filter): only drivers with status = active.
-  // Exclude: suspended, pending, expired, blocked.
-  // total = count(active), online = count(active AND online), offline = total - online so Offline + Online = Total.
+  // Statistics from Drivers table Active status only: status === 'active'; exclude suspended, pending, expired, blocked.
+  // Total = active drivers, Online = active + online_status === 'online', Offline = total - online.
   const EXCLUDED_STATUSES = ['suspended', 'pending', 'expired', 'blocked'];
-  function isActiveStatus(a) {
-    if (!a) return false;
-    const s = normStatus(a?.status);
+  function isActiveDriver(d) {
+    if (!d) return false;
+    const s = normStatus(d?.status);
     if (EXCLUDED_STATUSES.includes(s)) return false;
-    return s === 'active' || s === '';
+    return s === 'active';
   }
-  function isOnline(a) {
-    return normStatus(a?.online_status) === 'online';
-  }
-  function isActiveAgent(a) {
-    return isActiveStatus(a) && isOnline(a);
-  }
-  function isOfflineAgent(a) {
-    return isActiveStatus(a) && !isOnline(a);
-  }
-  function countsAsTotal(a) {
-    return isActiveStatus(a);
+  function isOnline(d) {
+    return normStatus(d?.online_status) === 'online';
   }
 
-  const allAgents = Array.isArray(details.total) ? details.total : [];
-  const activeOnly = allAgents.filter(countsAsTotal);
-  const totalCount = activeOnly.length;
-  const onlineCount = activeOnly.filter(isOnline).length;
+  const allDrivers = Array.isArray(details.total) ? details.total : [];
+  const activeDrivers = allDrivers.filter(isActiveDriver);
+  const totalCount = activeDrivers.length;
+  const onlineCount = activeDrivers.filter((d) => isOnline(d)).length;
   const offlineCount = totalCount - onlineCount;
   const derivedStats = {
     total: totalCount,
@@ -232,10 +222,10 @@ export default function AgentPanel({ onOpenTaskDetails }) {
 
   const filteredByTab =
     activeTab === 'active'
-      ? allAgents.filter(isActiveAgent)
+      ? activeDrivers.filter(isOnline)
       : activeTab === 'offline'
-        ? allAgents.filter(isOfflineAgent)
-        : allAgents.filter(countsAsTotal);
+        ? activeDrivers.filter((d) => !isOnline(d))
+        : activeDrivers;
 
   const searchLower = (searchQuery || '').trim().toLowerCase();
   const filteredBySearch =
