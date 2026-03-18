@@ -228,7 +228,10 @@ export default function AgentPanel({ onOpenTaskDetails }) {
   const isActiveAgent = (a) => {
     if (!a) return false;
     if (isExcludedStatus(a)) return false;
-    return a.on_duty === true || normStatus(a?.status) === 'active';
+    // Backend may send on_duty as boolean, number, or string
+    const onDutyVal = a.on_duty;
+    const isOnDuty = onDutyVal === true || onDutyVal === 1 || onDutyVal === '1' || onDutyVal === 'true';
+    return isOnDuty || normStatus(a?.status) === 'active';
   };
   const isOfflineAgent = (a) => {
     const os = normStatus(a?.online_status);
