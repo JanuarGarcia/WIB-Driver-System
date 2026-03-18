@@ -258,7 +258,7 @@ export default function AgentPanel({ onOpenTaskDetails }) {
     const s = normStatus(a?.status);
     if (s) return s === 'active' && normStatus(a?.online_status) === 'lost_connection';
     // Backend fallback (status missing): use on_duty semantics
-    return isOnDuty(a) && normStatus(a?.online_status) === 'lost_connection';
+    return isOnDuty(a) && normStatus(a?.online_status) === 'lostconnection';
   }
 
   // Use the same source list + rules as `filteredByTab` so counters match the cards.
