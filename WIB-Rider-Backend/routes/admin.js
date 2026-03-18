@@ -1370,6 +1370,9 @@ router.post('/drivers/:id/send-push', async (req, res) => {
 
 // ---- getDriverDetails (driver + tasks for date) - must be before getDriverInfo ----
 router.get('/drivers/:id/details', async (req, res) => {
+  // Debug/version marker so we can verify which server code is running in production.
+  // Safe to leave in place; it does not expose sensitive data.
+  res.set('X-Driver-Details-Version', '2026-03-18');
   const driverId = parseInt(req.params.id, 10);
   const dateStr = (req.query.date || '').toString().trim() || new Date().toISOString().slice(0, 10);
   if (!Number.isFinite(driverId)) return res.status(400).json({ error: 'Invalid driver id' });
