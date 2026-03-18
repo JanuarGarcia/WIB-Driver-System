@@ -1279,8 +1279,8 @@ router.get('/drivers', async (req, res) => {
     // Prefer last_login for status date/time; fall back to date_modified. Support email or email_address.
     const fullSelect = `d.driver_id AS id, d.username, CONCAT(COALESCE(d.first_name,''), ' ', COALESCE(d.last_name,'')) AS full_name,
        d.phone, d.on_duty, d.team_id, t.team_name,
-       COALESCE(d.email, d.email_address) AS email,
-       COALESCE(d.device_platform, d.device_type) AS device,
+       d.email AS email,
+       d.device_platform AS device,
        COALESCE(d.transport_description, d.licence_plate, '') AS vehicle,
        COALESCE(NULLIF(TRIM(d.status), ''), 'active') AS status,
        COALESCE(d.last_login, d.date_modified) AS status_updated_at`;
@@ -1383,7 +1383,7 @@ router.get('/drivers/:id/details', async (req, res) => {
            CONCAT(COALESCE(d.first_name,''), ' ', COALESCE(d.last_name,'')) AS full_name,
            d.first_name,
            d.last_name,
-           COALESCE(d.email, d.email_address) AS email,
+           d.email AS email,
            d.phone,
            d.on_duty,
            d.team_id,
@@ -1392,7 +1392,7 @@ router.get('/drivers/:id/details', async (req, res) => {
            COALESCE(d.transport_description, '') AS transport_description,
            COALESCE(d.licence_plate, '') AS licence_plate,
            COALESCE(d.color, '') AS color,
-           COALESCE(d.device_platform, d.device_type) AS device_platform,
+           d.device_platform AS device_platform,
            COALESCE(d.app_version, '') AS app_version,
            d.location_lat,
            d.location_lng,
@@ -1500,8 +1500,8 @@ router.get('/drivers/:id', async (req, res) => {
   try {
     const [rows] = await pool.query(
       `SELECT d.driver_id AS id, d.username, d.first_name, d.last_name,
-       COALESCE(d.email, d.email_address) AS email, d.phone, d.team_id, t.team_name,
-       COALESCE(d.device_platform, d.device_type) AS device,
+       d.email AS email, d.phone, d.team_id, t.team_name,
+       d.device_platform AS device,
        COALESCE(d.transport_description, d.licence_plate, '') AS vehicle,
        COALESCE(NULLIF(TRIM(d.status), ''), 'active') AS status,
        d.profile_photo, d.transport_type_id, d.licence_plate, d.color
@@ -1531,7 +1531,7 @@ router.post('/drivers', express.json(), async (req, res) => {
   try {
     const hash = await bcrypt.hash(pwd, 10);
     const [result] = await pool.query(
-      `INSERT INTO mt_driver (username, password, first_name, last_name, email_address, phone, team_id, transport_description, status, on_duty)
+      `INSERT INTO mt_driver (username, password, first_name, last_name, email, phone, team_id, transport_description, status, on_duty)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
       [
         user,
@@ -1564,7 +1564,7 @@ router.put('/drivers/:id', express.json(), async (req, res) => {
   try {
     const [[existing]] = await pool.query('SELECT driver_id FROM mt_driver WHERE driver_id = ?', [driverId]);
     if (!existing) return res.status(404).json({ error: 'Driver not found' });
-    let sql = 'UPDATE mt_driver SET first_name = ?, last_name = ?, email_address = ?, phone = ?, team_id = ?, transport_description = ?, status = ?';
+    let sql = 'UPDATE mt_driver SET first_name = ?, last_name = ?, email = ?, phone = ?, team_id = ?, transport_description = ?, status = ?';
     const params = [
       (first_name || '').toString().trim() || null,
       (last_name || '').toString().trim() || null,
