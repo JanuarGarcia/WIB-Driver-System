@@ -1437,15 +1437,24 @@ router.get('/drivers/:id/details', async (req, res) => {
       location_lng: d.location_lng,
       last_seen: d.last_seen,
     };
-    const [taskRows] = await pool.query(
-      `SELECT t.task_id, t.task_description, t.status, t.delivery_date, t.delivery_address, t.customer_name
-       FROM mt_driver_task t WHERE t.driver_id = ? AND (t.delivery_date = ? OR DATE(t.delivery_date) = ?) ORDER BY t.task_id DESC`,
-      [driverId, dateStr, dateStr]
-    );
-    return res.json({ driver, tasks: taskRows || [] });
+    let tasks = [];
+    try {
+      const [taskRows] = await pool.query(
+        `SELECT t.task_id, t.task_description, t.status, t.delivery_date, t.delivery_address, t.customer_name
+         FROM mt_driver_task t WHERE t.driver_id = ? AND (t.delivery_date = ? OR DATE(t.delivery_date) = ?) ORDER BY t.task_id DESC`,
+        [driverId, dateStr, dateStr]
+      );
+      tasks = taskRows || [];
+    } catch (_) {
+      // Some deployments may not have mt_driver_task or these columns; still return driver info.
+      tasks = [];
+    }
+
+    return res.json({ driver, tasks });
   } catch (e) {
+    // Don't mask DB/schema errors as "Driver not found"—that makes debugging impossible.
     if (e.code === 'ER_NO_SUCH_TABLE' || e.code === 'ER_BAD_FIELD_ERROR') {
-      return res.status(404).json({ error: 'Driver not found' });
+      return res.status(500).json({ error: 'Failed to load driver details' });
     }
     throw e;
   }
