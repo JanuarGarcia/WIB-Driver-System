@@ -245,8 +245,11 @@ export default function AgentPanel({ onOpenTaskDetails }) {
     if (!a) return false;
     if (isExcludedStatus(a)) return false;
     const s = normStatus(a?.status);
-    if (s !== 'active') return false;
-    return normStatus(a?.online_status) === 'online';
+    // If backend didn't provide `status`, fall back to on_duty semantics
+    if (!s) {
+      return isOnDuty(a) && normStatus(a?.online_status) === 'online';
+    }
+    return s === 'active' && normStatus(a?.online_status) === 'online';
   }
 
   // Offline = on_duty AND lost_connection/offline-ish
@@ -254,9 +257,11 @@ export default function AgentPanel({ onOpenTaskDetails }) {
     if (!a) return false;
     if (isExcludedStatus(a)) return false;
     const s = normStatus(a?.status);
-    if (s !== 'active') return false;
-    const os = normStatus(a?.online_status);
-    return os === 'lost_connection';
+    // If backend didn't provide `status`, fall back to on_duty semantics
+    if (!s) {
+      return isOnDuty(a) && normStatus(a?.online_status) === 'lost_connection';
+    }
+    return s === 'active' && normStatus(a?.online_status) === 'lost_connection';
   }
 
   // Use the same source list + rules as `filteredByTab` so counters match the cards.
@@ -265,7 +270,9 @@ export default function AgentPanel({ onOpenTaskDetails }) {
     total: allAgentsForStats.filter((a) => {
       if (!a) return false;
       if (isExcludedStatus(a)) return false;
-      return normStatus(a?.status) === 'active';
+      const s = normStatus(a?.status);
+      // If status is missing, fall back to on_duty semantics
+      return !s ? isOnDuty(a) : s === 'active';
     }).length,
     active: allAgentsForStats.filter((a) => isActiveAgent(a)).length,
     offline: allAgentsForStats.filter((a) => isOfflineAgent(a)).length,
