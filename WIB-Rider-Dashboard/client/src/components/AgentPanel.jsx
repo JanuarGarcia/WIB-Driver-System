@@ -218,14 +218,26 @@ export default function AgentPanel({ onOpenTaskDetails }) {
   });
 
   const derivedStats = {
-    // Enforce the rules explicitly:
-    // - Total = status === 'active'
-    // - Offline = status === 'active' AND online_status === 'offline'
-    active: (details.active || []).filter((a) => normStatus(a.status) === 'active').length,
-    offline: (details.offline || []).filter(
-      (a) => normStatus(a.status) === 'active' && normStatus(a.online_status) === 'offline'
-    ).length,
-    total: (details.total || []).filter((a) => normStatus(a.status) === 'active').length,
+    // Backend fields aren't consistent across statuses, so we enforce explicitly:
+    // - Active: on_duty === true (fallback: status === 'active')
+    // - Offline: Active AND online_status is offline/lost_connection
+    // - Exclude: suspended/pending/expired/blocked
+    _isExcludedStatus: (a) => {
+      const s = normStatus(a?.status);
+      return ['suspended', 'pending', 'expired', 'blocked'].includes(s);
+    },
+    _isActiveAgent: (a) => {
+      if (!a) return false;
+      if (derivedStats._isExcludedStatus(a)) return false;
+      return a.on_duty === true || normStatus(a?.status) === 'active';
+    },
+    _isOfflineAgent: (a) => {
+      const os = normStatus(a?.online_status);
+      return os === 'offline' || os === 'lost_connection';
+    },
+    active: (details.active || []).filter((a) => derivedStats._isActiveAgent(a)).length,
+    offline: (details.offline || []).filter((a) => derivedStats._isActiveAgent(a) && derivedStats._isOfflineAgent(a)).length,
+    total: (details.total || []).filter((a) => derivedStats._isActiveAgent(a)).length,
   };
 
   const agentStatItems = [

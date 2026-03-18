@@ -281,11 +281,8 @@ export default function TaskPanel({ onOpenTaskDetails }) {
 
   const fetchTasks = useCallback(() => {
     setLoading(true);
-    // For the Completed panel we must show ALL historical completed/delivered/successful tasks.
-    // For other tabs, keep the current selected date behavior.
-    const url = activeTab === 'completed'
-      ? 'tasks'
-      : `tasks?date=${encodeURIComponent(toDateString(selectedDateTime))}`;
+    const dateStr = toDateString(selectedDateTime);
+    const url = `tasks?date=${encodeURIComponent(dateStr)}`;
     api(url)
       .then((list) => {
         setTasks(list || []);
@@ -297,7 +294,7 @@ export default function TaskPanel({ onOpenTaskDetails }) {
       })
       .catch(() => setTasks([]))
       .finally(() => setLoading(false));
-  }, [selectedDateTime, activeTab]);
+  }, [selectedDateTime]);
 
   useEffect(() => {
     fetchTasks();
