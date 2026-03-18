@@ -196,29 +196,34 @@ export default function AgentPanel({ onOpenTaskDetails }) {
     }
   }, [selectedDriver]);
 
-  // Statistics from Drivers table Active status only: status === 'active'; exclude suspended, pending, expired, blocked.
-  // Total = active drivers, Online = active + online_status === 'online', Offline = total - online.
-  const EXCLUDED_STATUSES = ['suspended', 'pending', 'expired', 'blocked'];
-  function isActiveDriver(d) {
-    if (!d) return false;
-    const s = normStatus(d?.status);
-    if (EXCLUDED_STATUSES.includes(s)) return false;
-    return s === 'active';
-  }
-  function isOnline(d) {
-    return normStatus(d?.online_status) === 'online';
-  }
-
+  // Statistics: only drivers with status = active; normalize status/online fields safely.
   const allDrivers = Array.isArray(details.total) ? details.total : [];
-  const activeDrivers = allDrivers.filter(isActiveDriver);
+
+  const activeDrivers = allDrivers.filter((d) => {
+    const status = String(d?.status || '').toLowerCase().trim();
+    return status === 'active' || status === '';
+  });
+
   const totalCount = activeDrivers.length;
-  const onlineCount = activeDrivers.filter((d) => isOnline(d)).length;
+
+  const onlineCount = activeDrivers.filter((d) => {
+    const online = String(d?.online_status || d?.connection_status || '').toLowerCase().trim();
+    return online === 'online' || online === 'on_duty' || online === 'connected';
+  }).length;
+
   const offlineCount = totalCount - onlineCount;
+
   const derivedStats = {
     total: totalCount,
     active: onlineCount,
     offline: offlineCount,
   };
+
+  // Same online check for tab filtering so list matches stats.
+  function isOnline(d) {
+    const online = String(d?.online_status || d?.connection_status || '').toLowerCase().trim();
+    return online === 'online' || online === 'on_duty' || online === 'connected';
+  }
 
   const filteredByTab =
     activeTab === 'active'
