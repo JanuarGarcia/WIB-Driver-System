@@ -1396,6 +1396,16 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
   color: #fff;
   border-color: var(--color-danger);
 }
+.drivers-listing .table-actions .btn-outline-view {
+  border: 1px solid var(--color-primary);
+  color: var(--color-primary);
+  background: transparent;
+}
+.drivers-listing .table-actions .btn-outline-view:hover {
+  background: var(--color-primary-tint, rgba(158, 195, 76, 0.12));
+  border-color: var(--color-primary);
+  color: var(--text-dark);
+}
 .drivers-listing .listing-table-wrap tbody tr td {
   padding: 0.95rem 1.1rem;
   vertical-align: middle;
@@ -3643,6 +3653,17 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
   font-weight: 600;
   color: var(--text-dark);
 }
+.agent-detail-modal-header-text {
+  flex: 1;
+  min-width: 0;
+}
+.agent-detail-modal-subtitle {
+  margin: 0.25rem 0 0;
+  font-size: 0.8125rem;
+  font-weight: 400;
+  color: var(--text-muted);
+  line-height: 1.35;
+}
 .agent-detail-modal-close {
   flex-shrink: 0;
   width: 32px;
@@ -4564,6 +4585,108 @@ tr:hover { background: var(--bg-hover) !important; }
 .send-push-cancel:hover {
   background: var(--border-soft);
   color: var(--text-dark);
+}
+
+/* Driver add/edit modal — matches dashboard dark theme + lime accent */
+.driver-form-backdrop.modal-backdrop {
+  z-index: 1200;
+  align-items: flex-start;
+  padding-top: max(1rem, env(safe-area-inset-top));
+}
+.driver-form-modal {
+  width: 100%;
+  max-width: 540px;
+  max-height: calc(100vh - 2rem);
+  max-height: calc(100dvh - 2rem);
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-card);
+  border-radius: 12px;
+  border: 1px solid var(--border-soft);
+  box-shadow: 0 24px 56px rgba(0, 0, 0, 0.18), 0 0 0 1px var(--color-primary-tint, rgba(158, 195, 76, 0.08));
+  margin: 0 auto;
+}
+.driver-form-modal-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1.25rem 1.5rem;
+  border-bottom: 2px solid var(--color-primary);
+  flex-shrink: 0;
+}
+.driver-form-modal-title {
+  margin: 0;
+  font-size: 1.125rem;
+  font-weight: 600;
+  color: var(--text-dark);
+}
+.driver-form-modal-hint {
+  margin: 0.4rem 0 0;
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+.driver-form-modal-body {
+  padding: 1.25rem 1.5rem 0.5rem;
+  overflow-y: auto;
+  flex: 1;
+  -webkit-overflow-scrolling: touch;
+}
+.driver-form-modal-body .send-push-field {
+  margin-bottom: 0;
+}
+.driver-form-section {
+  margin-bottom: 1.35rem;
+}
+.driver-form-section:last-child {
+  margin-bottom: 0.5rem;
+}
+.driver-form-section-label {
+  display: block;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--color-primary);
+  margin-bottom: 0.85rem;
+  padding-bottom: 0.35rem;
+  border-bottom: 1px solid var(--border-soft);
+}
+.driver-form-label-muted {
+  font-weight: 400;
+  color: var(--text-muted);
+  font-size: 0.8125rem;
+}
+.driver-form-grid {
+  display: grid;
+  gap: 1rem 1.25rem;
+}
+.driver-form-grid-2 {
+  grid-template-columns: 1fr;
+}
+@media (min-width: 560px) {
+  .driver-form-grid-2 {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+.driver-form-field-full,
+.driver-form-field-span-2 {
+  grid-column: 1 / -1;
+}
+.driver-form-modal-footer {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 1rem 1.5rem 1.25rem;
+  border-top: 1px solid var(--border-soft);
+  background: var(--bg-elevated, rgba(0, 0, 0, 0.02));
+  flex-shrink: 0;
+}
+[data-theme="dark"] .driver-form-modal-footer {
+  background: rgba(0, 0, 0, 0.2);
 }
 
 /* New Task modal: two-column layout (form left, Leaflet map right), system design + light/dark */
@@ -5584,6 +5707,9 @@ tr:hover { background: var(--bg-hover) !important; }
   .agent-detail-modal-card { max-width: 100%; margin: 0.5rem; max-height: 85vh; overflow: hidden; display: flex; flex-direction: column; }
   .agent-detail-modal-body { overflow-y: auto; -webkit-overflow-scrolling: touch; }
   .send-push-modal { width: 100%; max-width: 100%; min-width: 0; }
+  .driver-form-modal { width: 100%; max-width: 100%; min-width: 0; max-height: 90vh; }
+  .driver-form-modal-body { max-height: none; }
+  .driver-form-backdrop.modal-backdrop { align-items: flex-end; padding: 0.5rem; padding-bottom: max(0.5rem, env(safe-area-inset-bottom)); }
   .btn-assign-driver { min-height: 44px; padding: 0.5rem 0.85rem; }
   .modal-footer-actions .btn { min-height: 44px; }
   .task-detail-edit-modal-close { min-width: 44px; min-height: 44px; }

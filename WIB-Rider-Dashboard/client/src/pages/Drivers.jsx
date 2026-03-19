@@ -6,6 +6,7 @@ import { useTablePagination, PAGE_SIZE_OPTIONS } from '../hooks/useTablePaginati
 import { useTableSort } from '../hooks/useTableSort';
 import TablePaginationControls from '../components/TablePaginationControls';
 import TableSortControls from '../components/TableSortControls';
+import DriverDetailsModal from '../components/DriverDetailsModal';
 
 const STATUS_FILTERS = [
   { id: 'all', label: 'All' },
@@ -77,6 +78,8 @@ export default function Drivers() {
   const [bulkPushTitle, setBulkPushTitle] = useState('');
   const [bulkPushMessage, setBulkPushMessage] = useState('');
   const [bulkPushSending, setBulkPushSending] = useState(false);
+  /** Row object for read-only details modal (same as Agent panel Details) */
+  const [viewDriver, setViewDriver] = useState(null);
 
   const setStatusFilter = (id) => {
     setSearchParams((prev) => {
@@ -326,6 +329,15 @@ export default function Drivers() {
     setPushMessage('');
   };
 
+  const openViewDriver = (d) => {
+    const id = d.id ?? d.driver_id;
+    if (id == null) {
+      alert('Cannot view: driver ID is missing.');
+      return;
+    }
+    setViewDriver({ ...d, id });
+  };
+
   const sendPush = async () => {
     if (!pushDriver) return;
     setPushSending(true);
@@ -456,6 +468,9 @@ export default function Drivers() {
                           <button type="button" className="btn btn-sm btn-danger" onClick={() => setDriverStatus(d, 'blocked')} title="Deny signup">Deny</button>
                         </>
                       )}
+                      <button type="button" className="btn btn-sm btn-outline-view" onClick={() => openViewDriver(d)} title="View profile and tasks">
+                        View
+                      </button>
                       <button type="button" className="btn btn-sm" onClick={() => setDriverOnDuty(d, !d.on_duty)} title={d.on_duty ? 'Set off duty' : 'Set on duty'}>
                         {d.on_duty ? 'On duty' : 'Off'}
                       </button>
@@ -487,75 +502,134 @@ export default function Drivers() {
       )}
 
       {driverModal !== null && (
-        <div className="modal-backdrop" onClick={() => !driverSaving && closeDriverModal()}>
-          <div className="modal-box send-push-modal" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header send-push-modal-header">
-              <h3>{driverModal.id ? 'Edit driver' : 'Add driver'}</h3>
+        <div className="modal-backdrop driver-form-backdrop" onClick={() => !driverSaving && closeDriverModal()}>
+          <div className="modal-box driver-form-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="driver-form-modal-header">
+              <div>
+                <h3 className="driver-form-modal-title">{driverModal.id ? 'Edit driver' : 'Add driver'}</h3>
+                <p className="driver-form-modal-hint">
+                  {driverModal.id ? 'Update account details and assignment. Leave password blank to keep the current one.' : 'Create a new rider account for the app.'}
+                </p>
+              </div>
               <button type="button" className="send-push-modal-close" onClick={() => !driverSaving && closeDriverModal()} aria-label="Close">×</button>
             </div>
             <form onSubmit={saveDriver}>
-              <div className="modal-body send-push-modal-body">
+              <div className="driver-form-modal-body">
                 {editDriverLoading ? (
                   <div className="loading">Loading…</div>
                 ) : (
                   <>
-                <div className="send-push-field">
-                  <label className="modal-label" htmlFor="driver-username">Username *</label>
-                  <input id="driver-username" type="text" className="form-control send-push-input" value={driverForm.username} onChange={(e) => setDriverForm((f) => ({ ...f, username: e.target.value }))} required />
-                </div>
-                <div className="send-push-field">
-                  <label className="modal-label" htmlFor="driver-password">Password {driverModal.id ? '(leave blank to keep)' : '*'}</label>
-                  <input id="driver-password" type="password" className="form-control send-push-input" value={driverForm.password} onChange={(e) => setDriverForm((f) => ({ ...f, password: e.target.value }))} placeholder={driverModal.id ? '••••••••' : ''} />
-                </div>
-                <div className="send-push-field">
-                  <label className="modal-label" htmlFor="driver-first">First name</label>
-                  <input id="driver-first" type="text" className="form-control send-push-input" value={driverForm.first_name} onChange={(e) => setDriverForm((f) => ({ ...f, first_name: e.target.value }))} />
-                </div>
-                <div className="send-push-field">
-                  <label className="modal-label" htmlFor="driver-last">Last name</label>
-                  <input id="driver-last" type="text" className="form-control send-push-input" value={driverForm.last_name} onChange={(e) => setDriverForm((f) => ({ ...f, last_name: e.target.value }))} />
-                </div>
-                <div className="send-push-field">
-                  <label className="modal-label" htmlFor="driver-email">Email</label>
-                  <input id="driver-email" type="email" className="form-control send-push-input" value={driverForm.email} onChange={(e) => setDriverForm((f) => ({ ...f, email: e.target.value }))} />
-                </div>
-                <div className="send-push-field">
-                  <label className="modal-label" htmlFor="driver-phone">Phone</label>
-                  <input id="driver-phone" type="text" className="form-control send-push-input" value={driverForm.phone} onChange={(e) => setDriverForm((f) => ({ ...f, phone: e.target.value }))} />
-                </div>
-                <div className="send-push-field">
-                  <label className="modal-label" htmlFor="driver-team">Team</label>
-                    <select id="driver-team" className="form-control send-push-input" value={driverForm.team_id} onChange={(e) => setDriverForm((f) => ({ ...f, team_id: e.target.value }))}>
-                    <option value="">—</option>
-                    {(teams || []).map((t) => (
-                      <option key={t.id ?? t.team_id} value={String(t.id ?? t.team_id ?? '')}>{t.name ?? t.team_name ?? `Team ${t.id ?? t.team_id}`}</option>
-                    ))}
-                  </select>
-                </div>
-                <div className="send-push-field">
-                  <label className="modal-label" htmlFor="driver-vehicle">Vehicle</label>
-                  <input id="driver-vehicle" type="text" className="form-control send-push-input" value={driverForm.vehicle} onChange={(e) => setDriverForm((f) => ({ ...f, vehicle: e.target.value }))} />
-                </div>
-                <div className="send-push-field">
-                  <label className="modal-label" htmlFor="driver-status">Status</label>
-                  <select id="driver-status" className="form-control send-push-input" value={driverForm.status} onChange={(e) => setDriverForm((f) => ({ ...f, status: e.target.value }))}>
-                    <option value="active">active</option>
-                    <option value="pending">pending</option>
-                    <option value="suspended">suspended</option>
-                    <option value="blocked">blocked</option>
-                    <option value="expired">expired</option>
-                  </select>
-                </div>
+                    <div className="driver-form-section">
+                      <span className="driver-form-section-label">Account</span>
+                      <div className="driver-form-grid">
+                        <div className="send-push-field driver-form-field-full">
+                          <label className="modal-label" htmlFor="driver-username">Username *</label>
+                          <input id="driver-username" type="text" className="form-control send-push-input" value={driverForm.username} onChange={(e) => setDriverForm((f) => ({ ...f, username: e.target.value }))} required autoComplete="username" />
+                        </div>
+                        <div className="send-push-field driver-form-field-full">
+                          <label className="modal-label" htmlFor="driver-password">Password {driverModal.id ? <span className="driver-form-label-muted">(leave blank to keep)</span> : <span className="driver-form-label-muted">*</span>}</label>
+                          <input id="driver-password" type="password" className="form-control send-push-input" value={driverForm.password} onChange={(e) => setDriverForm((f) => ({ ...f, password: e.target.value }))} placeholder={driverModal.id ? '••••••••' : ''} autoComplete={driverModal.id ? 'new-password' : 'new-password'} />
+                        </div>
+                      </div>
+                    </div>
+                    <div className="driver-form-section">
+                      <span className="driver-form-section-label">Profile</span>
+                      <div className="driver-form-grid driver-form-grid-2">
+                        <div className="send-push-field">
+                          <label className="modal-label" htmlFor="driver-first">First name</label>
+                          <input id="driver-first" type="text" className="form-control send-push-input" value={driverForm.first_name} onChange={(e) => setDriverForm((f) => ({ ...f, first_name: e.target.value }))} autoComplete="given-name" />
+                        </div>
+                        <div className="send-push-field">
+                          <label className="modal-label" htmlFor="driver-last">Last name</label>
+                          <input id="driver-last" type="text" className="form-control send-push-input" value={driverForm.last_name} onChange={(e) => setDriverForm((f) => ({ ...f, last_name: e.target.value }))} autoComplete="family-name" />
+                        </div>
+                        <div className="send-push-field">
+                          <label className="modal-label" htmlFor="driver-email">Email</label>
+                          <input id="driver-email" type="email" className="form-control send-push-input" value={driverForm.email} onChange={(e) => setDriverForm((f) => ({ ...f, email: e.target.value }))} autoComplete="email" />
+                        </div>
+                        <div className="send-push-field">
+                          <label className="modal-label" htmlFor="driver-phone">Phone</label>
+                          <input id="driver-phone" type="tel" className="form-control send-push-input" value={driverForm.phone} onChange={(e) => setDriverForm((f) => ({ ...f, phone: e.target.value }))} autoComplete="tel" />
+                        </div>
+                      </div>
+                    </div>
+                    <div className="driver-form-section">
+                      <span className="driver-form-section-label">Assignment &amp; status</span>
+                      <div className="driver-form-grid driver-form-grid-2">
+                        <div className="send-push-field driver-form-field-span-2">
+                          <label className="modal-label" htmlFor="driver-team">Team</label>
+                          <select id="driver-team" className="form-control send-push-input" value={driverForm.team_id} onChange={(e) => setDriverForm((f) => ({ ...f, team_id: e.target.value }))}>
+                            <option value="">— Select team —</option>
+                            {(teams || []).map((t) => (
+                              <option key={t.id ?? t.team_id} value={String(t.id ?? t.team_id ?? '')}>{t.name ?? t.team_name ?? `Team ${t.id ?? t.team_id}`}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="send-push-field">
+                          <label className="modal-label" htmlFor="driver-vehicle">Vehicle</label>
+                          <input id="driver-vehicle" type="text" className="form-control send-push-input" value={driverForm.vehicle} onChange={(e) => setDriverForm((f) => ({ ...f, vehicle: e.target.value }))} />
+                        </div>
+                        <div className="send-push-field">
+                          <label className="modal-label" htmlFor="driver-status">Status</label>
+                          <select id="driver-status" className="form-control send-push-input" value={driverForm.status} onChange={(e) => setDriverForm((f) => ({ ...f, status: e.target.value }))}>
+                            <option value="active">active</option>
+                            <option value="pending">pending</option>
+                            <option value="suspended">suspended</option>
+                            <option value="blocked">blocked</option>
+                            <option value="expired">expired</option>
+                          </select>
+                        </div>
+                      </div>
+                    </div>
                   </>
                 )}
               </div>
-              <div className="modal-actions send-push-modal-actions">
-                <button type="submit" className="btn btn-primary send-push-submit" disabled={driverSaving || editDriverLoading}>{driverSaving ? 'Saving…' : 'Save'}</button>
+              <div className="driver-form-modal-footer">
                 <button type="button" className="btn send-push-cancel" onClick={() => !driverSaving && !editDriverLoading && closeDriverModal()} disabled={driverSaving || editDriverLoading}>Cancel</button>
+                <button type="submit" className="btn btn-primary send-push-submit" disabled={driverSaving || editDriverLoading}>
+                  {driverSaving ? 'Saving…' : driverModal?.id ? 'Save changes' : 'Create driver'}
+                </button>
               </div>
             </form>
           </div>
         </div>
+      )}
+
+      {viewDriver && (
+        <DriverDetailsModal
+          driverId={viewDriver.id ?? viewDriver.driver_id}
+          summaryDriver={viewDriver}
+          onClose={() => setViewDriver(null)}
+          footer={
+            <>
+              <button
+                type="button"
+                className="agent-detail-modal-btn agent-detail-modal-btn--primary"
+                onClick={() => {
+                  const d = viewDriver;
+                  setViewDriver(null);
+                  openEditDriver(d);
+                }}
+              >
+                Edit driver
+              </button>
+              <button
+                type="button"
+                className="agent-detail-modal-btn"
+                onClick={() => {
+                  const d = viewDriver;
+                  setViewDriver(null);
+                  openSendPush(d);
+                }}
+              >
+                Send push
+              </button>
+              <button type="button" className="agent-detail-modal-btn" onClick={() => setViewDriver(null)}>
+                Close
+              </button>
+            </>
+          }
+        />
       )}
 
       {pushDriver && (
