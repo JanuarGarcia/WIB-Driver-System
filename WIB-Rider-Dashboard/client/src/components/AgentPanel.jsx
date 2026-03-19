@@ -3,9 +3,11 @@ import { Link, useNavigate } from 'react-router-dom';
 import { api, statusClass, statusLabel } from '../api';
 import DriverDetailsModal from './DriverDetailsModal';
 import { useTeamFilter } from '../context/TeamFilterContext';
-import { useTableAutoRefresh } from '../hooks/useTableAutoRefresh';
 
 const TABS = ['active', 'offline', 'total'];
+const AGENT_REFRESH_INTERVAL_MS = 5000;
+const DRIVER_STATUS_UPDATED_EVENT = 'wib:driver-status-updated';
+const DRIVER_STATUS_UPDATED_AT_KEY = 'wib-driver-status-updated-at';
 
 /** Baguio center [lat, lng] – used to compute delivery direction from coordinates */
 const BAGUIO_CENTER_LAT = 16.4023;
@@ -135,8 +137,9 @@ export default function AgentPanel({ onOpenTaskDetails }) {
     if (allTasksView) fetchAssignedTasks();
   }, [allTasksView, fetchAssignedTasks]);
 
-  function loadAgents() {
-    setLoading(true);
+  const loadAgents = useCallback((opts = {}) => {
+    const silent = opts.silent === true;
+    if (!silent) setLoading(true);
     const params = new URLSearchParams();
     params.set('date', todayStr());
     if (selectedTeamId != null && selectedTeamId !== '') params.set('team_id', String(selectedTeamId));
@@ -151,18 +154,33 @@ export default function AgentPanel({ onOpenTaskDetails }) {
         });
       })
       .catch(() => setDetails({ active: [], offline: [], total: [] }))
-      .finally(() => setLoading(false));
-  }
+      .finally(() => {
+        if (!silent) setLoading(false);
+      });
+  }, [selectedTeamId, searchQuery]);
 
   useEffect(() => {
     loadAgents();
-  }, []);
+    const intervalId = setInterval(() => {
+      loadAgents({ silent: true });
+    }, AGENT_REFRESH_INTERVAL_MS);
+    return () => clearInterval(intervalId);
+  }, [loadAgents]);
 
   useEffect(() => {
-    loadAgents();
-  }, [selectedTeamId]);
-
-  useTableAutoRefresh(loadAgents, 15000);
+    const onDriverStatusUpdated = () => {
+      loadAgents({ silent: true });
+    };
+    const onStorage = (e) => {
+      if (e.key === DRIVER_STATUS_UPDATED_AT_KEY) loadAgents({ silent: true });
+    };
+    window.addEventListener(DRIVER_STATUS_UPDATED_EVENT, onDriverStatusUpdated);
+    window.addEventListener('storage', onStorage);
+    return () => {
+      window.removeEventListener(DRIVER_STATUS_UPDATED_EVENT, onDriverStatusUpdated);
+      window.removeEventListener('storage', onStorage);
+    };
+  }, [loadAgents]);
 
   const handleRefresh = () => {
     loadAgents();

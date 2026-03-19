@@ -28,6 +28,8 @@ const DRIVER_SORT_OPTIONS = [
   { key: 'device', label: 'Device', compare: (a, b) => String(a.device ?? '').localeCompare(b.device ?? '') },
   { key: 'status', label: 'Status', compare: (a, b) => String(a.status ?? '').localeCompare(b.status ?? '') },
 ];
+const DRIVER_STATUS_UPDATED_EVENT = 'wib:driver-status-updated';
+const DRIVER_STATUS_UPDATED_AT_KEY = 'wib-driver-status-updated-at';
 
 function driverStatusClass(status) {
   const s = (status || '').toLowerCase();
@@ -205,14 +207,31 @@ export default function Drivers() {
   const setDriverOnDuty = (d, onDuty) => {
     const id = d.id ?? d.driver_id;
     api(`drivers/${id}/status`, { method: 'PUT', body: JSON.stringify({ on_duty: onDuty ? 1 : 2 }) })
-      .then(() => fetchDrivers())
+      .then(() => {
+        fetchDrivers();
+        window.dispatchEvent(new CustomEvent(DRIVER_STATUS_UPDATED_EVENT));
+        try {
+          localStorage.setItem(DRIVER_STATUS_UPDATED_AT_KEY, String(Date.now()));
+        } catch (_) {}
+      })
       .catch((err) => alert(err?.error || err?.message || 'Update failed'));
   };
 
   const setDriverStatus = (d, newStatus) => {
     const id = d.id ?? d.driver_id;
     api(`drivers/${id}/status`, { method: 'PUT', body: JSON.stringify({ status: newStatus }) })
-      .then(() => { fetchDrivers(); setSelectedDriverIds((prev) => { const next = new Set(prev); next.delete(id); return next; }); })
+      .then(() => {
+        fetchDrivers();
+        window.dispatchEvent(new CustomEvent(DRIVER_STATUS_UPDATED_EVENT));
+        try {
+          localStorage.setItem(DRIVER_STATUS_UPDATED_AT_KEY, String(Date.now()));
+        } catch (_) {}
+        setSelectedDriverIds((prev) => {
+          const next = new Set(prev);
+          next.delete(id);
+          return next;
+        });
+      })
       .catch((err) => alert(err?.error || err?.message || 'Update failed'));
   };
 
