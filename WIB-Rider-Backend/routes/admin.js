@@ -393,7 +393,9 @@ async function getDriverByStats(stats, transactionDate, trackingType, filters = 
 
   // Agent panel should treat NULL/blank status as active, same as the client-side fallback.
   // This makes Total/Offline counts accurate when deployments store status as NULL/'' for active drivers.
-  const statusClause = " AND (LOWER(TRIM(COALESCE(d.status, ''))) IN ('active', ''))";
+  // Agent dashboard should mirror Drivers table "Active" filter.
+  // We treat only explicit 'active' as active here so totals don't get inflated by blank statuses.
+  const statusClause = " AND (LOWER(TRIM(COALESCE(d.status, ''))) = 'active')";
   const params = [];
   let filterClause = statusClause;
   if (team_id != null && team_id !== '' && Number.isFinite(Number(team_id))) {
@@ -441,7 +443,7 @@ async function getDriverByStats(stats, transactionDate, trackingType, filters = 
     }
   }
 
-  const selectColsFull = `d.driver_id, d.first_name, d.last_name, d.phone, d.on_duty, d.last_login, d.location_lat, d.location_lng, d.team_id, d.user_type, d.user_id, d.device_platform, d.device_type`;
+  const selectColsFull = `d.driver_id, d.first_name, d.last_name, d.phone, d.on_duty, d.last_login, d.location_lat, d.location_lng, d.team_id, d.user_type, d.user_id, d.device_platform, d.device_type, d.status, d.status_updated_at`;
   // Include mt_driver status so Agent dashboard can mirror Drivers table filters.
   // status_updated_at may not exist in some deployments, so we try to select it and gracefully fall back via existing error handlers.
   const selectColsMinimal = `d.driver_id, d.first_name, d.last_name, d.phone, d.on_duty, d.last_login, d.location_lat, d.location_lng, d.team_id, d.status, d.status_updated_at`;
@@ -475,7 +477,8 @@ async function getDriverByStats(stats, transactionDate, trackingType, filters = 
           const timeParams = paramsTime.slice(params.length);
           const minimalWhereTeam = (team_id != null && team_id !== '' && Number.isFinite(Number(team_id))) ? ' AND d.team_id = ?' : '';
           const minimalWhereName = (driver_name != null && String(driver_name).trim() !== '') ? " AND (CONCAT(COALESCE(d.first_name,''), ' ', COALESCE(d.last_name,'')) LIKE ? OR d.first_name LIKE ? OR d.last_name LIKE ?)" : '';
-          const fromMinimal = `FROM mt_driver d WHERE 1=1${minimalWhereTeam}${minimalWhereName}`;
+          // Ensure fallbacks still filter to active drivers only.
+          const fromMinimal = `FROM mt_driver d WHERE 1=1${statusClause}${minimalWhereTeam}${minimalWhereName}`;
           const minimalParams = []
             .concat((team_id != null && team_id !== '' && Number.isFinite(Number(team_id))) ? [team_id] : [])
             .concat((driver_name != null && String(driver_name).trim() !== '') ? [`%${String(driver_name).trim()}%`, `%${String(driver_name).trim()}%`, `%${String(driver_name).trim()}%`] : [])
@@ -497,7 +500,7 @@ async function getDriverByStats(stats, transactionDate, trackingType, filters = 
                    d.status,
                    d.status_updated_at
                  FROM mt_driver d 
-                 WHERE 1=1${timeClause}${orderClause}`,
+                 WHERE 1=1${statusClause}${timeClause}${orderClause}`,
                 timeParams
               );
               rows = (r || []).map((row) => ({
@@ -558,8 +561,9 @@ async function getDriverByStats(stats, transactionDate, trackingType, filters = 
       full_name: [r.first_name, r.last_name].filter(Boolean).join(' ').trim() || null,
       phone: r.phone,
       on_duty: r.on_duty,
-        status: r.status != null && String(r.status).trim() !== '' ? r.status : 'active',
-        status_updated_at: r.status_updated_at,
+      // IMPORTANT: do not coerce missing status to "active" (causes mismatches vs Drivers table).
+      status: r.status ?? null,
+      status_updated_at: r.status_updated_at ?? null,
       last_login: r.last_login,
       last_online: r.last_online,
       location_lat: r.location_lat,
