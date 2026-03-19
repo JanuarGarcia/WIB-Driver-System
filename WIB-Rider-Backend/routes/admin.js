@@ -485,8 +485,32 @@ async function getDriverByStats(stats, transactionDate, trackingType, filters = 
             rows = (r || []).map((row) => ({ ...row, user_type: null, user_id: null, device_platform: null, device_type: null, last_online: row.last_login ? Math.floor(new Date(row.last_login).getTime() / 1000) : null }));
           } catch (e3) {
             if (e3.code === 'ER_BAD_FIELD_ERROR') {
-              const [r] = await pool.query(`SELECT d.driver_id, d.first_name, d.last_name, d.phone, d.on_duty, d.last_login FROM mt_driver d WHERE 1=1${timeClause}${orderClause}`, timeParams);
-              rows = (r || []).map((row) => ({ ...row, location_lat: null, location_lng: null, team_id: null, user_type: null, user_id: null, device_platform: null, device_type: null, last_online: row.last_login ? Math.floor(new Date(row.last_login).getTime() / 1000) : null }));
+              // Last-resort fallback: still select d.status so the frontend can reliably filter "active" drivers.
+              const [r] = await pool.query(
+                `SELECT 
+                   d.driver_id,
+                   d.first_name,
+                   d.last_name,
+                   d.phone,
+                   d.on_duty,
+                   d.last_login,
+                   d.status,
+                   d.status_updated_at
+                 FROM mt_driver d 
+                 WHERE 1=1${timeClause}${orderClause}`,
+                timeParams
+              );
+              rows = (r || []).map((row) => ({
+                ...row,
+                location_lat: null,
+                location_lng: null,
+                team_id: null,
+                user_type: null,
+                user_id: null,
+                device_platform: null,
+                device_type: null,
+                last_online: row.last_login ? Math.floor(new Date(row.last_login).getTime() / 1000) : null,
+              }));
             } else throw e3;
           }
         } else throw e2;
