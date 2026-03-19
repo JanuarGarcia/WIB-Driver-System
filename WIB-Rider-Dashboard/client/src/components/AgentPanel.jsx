@@ -227,7 +227,9 @@ export default function AgentPanel({ onOpenTaskDetails }) {
 
   const activeDrivers = allDrivers.filter((d) => {
     const status = String(d?.status || '').toLowerCase().trim();
-    return status === 'active' || status === '';
+    // Only count drivers explicitly marked as active.
+    // (Do not treat missing/empty status as active, otherwise totals get inflated.)
+    return status === 'active';
   });
 
   const totalCount = activeDrivers.length;
