@@ -4590,8 +4590,11 @@ tr:hover { background: var(--bg-hover) !important; }
 /* Driver add/edit modal — matches dashboard dark theme + lime accent */
 .driver-form-backdrop.modal-backdrop {
   z-index: 1200;
-  align-items: flex-start;
+  align-items: center;
+  justify-content: center;
   padding-top: max(1rem, env(safe-area-inset-top));
+  padding-bottom: max(1rem, env(safe-area-inset-bottom));
+  overflow-y: auto;
 }
 .driver-form-modal {
   width: 100%;
@@ -4605,6 +4608,13 @@ tr:hover { background: var(--bg-hover) !important; }
   border: 1px solid var(--border-soft);
   box-shadow: 0 24px 56px rgba(0, 0, 0, 0.18), 0 0 0 1px var(--color-primary-tint, rgba(158, 195, 76, 0.08));
   margin: 0 auto;
+  overflow: hidden;
+}
+.driver-form-modal form {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
 }
 .driver-form-modal-header {
   display: flex;
@@ -4631,10 +4641,32 @@ tr:hover { background: var(--bg-hover) !important; }
   padding: 1.25rem 1.5rem 0.5rem;
   overflow-y: auto;
   flex: 1;
+  min-height: 0;
   -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
 }
 .driver-form-modal-body .send-push-field {
   margin-bottom: 0;
+}
+.driver-form-modal .form-control,
+.driver-form-modal .send-push-input,
+.driver-form-modal .send-push-textarea,
+.driver-form-modal select {
+  background: var(--bg-elevated);
+  color: var(--text-dark);
+  border: 1px solid var(--border-medium);
+}
+.driver-form-modal .form-control::placeholder,
+.driver-form-modal .send-push-input::placeholder,
+.driver-form-modal .send-push-textarea::placeholder {
+  color: var(--text-muted);
+}
+.driver-form-modal .form-control:focus,
+.driver-form-modal .send-push-input:focus,
+.driver-form-modal .send-push-textarea:focus,
+.driver-form-modal select:focus {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 2px var(--color-primary-tint, rgba(158, 195, 76, 0.22));
 }
 .driver-form-section {
   margin-bottom: 1.35rem;
@@ -4687,6 +4719,17 @@ tr:hover { background: var(--bg-hover) !important; }
 }
 [data-theme="dark"] .driver-form-modal-footer {
   background: rgba(0, 0, 0, 0.2);
+}
+[data-theme="dark"] .driver-form-modal {
+  box-shadow: 0 24px 56px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(158, 195, 76, 0.12);
+}
+[data-theme="dark"] .driver-form-modal .form-control,
+[data-theme="dark"] .driver-form-modal .send-push-input,
+[data-theme="dark"] .driver-form-modal .send-push-textarea,
+[data-theme="dark"] .driver-form-modal select {
+  background: var(--bg-surface-2);
+  color: var(--text-dark);
+  border-color: var(--border-soft);
 }
 
 /* New Task modal: two-column layout (form left, Leaflet map right), system design + light/dark */
@@ -5709,7 +5752,7 @@ tr:hover { background: var(--bg-hover) !important; }
   .send-push-modal { width: 100%; max-width: 100%; min-width: 0; }
   .driver-form-modal { width: 100%; max-width: 100%; min-width: 0; max-height: 90vh; }
   .driver-form-modal-body { max-height: none; }
-  .driver-form-backdrop.modal-backdrop { align-items: flex-end; padding: 0.5rem; padding-bottom: max(0.5rem, env(safe-area-inset-bottom)); }
+  .driver-form-backdrop.modal-backdrop { align-items: flex-end; padding: 0.5rem; padding-top: max(0.5rem, env(safe-area-inset-top)); padding-bottom: max(0.5rem, env(safe-area-inset-bottom)); }
   .btn-assign-driver { min-height: 44px; padding: 0.5rem 0.85rem; }
   .modal-footer-actions .btn { min-height: 44px; }
   .task-detail-edit-modal-close { min-width: 44px; min-height: 44px; }
