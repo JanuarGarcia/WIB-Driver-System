@@ -616,6 +616,7 @@ export default function Drivers() {
 
       {viewDriver && (
         <DriverDetailsModal
+          size="wide"
           driverId={viewDriver.id ?? viewDriver.driver_id}
           summaryDriver={viewDriver}
           onClose={() => setViewDriver(null)}

@@ -13,6 +13,7 @@ export default function DriverDetailsModal({
   onClose,
   onOpenTaskDetails,
   footer = null,
+  size = 'default',
 }) {
   const navigate = useNavigate();
   const [state, setState] = useState({
@@ -78,7 +79,10 @@ export default function DriverDetailsModal({
       aria-labelledby="driver-details-modal-title"
       onClick={(e) => e.target === e.currentTarget && onClose()}
     >
-      <div className="agent-detail-modal-card" onClick={(e) => e.stopPropagation()}>
+      <div
+        className={`agent-detail-modal-card ${size === 'wide' ? 'agent-detail-modal-card--wide' : ''}`}
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="agent-detail-modal-header">
           <div className="agent-detail-modal-header-text">
             <h2 id="driver-details-modal-title" className="agent-detail-modal-title">

@@ -3635,6 +3635,14 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
   overflow: auto;
   animation: agent-detail-modal-slide 0.25s ease;
 }
+.agent-detail-modal-card--wide {
+  max-width: min(980px, 96vw);
+  max-height: calc(100vh - 2rem);
+  max-height: calc(100dvh - 2rem);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
 @keyframes agent-detail-modal-slide {
   from { opacity: 0; transform: scale(0.96) translateY(-8px); }
   to { opacity: 1; transform: scale(1) translateY(0); }
@@ -3689,6 +3697,13 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
   display: flex;
   flex-direction: column;
   gap: 0.6rem;
+}
+.agent-detail-modal-card--wide .agent-detail-modal-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
 }
 .agent-detail-modal-row {
   display: flex;
@@ -3766,6 +3781,9 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
   grid-template-columns: 1fr 1fr;
   gap: 0.75rem 1.25rem;
 }
+.agent-detail-modal-card--wide .agent-driver-details-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
 .agent-driver-details-row {
   display: flex;
   gap: 0.35rem;
@@ -3792,10 +3810,18 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
   overflow: hidden;
   background: var(--bg-card);
 }
+.agent-detail-modal-card--wide .agent-driver-details-table-wrap {
+  overflow: auto;
+  max-height: min(42vh, 430px);
+  -webkit-overflow-scrolling: touch;
+}
 .agent-driver-details-table {
   width: 100%;
   border-collapse: collapse;
   font-size: 0.875rem;
+}
+.agent-detail-modal-card--wide .agent-driver-details-table {
+  min-width: 760px;
 }
 .agent-driver-details-table thead th {
   text-align: left;
@@ -3840,6 +3866,9 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
 
 @media (max-width: 520px) {
   .agent-driver-details-grid {
+    grid-template-columns: 1fr;
+  }
+  .agent-detail-modal-card--wide .agent-driver-details-grid {
     grid-template-columns: 1fr;
   }
 }

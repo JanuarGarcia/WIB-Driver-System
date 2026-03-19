@@ -137,26 +137,65 @@ export default function AgentPanel({ onOpenTaskDetails }) {
     if (allTasksView) fetchAssignedTasks();
   }, [allTasksView, fetchAssignedTasks]);
 
-  const loadAgents = useCallback((opts = {}) => {
+  const loadAgents = useCallback(async (opts = {}) => {
     const silent = opts.silent === true;
     if (!silent) setLoading(true);
     const params = new URLSearchParams();
     params.set('date', todayStr());
     if (selectedTeamId != null && selectedTeamId !== '') params.set('team_id', String(selectedTeamId));
     if ((searchQuery || '').trim()) params.set('agent_name', searchQuery.trim());
-    api(`driver/agent-dashboard?${params}`)
-      .then((res) => {
-        const d = res?.details || {};
-        setDetails({
-          active: Array.isArray(d.active) ? d.active : [],
-          offline: Array.isArray(d.offline) ? d.offline : [],
-          total: Array.isArray(d.total) ? d.total : [],
+    try {
+      const res = await api(`driver/agent-dashboard?${params}`);
+      const d = res?.details || {};
+      const active = Array.isArray(d.active) ? d.active : [];
+      const offline = Array.isArray(d.offline) ? d.offline : [];
+      const total = Array.isArray(d.total) ? d.total : [];
+
+      // Fallback: when agent-dashboard returns empty, derive from `/drivers`
+      // so Agent panel remains usable and consistent with Drivers table data.
+      if (active.length === 0 && offline.length === 0 && total.length === 0) {
+        const rows = await api('drivers');
+        let drivers = Array.isArray(rows) ? rows : [];
+
+        if (selectedTeamId != null && selectedTeamId !== '') {
+          drivers = drivers.filter((r) => String(r.team_id ?? '') === String(selectedTeamId));
+        }
+        if ((searchQuery || '').trim()) {
+          const q = searchQuery.trim().toLowerCase();
+          drivers = drivers.filter((r) => {
+            const id = String(r.id ?? r.driver_id ?? '').toLowerCase();
+            const username = String(r.username ?? '').toLowerCase();
+            const name = String(r.full_name ?? '').toLowerCase();
+            const phone = String(r.phone ?? '').toLowerCase();
+            return id.includes(q) || username.includes(q) || name.includes(q) || phone.includes(q);
+          });
+        }
+
+        const normalized = drivers.map((r) => {
+          const onDuty = Number(r.on_duty) === 1;
+          return {
+            ...r,
+            id: r.id ?? r.driver_id,
+            driver_id: r.driver_id ?? r.id,
+            online_status: onDuty ? 'online' : 'lost_connection',
+            last_seen: r.status_updated_at ? new Date(r.status_updated_at).toLocaleString() : '—',
+            total_task: r.total_task ?? 0,
+          };
         });
-      })
-      .catch(() => setDetails({ active: [], offline: [], total: [] }))
-      .finally(() => {
-        if (!silent) setLoading(false);
-      });
+
+        setDetails({
+          active: normalized.filter((r) => Number(r.on_duty) === 1),
+          offline: normalized.filter((r) => Number(r.on_duty) !== 1),
+          total: normalized,
+        });
+      } else {
+        setDetails({ active, offline, total });
+      }
+    } catch (_) {
+      setDetails({ active: [], offline: [], total: [] });
+    } finally {
+      if (!silent) setLoading(false);
+    }
   }, [selectedTeamId, searchQuery]);
 
   useEffect(() => {
