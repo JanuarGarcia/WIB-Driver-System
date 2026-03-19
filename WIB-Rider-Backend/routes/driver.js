@@ -118,9 +118,14 @@ router.post('/GetAppSettings', validateApiKey, optionalDriver, async (req, res) 
   const settings = await getDriverSettingsMap();
   const driver = req.driver;
   const appName = (settings.app_name != null && String(settings.app_name).trim() !== '') ? String(settings.app_name).trim() : (settings.website_title || 'WIB Driver');
+  const configuredApiKey = settings.driver_api_hash_key || settings.api_hash_key || process.env.API_HASH_KEY || '';
+  const envMobileApiUrlRaw = (process.env.MOBILE_API_URL || '').trim();
+  const envMobileApiUrl = envMobileApiUrlRaw ? envMobileApiUrlRaw.replace(/\/+$/, '') : '';
+  const mobileApiUrl = configuredApiKey && String(configuredApiKey).trim() ? envMobileApiUrl : '';
   const details = {
     app_language: settings.app_default_language || 'en',
     app_name: appName,
+    mobile_api_url: mobileApiUrl,
     valid_token: !!driver,
     todays_date: todayStr(),
     todays_date_raw: todayRaw(),

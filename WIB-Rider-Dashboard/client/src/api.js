@@ -1,7 +1,10 @@
 import { getToken } from './auth';
 
-// In dev, call backend directly to avoid proxy serving HTML on failure; in build use relative /api (proxied or same-origin).
-const API = import.meta.env.DEV ? 'http://localhost:3000/admin/api' : '/api';
+// Prefer explicit env-configured base URL (useful for phones / other devices).
+// Fallback: in dev call backend directly; in build use relative /api (proxied or same-origin).
+const API =
+  import.meta.env.VITE_API_URL ||
+  (import.meta.env.DEV ? 'http://localhost:3000/admin/api' : '/api');
 
 export async function api(path, options = {}) {
   const base = API.replace(/\/$/, '');

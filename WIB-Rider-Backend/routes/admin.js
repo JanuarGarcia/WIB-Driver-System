@@ -194,10 +194,14 @@ router.get('/settings', async (req, res) => {
         order_status_accepted = JSON.parse(map.order_status_accepted);
       }
     } catch (_) {}
+    const apiHashKey = map.driver_api_hash_key || map.api_hash_key || '';
+    const envMobileApiUrlRaw = (process.env.MOBILE_API_URL || '').trim();
+    const envMobileApiUrl = envMobileApiUrlRaw ? envMobileApiUrlRaw.replace(/\/+$/, '') : '';
+    const mobileApiUrl = apiHashKey && String(apiHashKey).trim() ? envMobileApiUrl : '';
     return res.json({
       website_title: map.website_title || '',
-      mobile_api_url: map.mobile_api_url || '',
-      api_hash_key: map.driver_api_hash_key || map.api_hash_key || '',
+      mobile_api_url: mobileApiUrl,
+      api_hash_key: apiHashKey,
       app_default_language: map.app_default_language || 'en',
       language: map.language != null && map.language !== '' ? String(map.language) : (map.app_default_language || 'en'),
       force_default_language: map.force_default_language === '1' ? '1' : '0',
@@ -281,7 +285,7 @@ router.put('/settings', async (req, res) => {
   const jsonOr = (val, def) => (val !== undefined && val !== null ? (Array.isArray(val) ? JSON.stringify(val) : String(val)) : def);
   const updates = [
     [website_title, 'website_title'],
-    [mobile_api_url, 'mobile_api_url'],
+    // mobile_api_url is read-only; derive from env (MOBILE_API_URL) instead of DB
     [api_hash_key, 'driver_api_hash_key'],
     [app_default_language, 'app_default_language'],
     [language !== undefined && language !== null ? String(language) : undefined, 'language'],
