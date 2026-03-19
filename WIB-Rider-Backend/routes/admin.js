@@ -524,6 +524,57 @@ async function getDriverByStats(stats, transactionDate, trackingType, filters = 
     } else throw e1;
   }
 
+  // If "total" is empty, the Agent panel will show "No agents" regardless of "active/offline".
+  // Add a last-resort fallback query for total: only apply team/name filters and select minimal columns.
+  // This avoids hard dependency on columns that may be missing in older DB schemas.
+  if (stats === 'total' && (!Array.isArray(rows) || rows.length === 0)) {
+    try {
+      const totalParams = [];
+      let where = ' WHERE 1=1';
+
+      if (team_id != null && team_id !== '' && Number.isFinite(Number(team_id))) {
+        where += ' AND d.team_id = ?';
+        totalParams.push(team_id);
+      }
+      if (user_type != null && user_type !== '') {
+        where += ' AND d.user_type = ?';
+        totalParams.push(user_type);
+      }
+      if (user_id != null && user_id !== '' && Number.isFinite(Number(user_id))) {
+        where += ' AND d.user_id = ?';
+        totalParams.push(user_id);
+      }
+      if (driver_name != null && String(driver_name).trim() !== '') {
+        where +=
+          " AND (CONCAT(COALESCE(d.first_name,''), ' ', COALESCE(d.last_name,'')) LIKE ? OR d.first_name LIKE ? OR d.last_name LIKE ?)";
+        const like = `%${String(driver_name).trim()}%`;
+        totalParams.push(like, like, like);
+      }
+
+      const orderClause = ' ORDER BY d.first_name, d.last_name';
+
+      try {
+        const [r] = await pool.query(
+          `SELECT d.driver_id, d.first_name, d.last_name, d.phone, d.on_duty, d.last_login, d.team_id${where}${orderClause}`,
+          totalParams
+        );
+        rows = r || [];
+      } catch (eLastLogin) {
+        if (eLastLogin && eLastLogin.code === 'ER_BAD_FIELD_ERROR') {
+          const [r2] = await pool.query(
+            `SELECT d.driver_id, d.first_name, d.last_name, d.phone, d.on_duty, d.team_id${where}${orderClause}`,
+            totalParams
+          );
+          rows = (r2 || []).map((x) => ({ ...x, last_login: null }));
+        } else {
+          throw eLastLogin;
+        }
+      }
+    } catch (_) {
+      // Keep rows as-is (likely empty) if fallback fails too.
+    }
+  }
+
   const driverIds = (rows || []).map((r) => r.driver_id).filter(Boolean);
   const taskCountByDriver = {};
   if (driverIds.length > 0) {
