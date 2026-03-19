@@ -226,10 +226,9 @@ export default function AgentPanel({ onOpenTaskDetails }) {
   const allDrivers = Array.isArray(details.total) ? details.total : [];
 
   const activeDrivers = allDrivers.filter((d) => {
-    const status = String(d?.status || '').toLowerCase().trim();
-    // Only count drivers explicitly marked as active.
-    // (Do not treat missing/empty status as active, otherwise totals get inflated.)
-    return status === 'active';
+    const status = String(d?.status ?? '').toLowerCase().trim();
+    // Treat NULL/blank status as active (matches backend behavior and `/drivers` endpoint).
+    return status === '' || status === 'active';
   });
 
   const totalCount = activeDrivers.length;
