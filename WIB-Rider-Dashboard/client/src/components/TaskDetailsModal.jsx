@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { api, formatDate, statusDisplayClass } from '../api';
-import { sanitizeLocationDisplayName } from '../utils/displayText';
+import { sanitizeLocationDisplayName, pickLocalizedMenuString } from '../utils/displayText';
 import { getAdvanceOrderLines } from '../utils/advanceOrder';
 
 /** Strip bogus \\ / escapes for read-only UI; hide literal "undefined"/"null" strings from API. */
@@ -38,12 +38,31 @@ function formatOrderItemsCategoryHeader(label) {
     .join(' — ');
 }
 
+/** Line item title: resolve JSON locale blobs from API / DB. */
+function displayOrderItemName(item) {
+  const raw = item.item_name_display ?? item.item_name;
+  const picked = pickLocalizedMenuString(raw);
+  if (picked) return sanitizeLocationDisplayName(picked) || picked;
+  const str = raw != null ? String(raw).trim() : '';
+  if (str.startsWith('{') && /"en"|"EN"|"CSTM"|"ADMIN"/i.test(str)) return 'Item';
+  return displaySanitized(str) || 'Item';
+}
+
+function displayOrderItemSize(size) {
+  if (size == null || String(size).trim() === '') return '';
+  const picked = pickLocalizedMenuString(size);
+  if (picked) return sanitizeLocationDisplayName(picked) || picked;
+  return displaySanitized(size) || String(size).trim();
+}
+
 /** Group key + section label from category, subcategory, and fallbacks (API may set subcategory_name). */
 function orderItemGroupMeta(item) {
   const catRaw = (item.category_name || item.category || item.item_category || '').toString().trim();
   const subRaw = (item.subcategory_name || '').toString().trim();
-  const cat = catRaw ? (displaySanitized(catRaw) || catRaw).trim() : '';
-  const sub = subRaw ? (displaySanitized(subRaw) || subRaw).trim() : '';
+  const catPick = pickLocalizedMenuString(catRaw);
+  const subPick = pickLocalizedMenuString(subRaw);
+  const cat = catPick ? (displaySanitized(catPick) || catPick).trim() : '';
+  const sub = subPick ? (displaySanitized(subPick) || subPick).trim() : '';
   if (!cat && !sub) return { key: '__other__', label: 'Other items' };
   const catLbl = cat ? formatCategoryTitle(cat) : '';
   const subLbl = sub ? formatCategoryTitle(sub) : '';
@@ -574,11 +593,9 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
                       });
                       return (
                         <div className="task-detail-section order-items-block order-items-block--modal order-items-block--legacy-layout">
-                          <div className="order-items-block-heading">
-                            <div className="task-detail-section-title task-detail-section-title--order-items task-detail-section-title--items-legacy">Items</div>
-                            <p className="order-items-block-hint">Category groups match the classic driver view when menu data is linked.</p>
-                          </div>
-                          <div className="order-items-by-category">
+                          <div className="order-items-card-shell">
+                            <div className="order-items-section-label" id={`order-items-label-${taskId}`}>Ordered items</div>
+                            <div className="order-items-by-category" aria-labelledby={`order-items-label-${taskId}`}>
                             {categoryBuckets.map(({ key, label, items }) => (
                               <div key={key} className="order-items-category order-items-category--legacy">
                                 <div
@@ -595,15 +612,15 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
                                     const subtotal = unitPrice != null && !Number.isNaN(unitPrice) ? qty * unitPrice : null;
                                     const unitStr = unitPrice != null && !Number.isNaN(unitPrice) ? `₱${unitPrice.toFixed(2)}` : '—';
                                     const subtotalStr = subtotal != null ? `₱${subtotal.toFixed(2)}` : '—';
-                                    const lineName = displaySanitized(item.item_name_display || item.item_name) || item.item_name || 'Item';
-                                    const withSize = item.size ? `${lineName} (${displaySanitized(item.size) || item.size})` : lineName;
-                                    const namePart = /[.!?…)]\s*$/.test(withSize.trim()) ? withSize : `${withSize}.`;
-                                    const nameWithStop = `${qty}× ${namePart}`;
+                                    const lineName = displayOrderItemName(item);
+                                    const sizePart = displayOrderItemSize(item.size);
+                                    const withSize = sizePart ? `${lineName} (${sizePart})` : lineName;
+                                    const nameWithQty = `${qty}x ${withSize}`;
                                     return (
                                       <li key={item.id ?? item._idx} className="order-item-row order-item-row--legacy">
                                         <div className="order-item-line order-item-line--legacy">
                                           <div className="order-item-line-text">
-                                            <span className="order-item-name order-item-name--legacy">{nameWithStop}</span>
+                                            <span className="order-item-name order-item-name--legacy">{nameWithQty}</span>
                                             {unitStr !== '—' ? (
                                               <span className="order-item-unit-price order-item-unit-price--legacy" aria-label="Unit price">{unitStr}</span>
                                             ) : null}
@@ -619,6 +636,7 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
                                 </ul>
                               </div>
                             ))}
+                            </div>
                           </div>
                         </div>
                       );

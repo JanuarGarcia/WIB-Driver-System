@@ -8,6 +8,7 @@ const { v4: uuidv4 } = require('uuid');
 const bcrypt = require('bcryptjs');
 const { pool } = require('../config/db');
 const { success, error } = require('../lib/response');
+const { pickLocalizedMenuString } = require('../lib/menuDisplay');
 const { sendPushToDriver, sendPushToAllDrivers } = require('../services/fcm');
 
 const ADMIN_SECRET = process.env.ADMIN_SECRET || '';
@@ -51,7 +52,8 @@ const uploadProfile = multer({
 function mergeOrderItemCategoryMap(best, rows, itemIdKey, nameKey, seqKey) {
   for (const row of rows || []) {
     const iid = row[itemIdKey];
-    const name = row[nameKey];
+    const raw = row[nameKey];
+    const name = pickLocalizedMenuString(raw);
     if (iid == null || !name || !String(name).trim()) continue;
     const seqRaw = row[seqKey];
     const seqN = seqRaw != null && String(seqRaw).trim() !== '' && Number.isFinite(Number(seqRaw)) ? Number(seqRaw) : 999999;
@@ -134,8 +136,8 @@ async function attachOrderDetailCategories(pool, detailRows, merchantId) {
     sql += ' ORDER BY COALESCE(item_id, 0) ASC, COALESCE(item_token, \'\') ASC, COALESCE(category_sequence, 999999) ASC, COALESCE(item_sequence, 999999) ASC';
     const [rows] = await pool.query(sql, params);
     for (const row of rows || []) {
-      const cat = row.resolved_category && String(row.resolved_category).trim();
-      const iname = row.resolved_item_name && String(row.resolved_item_name).trim();
+      const cat = pickLocalizedMenuString(row.resolved_category);
+      const iname = pickLocalizedMenuString(row.resolved_item_name);
       if (!cat && !iname) continue;
       if (row.tid != null && String(row.tid).trim() !== '' && String(row.tid).trim() !== '0') {
         const k = String(row.tid);
@@ -172,8 +174,8 @@ async function attachOrderDetailCategories(pool, detailRows, merchantId) {
          ORDER BY COALESCE(item_id, 0) ASC, COALESCE(item_token, '') ASC, COALESCE(category_sequence, 999999) ASC, COALESCE(item_sequence, 999999) ASC`;
       const [rows] = await pool.query(sql, params);
       for (const row of rows || []) {
-        const cat = row.resolved_category && String(row.resolved_category).trim();
-        const iname = row.resolved_item_name && String(row.resolved_item_name).trim();
+        const cat = pickLocalizedMenuString(row.resolved_category);
+        const iname = pickLocalizedMenuString(row.resolved_item_name);
         if (!cat && !iname) continue;
         if (row.tid != null && String(row.tid).trim() !== '' && String(row.tid).trim() !== '0') {
           const k = String(row.tid);
@@ -259,7 +261,7 @@ async function attachOrderDetailCategories(pool, detailRows, merchantId) {
   const mergeSub = (rows, nameCol, seqCol) => {
     for (const row of rows || []) {
       const iid = row.tid;
-      const name = row[nameCol];
+      const name = pickLocalizedMenuString(row[nameCol]);
       if (iid == null || !name || !String(name).trim()) continue;
       const seqN = row[seqCol] != null && Number.isFinite(Number(row[seqCol])) ? Number(row[seqCol]) : 999999;
       const k = String(iid);
@@ -316,15 +318,17 @@ async function attachOrderDetailCategories(pool, detailRows, merchantId) {
       );
       for (const r of trows || []) {
         const k = String(r.tid);
-        if (!r.tname || !String(r.tname).trim()) continue;
-        if (!nameTrans.has(k)) nameTrans.set(k, String(r.tname).trim());
+        const picked = pickLocalizedMenuString(r.tname);
+        if (!picked) continue;
+        if (!nameTrans.has(k)) nameTrans.set(k, picked);
       }
     });
   }
 
   /* mt_view_item_cat wins over relationship joins when it supplies a category */
   for (const [k, meta] of viewMetaByItemId) {
-    if (meta.category) bestCat.set(k, { name: meta.category, seq: -999999 });
+    const catNorm = pickLocalizedMenuString(meta.category);
+    if (catNorm) bestCat.set(k, { name: catNorm, seq: -999999 });
   }
 
   return detailRows.map((r) => {
@@ -336,16 +340,25 @@ async function attachOrderDetailCategories(pool, detailRows, merchantId) {
 
     if (!hasNumericId && !vm) return { ...r };
 
-    const existingCat = r.category_name != null && String(r.category_name).trim() !== '' ? String(r.category_name).trim() : '';
-    const cat = (vm?.category && String(vm.category).trim())
-      || existingCat
-      || (k ? bestCat.get(k)?.name : null)
-      || r.category_name;
-    const sub = k ? bestSub.get(k)?.name : undefined;
-    const tname = (vm?.itemName && String(vm.itemName).trim()) || (k ? nameTrans.get(k) : null);
-    const out = { ...r, category_name: cat || r.category_name };
+    const existingCat = pickLocalizedMenuString(r.category_name);
+    const vmCat = pickLocalizedMenuString(vm?.category);
+    const joinCat = k ? bestCat.get(k)?.name : null;
+    const cat =
+      vmCat ||
+      existingCat ||
+      pickLocalizedMenuString(joinCat) ||
+      pickLocalizedMenuString(r.category_name);
+    const subRaw = k ? bestSub.get(k)?.name : undefined;
+    const sub = pickLocalizedMenuString(subRaw);
+    const tname =
+      pickLocalizedMenuString(vm?.itemName) || (k ? pickLocalizedMenuString(nameTrans.get(k)) : null);
+    const rowItemPick = pickLocalizedMenuString(r.item_name);
+    const displayCat =
+      (cat && String(cat).trim()) || pickLocalizedMenuString(r.category_name) || '';
+    const out = { ...r, category_name: displayCat || r.category_name };
     if (sub && String(sub).trim()) out.subcategory_name = String(sub).trim();
     if (tname) out.item_name_display = String(tname).trim();
+    else if (rowItemPick) out.item_name_display = rowItemPick;
     return out;
   });
 }

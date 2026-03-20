@@ -1,22 +1,7 @@
 /**
- * Clean location / merchant names that were double-escaped in DB or JSON
- * (e.g. Ali\\'s → Ali's, \/ → /). Display-only; does not change stored data.
+ * Pick a single display string from menu/category fields that may be JSON
+ * (e.g. {"en":"Pizza","CSTM":"","ADMIN":""}) or plain text.
  */
-export function sanitizeLocationDisplayName(raw) {
-  if (raw == null) return '';
-  let s = String(raw);
-  if (!s) return s;
-  for (let i = 0; i < 12; i++) {
-    const next = s
-      .replace(/\\(["'])/g, '$1')
-      .replace(/\\\//g, '/')
-      .replace(/\\\\/g, '');
-    if (next === s) break;
-    s = next;
-  }
-  s = s.replace(/\\/g, '');
-  return s.trim();
-}
 
 function pickFromObject(o) {
   if (!o || typeof o !== 'object' || Array.isArray(o)) return '';
@@ -45,8 +30,7 @@ function pickFromObject(o) {
   return '';
 }
 
-/** Resolve JSON locale blobs or objects to one readable string (menu / category names). */
-export function pickLocalizedMenuString(raw) {
+function pickLocalizedMenuString(raw) {
   if (raw == null) return '';
   if (typeof raw === 'object' && raw !== null && !Array.isArray(raw)) {
     return pickFromObject(raw);
@@ -61,9 +45,11 @@ export function pickLocalizedMenuString(raw) {
         const fromObj = pickFromObject(o);
         if (fromObj) return fromObj;
       }
-    } catch {
+    } catch (_) {
       /* keep str */
     }
   }
   return str;
 }
+
+module.exports = { pickLocalizedMenuString, pickFromObject };
