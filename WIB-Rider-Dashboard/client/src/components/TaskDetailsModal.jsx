@@ -18,6 +18,23 @@ function displaySanitizedOrDash(raw) {
   return v || '—';
 }
 
+/** Order summary: tip from mt_order.cart_tip_percentage + cart_tip_value (replaces legacy delivery line). */
+function formatOrderTipRow(order) {
+  if (!order || typeof order !== 'object') return { label: 'Tips', display: '—' };
+  const valRaw = order.cart_tip_value;
+  const pctRaw = order.cart_tip_percentage;
+  const valNum = valRaw != null && String(valRaw).trim() !== '' ? Number(valRaw) : NaN;
+  const pctNum = pctRaw != null && String(pctRaw).trim() !== '' ? Number(pctRaw) : NaN;
+  let pctLabel = null;
+  if (!Number.isNaN(pctNum) && pctNum > 0) {
+    const rounded = Math.round(pctNum * 10000) / 10000;
+    pctLabel = Number.isInteger(rounded) ? String(rounded) : String(parseFloat(rounded.toFixed(4)));
+  }
+  const label = pctLabel ? `Tips ${pctLabel}%` : 'Tips';
+  const display = !Number.isNaN(valNum) ? `₱${valNum.toFixed(2)}` : '—';
+  return { label, display };
+}
+
 /** Normalize photo filename: strip duplicate extension (e.g. .jpg.jpg -> .jpg). */
 function normalizePhotoName(photoName) {
   if (!photoName || typeof photoName !== 'string') return '';
@@ -568,14 +585,15 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
                               })()}
                             </span>
                           </div>
-                          <div className="task-detail-row">
-                            <span className="task-detail-label">Delivery</span>
-                            <span className="task-detail-value">
-                              {order.delivery_charge != null && !Number.isNaN(Number(order.delivery_charge))
-                                ? `₱${Number(order.delivery_charge).toFixed(2)}`
-                                : '—'}
-                            </span>
-                          </div>
+                          {(() => {
+                            const tipRow = formatOrderTipRow(order);
+                            return (
+                              <div className="task-detail-row">
+                                <span className="task-detail-label">{tipRow.label}</span>
+                                <span className="task-detail-value">{tipRow.display}</span>
+                              </div>
+                            );
+                          })()}
                           <div className="task-detail-row"><span className="task-detail-label">Total</span><span className="task-detail-value task-detail-value-total">{order?.total_w_tax != null ? `₱${Number(order.total_w_tax).toFixed(2)}` : '—'}</span></div>
                         </div>
                       </div>
