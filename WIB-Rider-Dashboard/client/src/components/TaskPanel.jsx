@@ -1,9 +1,9 @@
-import { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { api, statusClass, statusLabel } from '../api';
 import { sanitizeLocationDisplayName } from '../utils/displayText';
-import { getAdvanceOrderLines } from '../utils/advanceOrder';
+import { getAdvanceOrderLines, isAdvanceOrderDisplay } from '../utils/advanceOrder';
 import { useTableAutoRefresh } from '../hooks/useTableAutoRefresh';
 
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
@@ -170,6 +170,8 @@ export default function TaskPanel({ onOpenTaskDetails }) {
   const [sortOrder, setSortOrder] = useState('rfp');
   const [sortDirection, setSortDirection] = useState('latest');
   const [sortDropdownOpen, setSortDropdownOpen] = useState(false);
+  /** When true, list shows all advance/scheduled orders for the selected date (any task status). */
+  const [scheduledOrdersOnly, setScheduledOrdersOnly] = useState(false);
   const [activityRefreshIntervalMs, setActivityRefreshIntervalMs] = useState(30000);
   const [taskCriticalEnabled, setTaskCriticalEnabled] = useState(false);
   const [taskCriticalMinutes, setTaskCriticalMinutes] = useState(5);
@@ -318,7 +320,12 @@ export default function TaskPanel({ onOpenTaskDetails }) {
     return ['completed', 'delivered', 'successful'].includes(s);
   });
 
-  const filtered = [...filteredByTab].sort((a, b) => {
+  const scheduledTasksAll = useMemo(() => (tasks || []).filter(isAdvanceOrderDisplay), [tasks]);
+  const scheduledCount = scheduledTasksAll.length;
+
+  const filteredByMode = scheduledOrdersOnly ? scheduledTasksAll : filteredByTab;
+
+  const filtered = [...filteredByMode].sort((a, b) => {
     const dateA = a.date_created ? new Date(a.date_created).getTime() : 0;
     const dateB = b.date_created ? new Date(b.date_created).getTime() : 0;
     const dirA = (getDirectionFromTask(a) || '').toLowerCase();
@@ -334,9 +341,9 @@ export default function TaskPanel({ onOpenTaskDetails }) {
   });
 
   const statItems = [
-    { key: 'unassigned', label: 'Unassigned', count: counts.unassigned ?? 0, highlight: activeTab === 'unassigned', icon: 'clock' },
-    { key: 'assigned', label: 'Assigned', count: counts.assigned ?? 0, highlight: activeTab === 'assigned', icon: 'user-check' },
-    { key: 'completed', label: 'Completed', count: counts.completed ?? 0, highlight: activeTab === 'completed', icon: 'check' },
+    { key: 'unassigned', label: 'Unassigned', count: counts.unassigned ?? 0, highlight: activeTab === 'unassigned' && !scheduledOrdersOnly, icon: 'clock' },
+    { key: 'assigned', label: 'Assigned', count: counts.assigned ?? 0, highlight: activeTab === 'assigned' && !scheduledOrdersOnly, icon: 'user-check' },
+    { key: 'completed', label: 'Completed', count: counts.completed ?? 0, highlight: activeTab === 'completed' && !scheduledOrdersOnly, icon: 'check' },
   ];
 
   return (
@@ -508,20 +515,43 @@ export default function TaskPanel({ onOpenTaskDetails }) {
           )}
         </div>
       </div>
-      <div className="tasks-panel-sort-indicator">
-        <span className="tasks-panel-sort-indicator-text">
-          Sorted by {SORT_ORDER_OPTIONS.find((o) => o.key === sortOrder)?.label ?? sortOrder} · {sortDirection === 'latest' ? 'Latest first' : 'Oldest first'}
-        </span>
+      <div className={`tasks-panel-sort-indicator${scheduledOrdersOnly ? ' tasks-panel-sort-indicator--scheduled' : ''}`}>
+        <div className="tasks-panel-sort-indicator-row">
+          <span className="tasks-panel-sort-indicator-text">
+            {scheduledOrdersOnly ? (
+              <>
+                <span className="tasks-panel-sort-indicator-scheduled-label">Scheduled orders</span>
+                <span className="tasks-panel-sort-indicator-sep" aria-hidden="true"> · </span>
+              </>
+            ) : null}
+            Sorted by {SORT_ORDER_OPTIONS.find((o) => o.key === sortOrder)?.label ?? sortOrder} · {sortDirection === 'latest' ? 'Latest first' : 'Oldest first'}
+          </span>
+          <button
+            type="button"
+            className={`tasks-panel-scheduled-orders-btn${scheduledOrdersOnly ? ' is-active' : ''}`}
+            onClick={() => setScheduledOrdersOnly((v) => !v)}
+            aria-pressed={scheduledOrdersOnly}
+            aria-label={scheduledOrdersOnly ? 'Exit scheduled orders view, show status tab list' : `Show scheduled orders${scheduledCount ? `, ${scheduledCount} on this date` : ''}`}
+          >
+            Scheduled Orders
+            {scheduledCount > 0 ? (
+              <span className="tasks-panel-scheduled-orders-count">{scheduledCount}</span>
+            ) : null}
+          </button>
+        </div>
       </div>
       <div className="panel-stats panel-stats--tasks">
         {statItems.map(({ key, label, count, highlight, icon }) => (
           <button
             key={key}
             type="button"
-            className={`panel-stats-item ${highlight ? 'highlight' : ''} ${activeTab === key ? 'active' : ''}`}
+            className={`panel-stats-item ${highlight ? 'highlight' : ''} ${activeTab === key && !scheduledOrdersOnly ? 'active' : ''}`}
             data-stat-key={key}
-            onClick={() => setActiveTab(key)}
-            aria-pressed={activeTab === key}
+            onClick={() => {
+              setScheduledOrdersOnly(false);
+              setActiveTab(key);
+            }}
+            aria-pressed={activeTab === key && !scheduledOrdersOnly}
             aria-label={`${label}: ${count}`}
           >
             <span className="panel-stats-icon" aria-hidden="true">
@@ -542,10 +572,10 @@ export default function TaskPanel({ onOpenTaskDetails }) {
       </div>
       <div className={`panel-body ${filtered.length === 0 ? 'empty' : ''}`}>
         {loading && 'Loading…'}
-        {!loading && filtered.length === 0 && 'No tasks'}
+        {!loading && filtered.length === 0 && (scheduledOrdersOnly ? 'No scheduled orders for this date' : 'No tasks')}
         {!loading && filtered.length > 0 && (
           <ul className="task-card-list">
-            {(activeTab === 'completed' ? filtered : filtered.slice(0, 20)).map((t) => {
+            {(scheduledOrdersOnly || activeTab === 'completed' ? filtered : filtered.slice(0, 20)).map((t) => {
               const statusNorm = normStatus(t.status);
               const created = t.date_created ? new Date(t.date_created) : null;
               const minsWaiting = created ? Math.max(0, Math.floor((Date.now() - created.getTime()) / 60000)) : null;
