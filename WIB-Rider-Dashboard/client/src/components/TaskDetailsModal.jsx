@@ -1,5 +1,21 @@
 import { useState, useEffect } from 'react';
 import { api, formatDate, statusDisplayClass } from '../api';
+import { sanitizeLocationDisplayName } from '../utils/displayText';
+
+/** Strip bogus \\ / escapes for read-only UI; hide literal "undefined"/"null" strings from API. */
+function displaySanitized(raw) {
+  if (raw == null) return '';
+  const s = String(raw).trim();
+  if (!s) return '';
+  const low = s.toLowerCase();
+  if (low === 'undefined' || low === 'null') return '';
+  return sanitizeLocationDisplayName(s);
+}
+
+function displaySanitizedOrDash(raw) {
+  const v = displaySanitized(raw);
+  return v || '—';
+}
 
 /** Normalize photo filename: strip duplicate extension (e.g. .jpg.jpg -> .jpg). */
 function normalizePhotoName(photoName) {
@@ -191,9 +207,9 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
     const t = data?.task ?? data;
     if (t) {
       setEditForm({
-        task_description: t.task_description ?? '',
-        delivery_address: t.delivery_address ?? '',
-        customer_name: t.customer_name ?? '',
+        task_description: displaySanitized(t.task_description) || (t.task_description ?? ''),
+        delivery_address: displaySanitized(t.delivery_address) || (t.delivery_address ?? ''),
+        customer_name: displaySanitized(t.customer_name) || (t.customer_name ?? ''),
         contact_number: t.contact_number ?? '',
         delivery_date: t.delivery_date ? (typeof t.delivery_date === 'string' && t.delivery_date.length >= 10 ? t.delivery_date.slice(0, 10) : t.delivery_date) : '',
         email_address: t.email_address ?? '',
@@ -262,16 +278,33 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
     return db - da;
   });
   const timeline = combined.length > 0 ? combined : legacyTimeline.map((e) => ({ ...e, type: 'legacy' }));
-  const customerName = (task && task.customer_name) ?? '—';
+  const customerName = displaySanitizedOrDash(task?.customer_name);
   const merchantName = (() => {
     const fromMerchant = merchant && (merchant.restaurant_name || '').trim();
-    if (fromMerchant) return fromMerchant;
+    if (fromMerchant) return displaySanitizedOrDash(fromMerchant);
     const fromTaskJoin = task && String(task.restaurant_name || '').trim();
-    if (fromTaskJoin) return fromTaskJoin;
+    if (fromTaskJoin) return displaySanitizedOrDash(fromTaskJoin);
     const fromTask = task && String(task.dropoff_merchant || '').trim();
-    if (fromTask && !/^\d+$/.test(fromTask)) return fromTask;
+    if (fromTask && !/^\d+$/.test(fromTask)) return displaySanitizedOrDash(fromTask);
     return '—';
   })();
+  const deliveryAddressDisplay = (() => {
+    const d = task?.delivery_address;
+    if (d != null && String(d).trim() !== '') return displaySanitizedOrDash(d);
+    if (merchant) {
+      const line = [merchant.street, merchant.city, merchant.state, merchant.post_code]
+        .filter(Boolean)
+        .map((p) => displaySanitized(p))
+        .filter(Boolean)
+        .join(', ');
+      return line || '—';
+    }
+    return '—';
+  })();
+  const taskDescriptionDisplay = displaySanitized(task?.task_description) || '—';
+  const deliveryInstructionDisplay = displaySanitizedOrDash(order?.delivery_instruction ?? task?.delivery_instruction);
+  const teamNameDisplay = displaySanitizedOrDash(task?.team_name);
+  const driverNameDisplay = displaySanitizedOrDash(task?.driver_name);
   const completeBefore = order?.delivery_date && order?.delivery_time
     ? `${formatDate(order.delivery_date)} ${String(order.delivery_time).slice(0, 5)}`
     : formatDate(task?.delivery_date);
@@ -333,7 +366,7 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
                         </div>
                         <div className="task-detail-row task-detail-row-icon">
                           <span className="task-detail-icon" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/></svg></span>
-                          <span className="task-detail-value">{task.delivery_address ?? '—'}</span>
+                          <span className="task-detail-value">{deliveryAddressDisplay}</span>
                         </div>
                       </div>
                     </div>
@@ -350,11 +383,11 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
                     <div className="task-detail-section task-detail-section-row">
                       <div className="task-detail-row">
                         <span className="task-detail-label">Team</span>
-                        <span className="task-detail-value">{task.team_name ?? '—'}</span>
+                        <span className="task-detail-value">{teamNameDisplay}</span>
                       </div>
                       <div className="task-detail-row">
                         <span className="task-detail-label">Driver</span>
-                        <span className="task-detail-value">{task.driver_name ?? '—'}</span>
+                        <span className="task-detail-value">{driverNameDisplay}</span>
                       </div>
                       <div className="task-detail-row">
                         <span className="task-detail-label">Phone</span>
@@ -367,7 +400,7 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
                     </div>
                     <div className="task-detail-section">
                       <div className="task-detail-section-title">Task description</div>
-                      <div className="task-detail-description">{task.task_description || '—'}</div>
+                      <div className="task-detail-description">{taskDescriptionDisplay}</div>
                     </div>
                     <div className="task-detail-section task-detail-pickup">
                       <div className="task-detail-section-title">Pickup details</div>
@@ -386,7 +419,7 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
                         </div>
                         <div className="task-detail-pickup-item task-detail-pickup-address">
                           <span className="task-detail-label">Address</span>
-                          <span className="task-detail-value">{task.delivery_address ?? (merchant ? [merchant.street, merchant.city, merchant.state, merchant.post_code].filter(Boolean).join(', ') : '—')}</span>
+                          <span className="task-detail-value">{deliveryAddressDisplay}</span>
                         </div>
                       </div>
                     </div>
@@ -414,9 +447,11 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
                                   <span className="activity-timeline-by">by {entry.update_by_name || entry.update_by_type || '—'}</span>
                                 )}
                                 {(entry?.remarks || entry?.reason) && (
-                                  <div className="activity-timeline-remarks">{entry.remarks || entry.reason}</div>
+                                  <div className="activity-timeline-remarks">{displaySanitized(entry.remarks || entry.reason) || entry.remarks || entry.reason}</div>
                                 )}
-                                {entry?.notes && <div className="activity-timeline-notes">{entry.notes}</div>}
+                                {entry?.notes && (
+                                  <div className="activity-timeline-notes">{displaySanitized(entry.notes) || entry.notes}</div>
+                                )}
                               </>
                             )}
                           </div>
@@ -435,7 +470,7 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
                         <div className="task-detail-row"><span className="task-detail-label">Customer name</span><span className="task-detail-value">{customerName}</span></div>
                         <div className="task-detail-row"><span className="task-detail-label">Merchant name</span><span className="task-detail-value">{merchantName}</span></div>
                         <div className="task-detail-row"><span className="task-detail-label">Telephone</span><span className="task-detail-value">{task.contact_number ?? merchant?.restaurant_phone ?? '—'}</span></div>
-                        <div className="task-detail-row"><span className="task-detail-label">Address</span><span className="task-detail-value">{task.delivery_address ?? (merchant ? [merchant.street, merchant.city, merchant.state, merchant.post_code].filter(Boolean).join(', ') : '—')}</span></div>
+                        <div className="task-detail-row"><span className="task-detail-label">Address</span><span className="task-detail-value">{deliveryAddressDisplay}</span></div>
                       </div>
                     </div>
                     <div className="task-detail-section">
@@ -446,14 +481,19 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
                         <div className="task-detail-row"><span className="task-detail-label">Reference #</span><span className="task-detail-value">{order?.order_id ?? task.order_id ?? '—'}</span></div>
                         <div className="task-detail-row"><span className="task-detail-label">TRN date</span><span className="task-detail-value">{order?.date_created ? formatDate(order.date_created) : '—'}</span></div>
                         <div className="task-detail-row"><span className="task-detail-label">Delivery date</span><span className="task-detail-value">{order?.delivery_date ? formatDate(order.delivery_date) : '—'}</span></div>
-                        <div className="task-detail-row"><span className="task-detail-label">Delivery instruction</span><span className="task-detail-value">{order?.delivery_instruction ?? task.delivery_instruction ?? '—'}</span></div>
+                        <div className="task-detail-row"><span className="task-detail-label">Delivery instruction</span><span className="task-detail-value">{deliveryInstructionDisplay}</span></div>
                         <div className="task-detail-row"><span className="task-detail-label">Contact number</span><span className="task-detail-value">{task.contact_number ?? '—'}</span></div>
                         <div className="task-detail-row"><span className="task-detail-label">Change</span><span className="task-detail-value">{order?.order_change != null ? `₱${Number(order.order_change).toFixed(2)}` : '—'}</span></div>
                       </div>
                     </div>
                     {orderDetails.length > 0 && (() => {
                       const details = orderDetails.filter(Boolean);
-                      const getCategory = (item) => (item.category_name || item.category || item.item_category || '').toString().trim().toUpperCase() || 'Items';
+                      const getCategory = (item) => {
+                        const raw = (item.category_name || item.category || item.item_category || '').toString().trim();
+                        if (!raw) return 'Items';
+                        const cleaned = displaySanitized(raw) || raw;
+                        return cleaned.toUpperCase();
+                      };
                       const groups = {};
                       const categoryOrder = [];
                       details.forEach((item, i) => {
@@ -481,12 +521,12 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
                                     return (
                                       <li key={item.id ?? item._idx} className="order-item-row">
                                         <div className="order-item-line">
-                                          <span className="order-item-name">{qty}x {item.item_name ?? 'Item'}{item.size ? ` (${item.size})` : ''}</span>
+                                          <span className="order-item-name">{qty}x {displaySanitized(item.item_name) || item.item_name || 'Item'}{item.size ? ` (${displaySanitized(item.size) || item.size})` : ''}</span>
                                           <span className="order-item-line-total">{subtotalStr}</span>
                                         </div>
                                         <div className="order-item-unit-price">{unitStr}</div>
                                         {item.order_notes && (
-                                          <div className="order-item-notes">{item.order_notes}</div>
+                                          <div className="order-item-notes">{displaySanitized(item.order_notes) || item.order_notes}</div>
                                         )}
                                       </li>
                                     );
