@@ -172,12 +172,12 @@ export default function AgentPanel({ onOpenTaskDetails }) {
         }
 
         const normalized = drivers.map((r) => {
-          const onDuty = Number(r.on_duty) === 1;
           return {
             ...r,
             id: r.id ?? r.driver_id,
             driver_id: r.driver_id ?? r.id,
-            online_status: onDuty ? 'online' : 'lost_connection',
+            // `/drivers` has no live connection telemetry — do not infer "online" from on_duty alone.
+            online_status: 'lost_connection',
             last_seen: r.status_updated_at ? new Date(r.status_updated_at).toLocaleString() : '—',
             total_task: r.total_task ?? 0,
           };
@@ -243,7 +243,7 @@ export default function AgentPanel({ onOpenTaskDetails }) {
     }
   }, [filterDropdownOpen]);
 
-  // Statistics: only drivers with status = active; normalize status/online fields safely.
+  // Statistics: only drivers with account status = active; normalize status/online fields safely.
   const allDrivers = Array.isArray(details.total) ? details.total : [];
 
   const activeDrivers = allDrivers.filter((d) => {
@@ -254,10 +254,27 @@ export default function AgentPanel({ onOpenTaskDetails }) {
 
   const totalCount = activeDrivers.length;
 
-  const onlineCount = activeDrivers.filter((d) => {
-    const online = String(d?.online_status || d?.connection_status || '').toLowerCase().trim();
-    return online === 'online' || online === 'on_duty' || online === 'connected';
-  }).length;
+  /** Live app connection — not the same as "on duty" (on duty + lost connection = still offline here). */
+  function isLiveConnection(d) {
+    const c = String(d?.online_status || d?.connection_status || '').toLowerCase().trim();
+    if (!c) return false;
+    if (c === 'lost_connection' || c.includes('lost')) return false;
+    return c === 'online' || c === 'connected';
+  }
+
+  function isOnDuty(d) {
+    return Number(d?.on_duty) === 1 || d?.on_duty === true;
+  }
+
+  /**
+   * "Active" (online) in Agent panel = active account + on duty + live connection.
+   * Matches legacy behavior: on duty but connection lost counts as offline.
+   */
+  function isAgentPanelOnline(d) {
+    return isLiveConnection(d) && isOnDuty(d);
+  }
+
+  const onlineCount = activeDrivers.filter(isAgentPanelOnline).length;
 
   const offlineCount = totalCount - onlineCount;
 
@@ -267,17 +284,11 @@ export default function AgentPanel({ onOpenTaskDetails }) {
     offline: offlineCount,
   };
 
-  // Same online check for tab filtering so list matches stats.
-  function isOnline(d) {
-    const online = String(d?.online_status || d?.connection_status || '').toLowerCase().trim();
-    return online === 'online' || online === 'on_duty' || online === 'connected';
-  }
-
   const filteredByTab =
     activeTab === 'active'
-      ? activeDrivers.filter(isOnline)
+      ? activeDrivers.filter(isAgentPanelOnline)
       : activeTab === 'offline'
-        ? activeDrivers.filter((d) => !isOnline(d))
+        ? activeDrivers.filter((d) => !isAgentPanelOnline(d))
         : activeDrivers;
 
   const searchLower = (searchQuery || '').trim().toLowerCase();
@@ -561,8 +572,9 @@ export default function AgentPanel({ onOpenTaskDetails }) {
             {filtered.slice(0, 25).map((d) => {
               const name = d.full_name || d.username || `Driver #${d.id}`;
               const taskCount = d.total_task ?? d.task_count ?? d.assigned_tasks ?? 0;
-              const connectionStatus = d.connection_status ?? (d.online_status === 'online' ? 'Online' : 'Connection Lost');
-              const isLostConnection = connectionStatus === 'Connection Lost' || d.online_status === 'lost_connection';
+              const isLostConnection = !isLiveConnection(d);
+              const connectionStatus =
+                d.connection_status ?? (isLostConnection ? 'Connection Lost' : 'Online');
               const lastSeen = d.last_seen ?? d.last_activity ?? (d.on_duty ? '1 day ago' : 'yesterday');
               const device = d.device ?? d.platform ?? 'Android';
               const phone = d.phone ? String(d.phone) : null;
