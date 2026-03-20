@@ -276,8 +276,13 @@ export default function AgentPanel({ onOpenTaskDetails }) {
     return c === 'online' || c === 'connected';
   }
 
+  /** Only numeric `1` is on duty (avoids JS truthy bugs: e.g. string "0" is truthy). */
   function isOnDuty(d) {
-    return Number(d?.on_duty) === 1 || d?.on_duty === true;
+    const v = d?.on_duty;
+    if (v === true) return true;
+    if (v === false || v == null) return false;
+    const n = Number(v);
+    return n === 1;
   }
 
   /**
@@ -321,7 +326,7 @@ export default function AgentPanel({ onOpenTaskDetails }) {
     const nameB = (b.full_name || b.username || `Driver #${b.id}`).toLowerCase();
     if (sortBy === 'name-asc') return nameA.localeCompare(nameB);
     if (sortBy === 'name-desc') return nameB.localeCompare(nameA);
-    if (sortBy === 'status') return ((a.on_duty ? 0 : 1) - (b.on_duty ? 0 : 1));
+    if (sortBy === 'status') return ((isOnDuty(a) ? 0 : 1) - (isOnDuty(b) ? 0 : 1));
     return 0;
   });
 
@@ -556,9 +561,18 @@ export default function AgentPanel({ onOpenTaskDetails }) {
                       <div className="agent-active-detail-meta">Online</div>
                       <div className="agent-active-detail-meta agent-active-detail-muted">{lastSeen}</div>
                       <div className="agent-active-detail-device">{device}</div>
-                      <div className="agent-active-detail-duty">
-                        <span className="agent-active-detail-duty-check" aria-hidden="true">✓</span>
-                        On-Duty
+                      <div className={`agent-active-detail-duty ${isOnDuty(d) ? 'agent-active-detail-duty--on' : 'agent-active-detail-duty--off'}`}>
+                        {isOnDuty(d) ? (
+                          <>
+                            <span className="agent-active-detail-duty-check" aria-hidden="true">✓</span>
+                            On-Duty
+                          </>
+                        ) : (
+                          <>
+                            <span className="agent-active-detail-duty-off" aria-hidden="true">○</span>
+                            Off-Duty
+                          </>
+                        )}
                       </div>
                       <div className="agent-detail-card-actions agent-active-detail-actions">
                         <button
@@ -590,16 +604,17 @@ export default function AgentPanel({ onOpenTaskDetails }) {
               const isLostConnection = !isLiveConnection(d);
               const connectionStatus =
                 d.connection_status ?? (isLostConnection ? 'Connection Lost' : 'Online');
-              const lastSeen = d.last_seen ?? d.last_activity ?? (d.on_duty ? '1 day ago' : 'yesterday');
+              const lastSeen = d.last_seen ?? d.last_activity ?? (isOnDuty(d) ? '1 day ago' : 'yesterday');
               const device = d.device ?? d.platform ?? 'Android';
               const phone = d.phone ? String(d.phone) : null;
+              const dutyOn = isOnDuty(d);
               return (
                 <li key={d.id} className="agent-detail-card">
                   <div className="agent-detail-card-header">
                     <span className="agent-detail-card-name">{name}</span>
                     <span className="agent-detail-card-duty">
-                      <span className={`agent-detail-card-dot ${d.on_duty ? 'on-duty' : 'off-duty'}`} aria-hidden="true" />
-                      {d.on_duty ? 'ON DUTY' : 'OFF DUTY'}
+                      <span className={`agent-detail-card-dot ${dutyOn ? 'on-duty' : 'off-duty'}`} aria-hidden="true" />
+                      {dutyOn ? 'ON DUTY' : 'OFF DUTY'}
                     </span>
                   </div>
                   <div className="agent-detail-card-row">Tasks today: {taskCount}</div>
