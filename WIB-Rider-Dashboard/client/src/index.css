@@ -5100,7 +5100,7 @@ tr:hover { background: var(--bg-hover) !important; }
   border-bottom: 1px solid var(--border-soft);
 }
 [data-theme="dark"] .order-ref-card-category {
-  color: var(--color-primary);
+  color: var(--text-dark);
   border-bottom-color: var(--border-medium);
 }
 .order-ref-items-list {
@@ -5150,7 +5150,7 @@ tr:hover { background: var(--bg-hover) !important; }
   padding-top: 0.05rem;
 }
 [data-theme="dark"] .order-ref-item-line-total {
-  color: var(--color-primary);
+  color: var(--text-dark);
 }
 .order-summary-block--ref {
   border-top: none;
@@ -5187,9 +5187,8 @@ tr:hover { background: var(--bg-hover) !important; }
 .order-summary-ref-value--total {
   font-weight: 700;
 }
-[data-theme="dark"] .order-summary-ref-label--total,
 [data-theme="dark"] .order-summary-ref-value--total {
-  color: var(--color-primary);
+  color: var(--text-dark);
 }
 .modal-footer-actions { display: flex; flex-wrap: wrap; gap: 0.6rem; justify-content: flex-end; padding: 1.25rem 1.5rem; border-top: 1px solid #e5e7eb; background: #fafafa; }
 .task-details-modal .modal-footer-actions { border-radius: 0 0 8px 8px; }

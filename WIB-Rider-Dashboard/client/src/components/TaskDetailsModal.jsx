@@ -59,21 +59,40 @@ function formatOrderRefCategoryHeader(label) {
     .join(' — ');
 }
 
+/** Parse numeric percentage from DB (5, 0.05, "5%", etc.). */
+function parseTipPercentRaw(raw) {
+  if (raw == null || String(raw).trim() === '') return NaN;
+  const s = String(raw).trim().replace(/%/g, '').replace(/,/g, '');
+  const n = Number(s);
+  return Number.isFinite(n) ? n : NaN;
+}
+
 /** Order summary row: mt_order.cart_tip_percentage + cart_tip_value. */
 function formatOrderTipRow(order) {
-  if (!order || typeof order !== 'object') return { label: 'Tips', display: '—' };
-  const valRaw = order.cart_tip_value;
-  const pctRaw = order.cart_tip_percentage;
+  const empty = { label: 'Tips', summaryLabel: 'TIPS', display: '—' };
+  if (!order || typeof order !== 'object') return empty;
+  const valRaw = order.cart_tip_value ?? order.tip_value;
+  const pctRaw =
+    order.cart_tip_percentage
+    ?? order.tip_percentage
+    ?? order.tips_percentage
+    ?? order.tip_percent;
   const valNum = valRaw != null && String(valRaw).trim() !== '' ? Number(valRaw) : NaN;
-  const pctNum = pctRaw != null && String(pctRaw).trim() !== '' ? Number(pctRaw) : NaN;
+  const pctNum = parseTipPercentRaw(pctRaw);
   let pctLabel = null;
   if (!Number.isNaN(pctNum) && pctNum > 0) {
-    const rounded = Math.round(pctNum * 10000) / 10000;
+    let displayPct = pctNum;
+    /* DB may store 5 for 5% or 0.05 for 5% */
+    if (pctNum > 0 && pctNum < 1) {
+      displayPct = pctNum * 100;
+    }
+    const rounded = Math.round(displayPct * 10000) / 10000;
     pctLabel = Number.isInteger(rounded) ? String(rounded) : String(parseFloat(rounded.toFixed(4)));
   }
   const label = pctLabel ? `Tips ${pctLabel}%` : 'Tips';
+  const summaryLabel = pctLabel ? `TIPS ${pctLabel}%` : 'TIPS';
   const display = !Number.isNaN(valNum) ? `₱${valNum.toFixed(2)}` : '—';
-  return { label, display };
+  return { label, summaryLabel, display };
 }
 
 /** Normalize photo filename: strip duplicate extension (e.g. .jpg.jpg -> .jpg). */
@@ -661,11 +680,11 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
                                 <span className="order-summary-ref-value">{convenienceDisplay}</span>
                               </div>
                               <div className="order-summary-ref-cell">
-                                <span className="order-summary-ref-label">TIPS</span>
+                                <span className="order-summary-ref-label">{tipRow.summaryLabel}</span>
                                 <span className="order-summary-ref-value">{tipRow.display}</span>
                               </div>
                               <div className="order-summary-ref-cell">
-                                <span className="order-summary-ref-label order-summary-ref-label--total">TOTAL</span>
+                                <span className="order-summary-ref-label">TOTAL</span>
                                 <span className="order-summary-ref-value order-summary-ref-value--total">{order?.total_w_tax != null ? `₱${Number(order.total_w_tax).toFixed(2)}` : '—'}</span>
                               </div>
                             </div>
