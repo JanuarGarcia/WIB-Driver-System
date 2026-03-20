@@ -2,6 +2,7 @@ import { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { api, statusClass, statusLabel } from '../api';
+import { sanitizeLocationDisplayName } from '../utils/displayText';
 import { useTableAutoRefresh } from '../hooks/useTableAutoRefresh';
 
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
@@ -576,7 +577,12 @@ export default function TaskPanel({ onOpenTaskDetails }) {
                     <span className="task-card-v2-icon task-card-v2-icon-pin" aria-hidden="true">
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/></svg>
                     </span>
-                    <span className="task-card-v2-merchant-name">{(() => { const name = t.restaurant_name || (t.dropoff_merchant && !/^\d+$/.test(String(t.dropoff_merchant).trim()) ? t.dropoff_merchant : null) || '—'; const s = String(name).slice(0, 40); return s + (String(name).length > 40 ? '…' : ''); })()}</span>
+                    <span className="task-card-v2-merchant-name">{(() => {
+                      const raw = t.restaurant_name || (t.dropoff_merchant && !/^\d+$/.test(String(t.dropoff_merchant).trim()) ? t.dropoff_merchant : null) || '—';
+                      const name = sanitizeLocationDisplayName(raw) || '—';
+                      const s = String(name).slice(0, 40);
+                      return s + (String(name).length > 40 ? '…' : '');
+                    })()}</span>
                     {isUnassigned && (
                       <button
                         type="button"
@@ -596,10 +602,10 @@ export default function TaskPanel({ onOpenTaskDetails }) {
                   <div className="task-card-v2-address-wrap">
                     <div
                       className="task-card-v2-address"
-                      title={t.delivery_address || undefined}
+                      title={sanitizeLocationDisplayName(t.delivery_address) || undefined}
                     >
                       {(() => {
-                        const addr = t.delivery_address || '—';
+                        const addr = sanitizeLocationDisplayName(t.delivery_address) || '—';
                         const maxLen = 90;
                         return addr.length > maxLen ? `${addr.slice(0, maxLen)}…` : addr;
                       })()}

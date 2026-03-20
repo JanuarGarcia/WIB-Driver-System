@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { api, statusClass, statusLabel } from '../api';
 import DriverDetailsModal from './DriverDetailsModal';
 import { useTeamFilter } from '../context/TeamFilterContext';
+import { sanitizeLocationDisplayName } from '../utils/displayText';
 
 const TABS = ['active', 'offline', 'total'];
 const AGENT_REFRESH_INTERVAL_MS = 5000;
@@ -484,7 +485,8 @@ export default function AgentPanel({ onOpenTaskDetails }) {
                   const customerName = t.customer_name || '—';
                   const initial = (String(customerName).match(/\b\w/g) || [customerName[0] || '?']).slice(0, 2).join('').toUpperCase();
                   const avatarUrl = t.customer_photo || t.customer_image || t.driver_photo || null;
-                  const location = t.delivery_address || t.restaurant_name || (t.dropoff_merchant && !/^\d+$/.test(String(t.dropoff_merchant).trim()) ? t.dropoff_merchant : null) || '—';
+                  const rawLocation = t.delivery_address || t.restaurant_name || (t.dropoff_merchant && !/^\d+$/.test(String(t.dropoff_merchant).trim()) ? t.dropoff_merchant : null) || '';
+                  const location = sanitizeLocationDisplayName(rawLocation) || '—';
                   const locationShort = location.length > 50 ? `${location.slice(0, 50)}…` : location;
                   const orderedTime = created ? created.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit', hour12: true }) : null;
                   return (
