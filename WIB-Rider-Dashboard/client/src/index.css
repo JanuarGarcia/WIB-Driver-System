@@ -2553,6 +2553,11 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
 }
 .panel.agent-panel .panel-filters { background: var(--bg-card); border-bottom: 1px solid var(--border-soft); }
 .panel.agent-panel .panel-stats { background: var(--bg-card); }
+/* Active | Offline | Total: wrap on narrow layouts so counts stay readable */
+.panel.agent-panel .panel-stats.panel-stats--agents {
+  flex-wrap: wrap;
+  align-items: center;
+}
 
 .panel.agent-panel {
   display: flex;

@@ -388,192 +388,316 @@ function lastSeenText(dateVal) {
   return d.toLocaleDateString();
 }
 
-async function getDriverByStats(stats, transactionDate, trackingType, filters = {}) {
-  const { user_type, user_id, team_id, driver_name } = filters;
-  const type = parseInt(trackingType, 10) === 2 ? 2 : 1;
-  const now = new Date();
-  const nowSec = Math.floor(now.getTime() / 1000);
-  const dateOnly = (transactionDate || now.toISOString().slice(0, 10)).slice(0, 10);
-
-  // Agent panel should treat NULL/blank status as active, matching the `/drivers` endpoint.
-  // This makes Total/Offline counts accurate when deployments store status as NULL/''.
+function buildAgentDashboardFilterClause(filters) {
+  const { team_id, driver_name } = filters;
   const statusClause =
     " AND (LOWER(TRIM(COALESCE(NULLIF(TRIM(d.status), ''), 'active'))) = 'active')";
-  const params = [];
   let filterClause = statusClause;
+  const params = [];
   if (team_id != null && team_id !== '' && Number.isFinite(Number(team_id))) {
     filterClause += ' AND d.team_id = ?';
     params.push(team_id);
-  }
-  if (user_type != null && user_type !== '') {
-    filterClause += ' AND d.user_type = ?';
-    params.push(user_type);
-  }
-  if (user_id != null && user_id !== '' && Number.isFinite(Number(user_id))) {
-    filterClause += ' AND d.user_id = ?';
-    params.push(user_id);
   }
   if (driver_name != null && String(driver_name).trim() !== '') {
     filterClause += " AND (CONCAT(COALESCE(d.first_name,''), ' ', COALESCE(d.last_name,'')) LIKE ? OR d.first_name LIKE ? OR d.last_name LIKE ?)";
     const like = `%${String(driver_name).trim()}%`;
     params.push(like, like, like);
   }
+  return { filterClause, params };
+}
 
-  const tenMinAgo = new Date(now.getTime() - ONLINE_MIN_OPT1 * 60 * 1000);
-  const elevenMinAgo = new Date(now.getTime() - OFFLINE_MIN_OPT1 * 60 * 1000);
-  const thirtyMinAgo = new Date(now.getTime() - ONLINE_MIN_OPT2 * 60 * 1000);
-  const thirtyOneMinAgo = new Date(now.getTime() - OFFLINE_MIN_OPT2 * 60 * 1000);
+/**
+ * Same driver universe as `/drivers` (join team, profile fields), scoped by active status + optional team/name.
+ * Connection + duty are derived in mapDriverRowToAgentDriver (not via separate SQL buckets).
+ */
+async function fetchDriverRowsForAgentDashboard(filters) {
+  const { filterClause, params } = buildAgentDashboardFilterClause(filters);
+  const orderClause = ' ORDER BY d.first_name, d.last_name';
+  const fromJoin = 'FROM mt_driver d LEFT JOIN mt_driver_team t ON d.team_id = t.team_id';
 
-  const paramsTime = [...params];
-  let timeClause = '';
-  let timeClauseWithLastOnline = null;
-  if (stats === 'active') {
-    if (type === 1) {
-      timeClause = ` AND d.on_duty = 1 AND ((CAST(d.last_login AS DATE) = ? OR DATE(d.last_login) = ?) AND d.last_login > ?)`;
-      timeClauseWithLastOnline = ` AND d.on_duty = 1 AND ((CAST(d.last_login AS DATE) = ? OR DATE(d.last_login) = ?) AND (d.last_login > ? OR d.last_online >= UNIX_TIMESTAMP(NOW()) - ?))`;
-      paramsTime.push(dateOnly, dateOnly, tenMinAgo);
-    } else {
-      timeClause = ` AND d.on_duty = 1 AND ((CAST(d.last_login AS DATE) = ? OR DATE(d.last_login) = ?) AND d.last_login > ?)`;
-      paramsTime.push(dateOnly, dateOnly, thirtyMinAgo);
-    }
-  } else if (stats === 'offline') {
-    if (type === 1) {
-      timeClause = ` AND (d.last_login IS NULL OR d.last_login < ? OR d.on_duty = 0 OR d.on_duty = 2 OR d.on_duty IS NULL)`;
-      paramsTime.push(elevenMinAgo);
-    } else {
-      timeClause = ` AND (d.on_duty = 2 OR d.on_duty = 0 OR d.on_duty IS NULL OR d.last_login IS NULL OR d.last_login < ?)`;
-      paramsTime.push(thirtyOneMinAgo);
-    }
-  }
+  const queries = [
+    () =>
+      pool.query(
+        `SELECT 
+          d.driver_id,
+          d.username,
+          d.first_name,
+          d.last_name,
+          CONCAT(COALESCE(d.first_name,''), ' ', COALESCE(d.last_name,'')) AS full_name,
+          d.phone,
+          d.on_duty,
+          d.team_id,
+          t.team_name,
+          d.email,
+          COALESCE(d.transport_description, d.licence_plate, '') AS vehicle,
+          COALESCE(NULLIF(TRIM(d.status), ''), 'active') AS status,
+          COALESCE(d.last_login, d.date_modified) AS status_updated_at,
+          d.last_login,
+          d.last_online,
+          d.location_lat,
+          d.location_lng,
+          d.user_type,
+          d.user_id,
+          d.device_platform,
+          d.device_type
+        ${fromJoin}
+        WHERE 1=1${filterClause}${orderClause}`,
+        params
+      ),
+    () =>
+      pool.query(
+        `SELECT 
+          d.driver_id,
+          d.username,
+          d.first_name,
+          d.last_name,
+          CONCAT(COALESCE(d.first_name,''), ' ', COALESCE(d.last_name,'')) AS full_name,
+          d.phone,
+          d.on_duty,
+          d.team_id,
+          t.team_name,
+          d.email,
+          COALESCE(d.transport_description, d.licence_plate, '') AS vehicle,
+          COALESCE(NULLIF(TRIM(d.status), ''), 'active') AS status,
+          d.last_login AS status_updated_at,
+          d.last_login,
+          d.location_lat,
+          d.location_lng,
+          d.user_type,
+          d.user_id,
+          d.device_platform,
+          d.device_type
+        ${fromJoin}
+        WHERE 1=1${filterClause}${orderClause}`,
+        params
+      ),
+    () =>
+      pool.query(
+        `SELECT 
+          d.driver_id,
+          d.username,
+          d.first_name,
+          d.last_name,
+          CONCAT(COALESCE(d.first_name,''), ' ', COALESCE(d.last_name,'')) AS full_name,
+          d.phone,
+          d.on_duty,
+          d.team_id,
+          t.team_name,
+          d.email,
+          COALESCE(d.transport_description, d.licence_plate, '') AS vehicle,
+          COALESCE(NULLIF(TRIM(d.status), ''), 'active') AS status,
+          d.date_modified AS status_updated_at,
+          d.last_login,
+          d.location_lat,
+          d.location_lng,
+          d.user_type,
+          d.user_id,
+          d.device_platform,
+          d.device_type
+        ${fromJoin}
+        WHERE 1=1${filterClause}${orderClause}`,
+        params
+      ),
+    () =>
+      pool.query(
+        `SELECT 
+          d.driver_id,
+          d.username,
+          d.first_name,
+          d.last_name,
+          CONCAT(COALESCE(d.first_name,''), ' ', COALESCE(d.last_name,'')) AS full_name,
+          d.phone,
+          d.on_duty,
+          d.team_id,
+          t.team_name,
+          COALESCE(NULLIF(TRIM(d.status), ''), 'active') AS status,
+          d.last_login,
+          d.location_lat,
+          d.location_lng,
+          d.device_platform,
+          d.device_type
+        ${fromJoin}
+        WHERE 1=1${filterClause}${orderClause}`,
+        params
+      ),
+    () =>
+      pool.query(
+        `SELECT 
+          d.driver_id,
+          d.username,
+          d.first_name,
+          d.last_name,
+          CONCAT(COALESCE(d.first_name,''), ' ', COALESCE(d.last_name,'')) AS full_name,
+          d.phone,
+          d.on_duty,
+          d.team_id,
+          COALESCE(NULLIF(TRIM(d.status), ''), 'active') AS status,
+          d.last_login,
+          d.device_platform,
+          d.device_type
+        FROM mt_driver d
+        LEFT JOIN mt_driver_team t ON d.team_id = t.team_id
+        WHERE 1=1${filterClause}${orderClause}`,
+        params
+      ),
+  ];
 
-  // status may be NULL/blank in mt_driver; coalesce it so agent-dashboard can consistently treat it as "active".
-  // status_updated_at may not exist in some deployments, so we try to select it and gracefully fall back via existing error handlers.
-  const selectColsFullWithStatus = `d.driver_id, d.first_name, d.last_name, d.phone, d.on_duty, d.last_login, d.location_lat, d.location_lng, d.team_id, d.user_type, d.user_id, d.device_platform, d.device_type, COALESCE(NULLIF(TRIM(d.status), ''), 'active') AS status, d.status_updated_at`;
-  const selectColsMinimalWithStatus = `d.driver_id, d.first_name, d.last_name, d.phone, d.on_duty, d.last_login, d.location_lat, d.location_lng, d.team_id, COALESCE(NULLIF(TRIM(d.status), ''), 'active') AS status, d.status_updated_at`;
-  const fromClauseFull = `FROM mt_driver d WHERE 1=1${filterClause}`;
-  const orderClause = ` ORDER BY d.first_name, d.last_name`;
-
-  let rows = [];
-  const runQuery = async (selectCols, fromClause, addLastOnline, queryParams, timeClauseOverride) => {
-    const tc = timeClauseOverride != null ? timeClauseOverride : timeClause;
-    const cols = addLastOnline ? `${selectCols}, d.last_online` : selectCols;
-    const sql = `SELECT ${cols} ${fromClause}${tc}${orderClause}`;
-    const [r] = await pool.query(sql, queryParams);
-    return (r || []).map((row) => (addLastOnline ? row : { ...row, last_online: row.last_login ? Math.floor(new Date(row.last_login).getTime() / 1000) : null }));
-  };
-
-  const paramsTimeWithLastOnline = timeClauseWithLastOnline != null ? [...paramsTime, ONLINE_MIN_OPT1 * 60] : paramsTime;
-  try {
-    rows = await runQuery(
-      selectColsFullWithStatus,
-      fromClauseFull,
-      true,
-      paramsTimeWithLastOnline,
-      timeClauseWithLastOnline != null ? timeClauseWithLastOnline : undefined
-    );
-  } catch (e1) {
-    if (e1.code === 'ER_BAD_FIELD_ERROR') {
-      try {
-        rows = await runQuery(selectColsFullWithStatus, fromClauseFull, false, paramsTime);
-      } catch (e2) {
-        if (e2.code === 'ER_BAD_FIELD_ERROR') {
-          const timeParams = paramsTime.slice(params.length);
-          const minimalWhereTeam = (team_id != null && team_id !== '' && Number.isFinite(Number(team_id))) ? ' AND d.team_id = ?' : '';
-          const minimalWhereName = (driver_name != null && String(driver_name).trim() !== '') ? " AND (CONCAT(COALESCE(d.first_name,''), ' ', COALESCE(d.last_name,'')) LIKE ? OR d.first_name LIKE ? OR d.last_name LIKE ?)" : '';
-          // Ensure fallbacks still filter to active drivers only.
-          const fromMinimal = `FROM mt_driver d WHERE 1=1${statusClause}${minimalWhereTeam}${minimalWhereName}`;
-          const minimalParams = []
-            .concat((team_id != null && team_id !== '' && Number.isFinite(Number(team_id))) ? [team_id] : [])
-            .concat((driver_name != null && String(driver_name).trim() !== '') ? [`%${String(driver_name).trim()}%`, `%${String(driver_name).trim()}%`, `%${String(driver_name).trim()}%`] : [])
-            .concat(timeParams);
-          try {
-            const [r] = await pool.query(`SELECT ${selectColsMinimalWithStatus} ${fromMinimal}${timeClause}${orderClause}`, minimalParams);
-            rows = (r || []).map((row) => ({ ...row, user_type: null, user_id: null, device_platform: null, device_type: null, last_online: row.last_login ? Math.floor(new Date(row.last_login).getTime() / 1000) : null }));
-          } catch (e3) {
-            if (e3.code === 'ER_BAD_FIELD_ERROR') {
-              // Last-resort fallback: still select d.status so the frontend can reliably filter "active" drivers.
-              const [r] = await pool.query(
-                `SELECT 
-                   d.driver_id,
-                   d.first_name,
-                   d.last_name,
-                   d.phone,
-                   d.on_duty,
-                   d.last_login,
-                   COALESCE(NULLIF(TRIM(d.status), ''), 'active') AS status,
-                   d.status_updated_at
-                 FROM mt_driver d 
-                 WHERE 1=1${statusClause}${timeClause}${orderClause}`,
-                timeParams
-              );
-              rows = (r || []).map((row) => ({
-                ...row,
-                location_lat: null,
-                location_lng: null,
-                team_id: null,
-                user_type: null,
-                user_id: null,
-                device_platform: null,
-                device_type: null,
-                last_online: row.last_login ? Math.floor(new Date(row.last_login).getTime() / 1000) : null,
-              }));
-            } else throw e3;
-          }
-        } else throw e2;
-      }
-    } else throw e1;
-  }
-
-  // If "total" is empty, the Agent panel will show "No agents" regardless of "active/offline".
-  // Add a last-resort fallback query for total: only apply team/name filters and select minimal columns.
-  // This avoids hard dependency on columns that may be missing in older DB schemas.
-  if (stats === 'total' && (!Array.isArray(rows) || rows.length === 0)) {
+  for (const run of queries) {
     try {
-      const totalParams = [];
-      let where = ' WHERE 1=1';
-
-      if (team_id != null && team_id !== '' && Number.isFinite(Number(team_id))) {
-        where += ' AND d.team_id = ?';
-        totalParams.push(team_id);
-      }
-      if (user_type != null && user_type !== '') {
-        where += ' AND d.user_type = ?';
-        totalParams.push(user_type);
-      }
-      if (user_id != null && user_id !== '' && Number.isFinite(Number(user_id))) {
-        where += ' AND d.user_id = ?';
-        totalParams.push(user_id);
-      }
-      if (driver_name != null && String(driver_name).trim() !== '') {
-        where +=
-          " AND (CONCAT(COALESCE(d.first_name,''), ' ', COALESCE(d.last_name,'')) LIKE ? OR d.first_name LIKE ? OR d.last_name LIKE ?)";
-        const like = `%${String(driver_name).trim()}%`;
-        totalParams.push(like, like, like);
-      }
-
-      const orderClause = ' ORDER BY d.first_name, d.last_name';
-
-      try {
-        const [r] = await pool.query(
-          `SELECT d.driver_id, d.first_name, d.last_name, d.phone, d.on_duty, d.last_login, d.team_id${where}${orderClause}`,
-          totalParams
-        );
-        rows = r || [];
-      } catch (eLastLogin) {
-        if (eLastLogin && eLastLogin.code === 'ER_BAD_FIELD_ERROR') {
-          const [r2] = await pool.query(
-            `SELECT d.driver_id, d.first_name, d.last_name, d.phone, d.on_duty, d.team_id${where}${orderClause}`,
-            totalParams
-          );
-          rows = (r2 || []).map((x) => ({ ...x, last_login: null }));
-        } else {
-          throw eLastLogin;
-        }
-      }
-    } catch (_) {
-      // Keep rows as-is (likely empty) if fallback fails too.
+      const [r] = await run();
+      const rows = r || [];
+      return rows.map((row) => ({
+        ...row,
+        last_online:
+          row.last_online != null
+            ? row.last_online
+            : row.last_login
+              ? Math.floor(new Date(row.last_login).getTime() / 1000)
+              : null,
+      }));
+    } catch (e) {
+      if (e.code !== 'ER_BAD_FIELD_ERROR') throw e;
     }
   }
+
+  const { team_id, driver_name } = filters;
+  const statusClause =
+    " AND (LOWER(TRIM(COALESCE(NULLIF(TRIM(d.status), ''), 'active'))) = 'active')";
+  const totalParams = [];
+  let where = ` WHERE 1=1${statusClause}`;
+  if (team_id != null && team_id !== '' && Number.isFinite(Number(team_id))) {
+    where += ' AND d.team_id = ?';
+    totalParams.push(team_id);
+  }
+  if (driver_name != null && String(driver_name).trim() !== '') {
+    where +=
+      " AND (CONCAT(COALESCE(d.first_name,''), ' ', COALESCE(d.last_name,'')) LIKE ? OR d.first_name LIKE ? OR d.last_name LIKE ?)";
+    const like = `%${String(driver_name).trim()}%`;
+    totalParams.push(like, like, like);
+  }
+  const orderFallback = ' ORDER BY d.first_name, d.last_name';
+  try {
+    const [r] = await pool.query(
+      `SELECT d.driver_id, d.username, d.first_name, d.last_name, d.phone, d.on_duty, d.last_login, d.team_id,
+        COALESCE(NULLIF(TRIM(d.status), ''), 'active') AS status
+      FROM mt_driver d${where}${orderFallback}`,
+      totalParams
+    );
+    return (r || []).map((row) => ({
+      ...row,
+      full_name: [row.first_name, row.last_name].filter(Boolean).join(' ').trim() || null,
+      team_name: null,
+      email: null,
+      vehicle: null,
+      status_updated_at: row.last_login,
+      location_lat: null,
+      location_lng: null,
+      user_type: null,
+      user_id: null,
+      device_platform: null,
+      device_type: null,
+      last_online: row.last_login ? Math.floor(new Date(row.last_login).getTime() / 1000) : null,
+    }));
+  } catch (eLast) {
+    if (eLast.code === 'ER_BAD_FIELD_ERROR') {
+      const [r2] = await pool.query(
+        `SELECT d.driver_id, d.first_name, d.last_name, d.phone, d.on_duty, d.team_id,
+          COALESCE(NULLIF(TRIM(d.status), ''), 'active') AS status
+        FROM mt_driver d${where}${orderFallback}`,
+        totalParams
+      );
+      return (r2 || []).map((row) => ({
+        ...row,
+        username: null,
+        full_name: [row.first_name, row.last_name].filter(Boolean).join(' ').trim() || null,
+        team_name: null,
+        email: null,
+        vehicle: null,
+        status_updated_at: null,
+        last_login: null,
+        location_lat: null,
+        location_lng: null,
+        user_type: null,
+        user_id: null,
+        device_platform: null,
+        device_type: null,
+        last_online: null,
+      }));
+    }
+    throw eLast;
+  }
+}
+
+function mapDriverRowToAgentDriver(r, dateOnly, trackingType, taskCountByDriver, nowSec) {
+  const type = parseInt(trackingType, 10) === 2 ? 2 : 1;
+  const lostThresholdSec1 = LOST_CONNECTION_MIN_OPT1 * 60;
+  const lostThresholdSec2 = LOST_CONNECTION_MIN_OPT2 * 60;
+
+  const lastLogin = r.last_login;
+  const lastLoginSec = lastLogin ? Math.floor(new Date(lastLogin).getTime() / 1000) : 0;
+  const lastOnlineVal = r.last_online != null ? parseInt(r.last_online, 10) : lastLoginSec;
+  const onDuty = Number(r.on_duty) === 1;
+  const isOnlineLegacy =
+    type === 1
+      ? onDuty &&
+        lastLogin &&
+        new Date(lastLogin).toISOString().slice(0, 10) === dateOnly &&
+        lastOnlineVal >= nowSec - ONLINE_MIN_OPT1 * 60
+      : onDuty;
+  const isOnlineNum = isOnlineLegacy ? 1 : 2;
+  const lastActivitySec = type === 1 ? lastOnlineVal : lastLoginSec;
+  const lostThreshold = type === 1 ? lostThresholdSec1 : lostThresholdSec2;
+  const onlineStatus = lastActivitySec >= nowSec - lostThreshold ? 'online' : 'lost_connection';
+  const connectionStatus = onlineStatus === 'online' ? 'Online' : 'Connection Lost';
+
+  const fullName =
+    (r.full_name && String(r.full_name).trim()) ||
+    [r.first_name, r.last_name].filter(Boolean).join(' ').trim() ||
+    null;
+
+  return {
+    driver_id: r.driver_id,
+    id: r.driver_id,
+    username: r.username ?? null,
+    first_name: r.first_name,
+    last_name: r.last_name,
+    full_name: fullName,
+    phone: r.phone,
+    on_duty: r.on_duty,
+    status: r.status ?? 'active',
+    status_updated_at: r.status_updated_at ?? null,
+    team_id: r.team_id,
+    team_name: r.team_name ?? null,
+    email: r.email ?? null,
+    vehicle: r.vehicle ?? null,
+    last_login: r.last_login,
+    last_online: r.last_online,
+    location_lat: r.location_lat,
+    location_lng: r.location_lng,
+    user_type: r.user_type,
+    user_id: r.user_id,
+    is_online: isOnlineNum,
+    online_status: onlineStatus,
+    connection_status: connectionStatus,
+    last_seen: lastSeenText(lastLogin),
+    total_task: taskCountByDriver[r.driver_id] ?? 0,
+    device: r.device_platform || r.device_type || null,
+    platform: (r.device_platform || r.device_type || 'android').toString().toLowerCase(),
+  };
+}
+
+/**
+ * Unified agent panel payload: one driver list (like `/drivers` + telemetry), split for counts.
+ * - total: all active-account drivers for filters
+ * - active: on duty + live connection (online_status === 'online')
+ * - offline: all others (includes on duty + lost connection)
+ */
+async function buildAgentDashboardDetails(transactionDate, trackingType, filters) {
+  const now = new Date();
+  const nowSec = Math.floor(now.getTime() / 1000);
+  const dateOnly = (transactionDate || now.toISOString().slice(0, 10)).slice(0, 10);
+
+  const rows = await fetchDriverRowsForAgentDashboard(filters);
 
   const driverIds = (rows || []).map((r) => r.driver_id).filter(Boolean);
   const taskCountByDriver = {};
@@ -584,54 +708,19 @@ async function getDriverByStats(stats, transactionDate, trackingType, filters = 
         `SELECT driver_id, COUNT(*) AS cnt FROM mt_driver_task WHERE driver_id IN (${placeholders}) AND (delivery_date = ? OR DATE(delivery_date) = ?) GROUP BY driver_id`,
         [...driverIds, dateOnly, dateOnly]
       );
-      for (const r of taskRows || []) taskCountByDriver[r.driver_id] = r.cnt;
+      for (const tr of taskRows || []) taskCountByDriver[tr.driver_id] = tr.cnt;
     } catch (_) {}
   }
 
-  const lostThresholdSec1 = LOST_CONNECTION_MIN_OPT1 * 60;
-  const lostThresholdSec2 = LOST_CONNECTION_MIN_OPT2 * 60;
+  const enriched = (rows || []).map((r) =>
+    mapDriverRowToAgentDriver(r, dateOnly, trackingType, taskCountByDriver, nowSec)
+  );
 
-  return (rows || []).map((r) => {
-    const lastLogin = r.last_login;
-    const lastLoginSec = lastLogin ? Math.floor(new Date(lastLogin).getTime() / 1000) : 0;
-    const lastOnlineVal = r.last_online != null ? parseInt(r.last_online, 10) : lastLoginSec;
-    const isOnline =
-      type === 1
-        ? r.on_duty === 1 &&
-          lastLogin &&
-          (new Date(lastLogin).toISOString().slice(0, 10) === dateOnly) &&
-          lastOnlineVal >= nowSec - ONLINE_MIN_OPT1 * 60
-        : r.on_duty === 1;
-    const isOnlineNum = isOnline ? 1 : 2;
-    const lastActivitySec = type === 1 ? lastOnlineVal : lastLoginSec;
-    const lostThreshold = type === 1 ? lostThresholdSec1 : lostThresholdSec2;
-    const onlineStatus = lastActivitySec >= nowSec - lostThreshold ? 'online' : 'lost_connection';
+  const isPanelOnline = (d) => Number(d.on_duty) === 1 && d.online_status === 'online';
+  const active = enriched.filter(isPanelOnline);
+  const offline = enriched.filter((d) => !isPanelOnline(d));
 
-      return {
-      driver_id: r.driver_id,
-      id: r.driver_id,
-      first_name: r.first_name,
-      last_name: r.last_name,
-      full_name: [r.first_name, r.last_name].filter(Boolean).join(' ').trim() || null,
-      phone: r.phone,
-      on_duty: r.on_duty,
-      // Treat NULL/blank status as active (consistent with `/drivers` endpoint).
-      status: r.status ?? 'active',
-      status_updated_at: r.status_updated_at ?? null,
-      last_login: r.last_login,
-      last_online: r.last_online,
-      location_lat: r.location_lat,
-      location_lng: r.location_lng,
-      team_id: r.team_id,
-      user_type: r.user_type,
-      user_id: r.user_id,
-      is_online: isOnlineNum,
-      online_status: onlineStatus,
-      last_seen: lastSeenText(lastLogin),
-      total_task: taskCountByDriver[r.driver_id] ?? 0,
-      device: r.device_platform || r.device_type || null,
-    };
-  });
+  return { active, offline, total: enriched };
 }
 
 router.get('/driver/agent-dashboard', async (req, res) => {
@@ -644,11 +733,7 @@ router.get('/driver/agent-dashboard', async (req, res) => {
 
     const filters = { team_id: team_id != null && team_id !== '' ? team_id : null, driver_name: agent_name || null };
 
-    const [active, offline, total] = await Promise.all([
-      getDriverByStats('active', date, trackingType, filters),
-      getDriverByStats('offline', date, trackingType, filters),
-      getDriverByStats('total', date, trackingType, filters),
-    ]);
+    const { active, offline, total } = await buildAgentDashboardDetails(date, trackingType, filters);
 
     return res.json({
       details: { active, offline, total },
@@ -671,11 +756,7 @@ router.post('/driver/agent-dashboard', express.json(), async (req, res) => {
 
     const filters = { team_id, driver_name: agent_name || null };
 
-    const [active, offline, total] = await Promise.all([
-      getDriverByStats('active', date, trackingType, filters),
-      getDriverByStats('offline', date, trackingType, filters),
-      getDriverByStats('total', date, trackingType, filters),
-    ]);
+    const { active, offline, total } = await buildAgentDashboardDetails(date, trackingType, filters);
 
     return res.json({
       details: { active, offline, total },

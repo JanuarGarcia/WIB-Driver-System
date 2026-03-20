@@ -178,14 +178,23 @@ export default function AgentPanel({ onOpenTaskDetails }) {
             driver_id: r.driver_id ?? r.id,
             // `/drivers` has no live connection telemetry — do not infer "online" from on_duty alone.
             online_status: 'lost_connection',
+            connection_status: 'Connection Lost',
             last_seen: r.status_updated_at ? new Date(r.status_updated_at).toLocaleString() : '—',
             total_task: r.total_task ?? 0,
           };
         });
 
+        const isLiveFallback = (d) => {
+          const c = String(d?.online_status || d?.connection_status || '').toLowerCase().trim();
+          if (!c) return false;
+          if (c === 'lost_connection' || c.includes('lost')) return false;
+          return c === 'online' || c === 'connected';
+        };
+        const isOnlineAgentFallback = (d) => isLiveFallback(d) && Number(d.on_duty) === 1;
+
         setDetails({
-          active: normalized.filter((r) => Number(r.on_duty) === 1),
-          offline: normalized.filter((r) => Number(r.on_duty) !== 1),
+          active: normalized.filter(isOnlineAgentFallback),
+          offline: normalized.filter((d) => !isOnlineAgentFallback(d)),
           total: normalized,
         });
       } else {
@@ -244,7 +253,12 @@ export default function AgentPanel({ onOpenTaskDetails }) {
   }, [filterDropdownOpen]);
 
   // Statistics: only drivers with account status = active; normalize status/online fields safely.
-  const allDrivers = Array.isArray(details.total) ? details.total : [];
+  // Defensive team scope: always match dashboard team filter even if API returns extra rows.
+  const allDriversRaw = Array.isArray(details.total) ? details.total : [];
+  const allDrivers =
+    selectedTeamId != null && selectedTeamId !== ''
+      ? allDriversRaw.filter((d) => String(d.team_id ?? '') === String(selectedTeamId))
+      : allDriversRaw;
 
   const activeDrivers = allDrivers.filter((d) => {
     const status = String(d?.status ?? '').toLowerCase().trim();
@@ -298,7 +312,8 @@ export default function AgentPanel({ onOpenTaskDetails }) {
       : filteredByTab.filter((d) => {
           const name = (d.full_name || d.username || '').toLowerCase();
           const location = (d.current_location || '').toLowerCase();
-          return name.includes(searchLower) || location.includes(searchLower);
+          const phone = String(d.phone || '').toLowerCase();
+          return name.includes(searchLower) || location.includes(searchLower) || phone.includes(searchLower);
         });
 
   const filtered = [...filteredBySearch].sort((a, b) => {
