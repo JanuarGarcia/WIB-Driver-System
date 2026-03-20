@@ -27,17 +27,6 @@ function formatCategoryTitle(str) {
   return cleaned.trim().replace(/\w\S*/g, (txt) => txt.charAt(0).toUpperCase() + txt.slice(1).toLowerCase());
 }
 
-/** Display category like legacy driver UI: bold uppercase (e.g. MAIN, NON-COFFEE (DRINKS)). */
-function formatOrderItemsCategoryHeader(label) {
-  if (!label || !String(label).trim()) return 'ITEMS';
-  const t = String(label).trim();
-  if (t.toLowerCase() === 'other items') return 'ITEMS';
-  return t
-    .split(' — ')
-    .map((part) => part.trim().toUpperCase())
-    .join(' — ');
-}
-
 /** Group key + section label from category, subcategory, and fallbacks (API may set subcategory_name). */
 function orderItemGroupMeta(item) {
   const catRaw = (item.category_name || item.category || item.item_category || '').toString().trim();
@@ -53,6 +42,17 @@ function orderItemGroupMeta(item) {
     key: `${cat.toLowerCase()}|||${sub.toLowerCase()}`,
     label: `${catLbl} — ${subLbl}`,
   };
+}
+
+/** Uppercase category line inside ordered-items card (matches driver-style receipt). */
+function formatOrderRefCategoryHeader(label) {
+  if (!label || !String(label).trim()) return 'ITEMS';
+  const t = String(label).trim();
+  if (t.toLowerCase() === 'other items') return 'ITEMS';
+  return t
+    .split(' — ')
+    .map((part) => part.trim().toUpperCase())
+    .join(' — ');
 }
 
 /** Order summary row: mt_order.cart_tip_percentage + cart_tip_value. */
@@ -530,13 +530,25 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
                   </div>
                 )}
                 {tab === 'order' && (
-                  <div className="task-details-content order-details-panel">
+                  <div className="task-details-content order-details-panel order-details-panel--ref">
+                    <div className="order-details-quick-row">
+                      <div className="order-details-quick-cell">
+                        <span className="order-details-quick-label">CONTACT NUMBER</span>
+                        <span className="order-details-quick-value">{task.contact_number ?? '—'}</span>
+                      </div>
+                      <div className="order-details-quick-cell order-details-quick-cell--end">
+                        <span className="order-details-quick-label">CHANGE</span>
+                        <span className="order-details-quick-value order-details-quick-value--emphasis">
+                          {order?.order_change != null ? `₱${Number(order.order_change).toFixed(2)}` : '—'}
+                        </span>
+                      </div>
+                    </div>
                     <div className="task-detail-section">
                       <div className="task-detail-section-title">Customer & merchant</div>
                       <div className="task-detail-section-row">
                         <div className="task-detail-row"><span className="task-detail-label">Customer name</span><span className="task-detail-value">{customerName}</span></div>
                         <div className="task-detail-row"><span className="task-detail-label">Merchant name</span><span className="task-detail-value">{merchantName}</span></div>
-                        <div className="task-detail-row"><span className="task-detail-label">Telephone</span><span className="task-detail-value">{task.contact_number ?? merchant?.restaurant_phone ?? '—'}</span></div>
+                        <div className="task-detail-row"><span className="task-detail-label">Telephone</span><span className="task-detail-value">{merchant?.restaurant_phone ?? '—'}</span></div>
                         <div className="task-detail-row"><span className="task-detail-label">Address</span><span className="task-detail-value">{deliveryAddressDisplay}</span></div>
                       </div>
                     </div>
@@ -549,8 +561,6 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
                         <div className="task-detail-row"><span className="task-detail-label">TRN date</span><span className="task-detail-value">{order?.date_created ? formatDate(order.date_created) : '—'}</span></div>
                         <div className="task-detail-row"><span className="task-detail-label">Delivery date</span><span className="task-detail-value">{order?.delivery_date ? formatDate(order.delivery_date) : '—'}</span></div>
                         <div className="task-detail-row"><span className="task-detail-label">Delivery instruction</span><span className="task-detail-value">{deliveryInstructionDisplay}</span></div>
-                        <div className="task-detail-row"><span className="task-detail-label">Contact number</span><span className="task-detail-value">{task.contact_number ?? '—'}</span></div>
-                        <div className="task-detail-row"><span className="task-detail-label">Change</span><span className="task-detail-value">{order?.order_change != null ? `₱${Number(order.order_change).toFixed(2)}` : '—'}</span></div>
                       </div>
                     </div>
                     {orderDetails.length > 0 && (() => {
@@ -573,22 +583,12 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
                         return a.label.localeCompare(b.label, undefined, { sensitivity: 'base' });
                       });
                       return (
-                        <div className="task-detail-section order-items-block order-items-block--modal order-items-block--legacy-layout">
-                          <div className="order-items-block-heading">
-                            <div className="task-detail-section-title task-detail-section-title--order-items task-detail-section-title--items-legacy">Items</div>
-                            <p className="order-items-block-hint">Category groups match the classic driver view when menu data is linked.</p>
-                          </div>
-                          <div className="order-items-by-category">
+                        <div className="task-detail-section order-ref-ordered-section">
+                          <div className="order-ref-cards-stack">
                             {categoryBuckets.map(({ key, label, items }) => (
-                              <div key={key} className="order-items-category order-items-category--legacy">
-                                <div
-                                  className="order-items-category-header order-items-category-header--legacy"
-                                  role="group"
-                                  aria-label={formatOrderItemsCategoryHeader(label)}
-                                >
-                                  {formatOrderItemsCategoryHeader(label)}
-                                </div>
-                                <ul className="order-items-list order-items-list--legacy">
+                              <div key={key} className="order-ref-card" role="region" aria-label={`Ordered items: ${label}`}>
+                                <div className="order-ref-card-category">{formatOrderRefCategoryHeader(label)}</div>
+                                <ul className="order-ref-items-list">
                                   {items.map((item) => {
                                     const qty = Number(item.qty) || 0;
                                     const unitPrice = item.discounted_price != null ? Number(item.discounted_price) : item.normal_price != null ? Number(item.normal_price) : null;
@@ -596,19 +596,19 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
                                     const unitStr = unitPrice != null && !Number.isNaN(unitPrice) ? `₱${unitPrice.toFixed(2)}` : '—';
                                     const subtotalStr = subtotal != null ? `₱${subtotal.toFixed(2)}` : '—';
                                     const lineName = displaySanitized(item.item_name_display || item.item_name) || item.item_name || 'Item';
-                                    const withSize = item.size ? `${lineName} (${displaySanitized(item.size) || item.size})` : lineName;
-                                    const namePart = /[.!?…)]\s*$/.test(withSize.trim()) ? withSize : `${withSize}.`;
-                                    const nameWithStop = `${qty}× ${namePart}`;
+                                    const sizePart = item.size ? ` (${displaySanitized(item.size) || item.size})` : '';
                                     return (
-                                      <li key={item.id ?? item._idx} className="order-item-row order-item-row--legacy">
-                                        <div className="order-item-line order-item-line--legacy">
-                                          <div className="order-item-line-text">
-                                            <span className="order-item-name order-item-name--legacy">{nameWithStop}</span>
+                                      <li key={item.id ?? item._idx} className="order-ref-item-row">
+                                        <div className="order-ref-item-line">
+                                          <div className="order-ref-item-text">
+                                            <span className="order-ref-item-title">
+                                              {qty}x {lineName}{sizePart}
+                                            </span>
                                             {unitStr !== '—' ? (
-                                              <span className="order-item-unit-price order-item-unit-price--legacy" aria-label="Unit price">{unitStr}</span>
+                                              <span className="order-ref-item-unit" aria-label="Unit price">{unitStr}</span>
                                             ) : null}
                                           </div>
-                                          <span className="order-item-line-total order-item-line-total--legacy">{subtotalStr}</span>
+                                          <span className="order-ref-item-line-total">{subtotalStr}</span>
                                         </div>
                                         {item.order_notes && (
                                           <div className="order-item-notes">{displaySanitized(item.order_notes) || item.order_notes}</div>
@@ -623,36 +623,39 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
                         </div>
                       );
                     })()}
-                    {(order?.sub_total != null || order?.total_w_tax != null) && (
-                      <div className="task-detail-section order-summary-block">
-                        <div className="task-detail-section-title">Order summary</div>
-                        <div className="task-detail-section-row">
-                          <div className="task-detail-row"><span className="task-detail-label">Sub total</span><span className="task-detail-value">{order.sub_total != null ? `₱${Number(order.sub_total).toFixed(2)}` : '—'}</span></div>
-                          <div className="task-detail-row">
-                            <span className="task-detail-label">Convenience</span>
-                            <span className="task-detail-value">
-                              {(() => {
-                                const raw = order.packaging != null && String(order.packaging).trim() !== ''
-                                  ? order.packaging
-                                  : order.convenience_fee;
-                                const n = raw != null && String(raw).trim() !== '' ? Number(raw) : NaN;
-                                return !Number.isNaN(n) ? `₱${n.toFixed(2)}` : '—';
-                              })()}
-                            </span>
-                          </div>
-                          {(() => {
-                            const tipRow = formatOrderTipRow(order);
-                            return (
-                              <div className="task-detail-row">
-                                <span className="task-detail-label">{tipRow.label}</span>
-                                <span className="task-detail-value">{tipRow.display}</span>
+                    {(order?.sub_total != null || order?.total_w_tax != null) && (() => {
+                      const convRaw = order.packaging != null && String(order.packaging).trim() !== ''
+                        ? order.packaging
+                        : order.convenience_fee;
+                      const convNum = convRaw != null && String(convRaw).trim() !== '' ? Number(convRaw) : NaN;
+                      const convenienceDisplay = !Number.isNaN(convNum) ? `₱${convNum.toFixed(2)}` : '—';
+                      const tipRow = formatOrderTipRow(order);
+                      return (
+                        <div className="task-detail-section order-summary-block order-summary-block--ref">
+                          <div className="order-ref-card order-summary-ref-card">
+                            <div className="order-summary-ref-heading">Order summary</div>
+                            <div className="order-summary-ref-grid">
+                              <div className="order-summary-ref-cell">
+                                <span className="order-summary-ref-label">SUB TOTAL</span>
+                                <span className="order-summary-ref-value">{order.sub_total != null ? `₱${Number(order.sub_total).toFixed(2)}` : '—'}</span>
                               </div>
-                            );
-                          })()}
-                          <div className="task-detail-row"><span className="task-detail-label">Total</span><span className="task-detail-value task-detail-value-total">{order?.total_w_tax != null ? `₱${Number(order.total_w_tax).toFixed(2)}` : '—'}</span></div>
+                              <div className="order-summary-ref-cell">
+                                <span className="order-summary-ref-label">CONVENIENCE</span>
+                                <span className="order-summary-ref-value">{convenienceDisplay}</span>
+                              </div>
+                              <div className="order-summary-ref-cell">
+                                <span className="order-summary-ref-label">TIPS</span>
+                                <span className="order-summary-ref-value">{tipRow.display}</span>
+                              </div>
+                              <div className="order-summary-ref-cell">
+                                <span className="order-summary-ref-label">TOTAL</span>
+                                <span className="order-summary-ref-value order-summary-ref-value--total">{order?.total_w_tax != null ? `₱${Number(order.total_w_tax).toFixed(2)}` : '—'}</span>
+                              </div>
+                            </div>
+                          </div>
                         </div>
-                      </div>
-                    )}
+                      );
+                    })()}
                   </div>
                 )}
                 {changeStatusOpen && (

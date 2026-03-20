@@ -5014,120 +5014,174 @@ tr:hover { background: var(--bg-hover) !important; }
 .order-item-name { font-size: 0.9375rem; color: var(--text-dark); flex: 1; min-width: 0; }
 .order-item-line-total { font-size: 0.9375rem; color: var(--text-dark); flex-shrink: 0; font-variant-numeric: tabular-nums; }
 
-/* Order details modal: legacy driver layout (category block + qty/name + unit under, line total right) */
-.order-items-block--legacy-layout .order-items-by-category {
-  gap: 0;
-}
-.order-items-block--legacy-layout .order-items-category--legacy {
-  border: none;
-  border-radius: 0;
-  box-shadow: none;
-  background: transparent;
-  margin-bottom: 0;
-  padding-bottom: 0.15rem;
-  border-bottom: 1px solid var(--border-soft);
-}
-.order-items-block--legacy-layout .order-items-category--legacy:last-child {
-  border-bottom: none;
-}
-.order-items-block--legacy-layout .order-items-category-header--legacy {
-  display: block;
-  margin: 0;
-  padding: 0.65rem 0 0.4rem;
-  background: none;
-  border: none;
-  border-bottom: none;
-  border-left: none;
-  font-size: 0.8125rem;
-  font-weight: 800;
-  letter-spacing: 0.07em;
-  text-transform: uppercase;
-  color: var(--text-dark);
-}
-.order-items-block--legacy-layout .order-items-category--legacy:first-child .order-items-category-header--legacy {
-  padding-top: 0.35rem;
-}
-.task-detail-section-title--items-legacy {
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  font-size: 0.8125rem;
-  font-weight: 800;
-  color: var(--text-muted-strong, var(--text-muted));
-  margin-bottom: 0.5rem;
-}
-.order-items-block--legacy-layout .order-items-list--legacy {
-  padding: 0 0 0.25rem;
-}
-.order-items-block--legacy-layout .order-item-row--legacy {
-  margin-bottom: 0;
-  padding: 0.5rem 0;
-  background: transparent;
-  border: none;
-  border-radius: 0;
-  border-bottom: 1px solid var(--border-soft);
-  box-shadow: none;
-}
-.order-items-block--legacy-layout .order-item-row--legacy:hover {
-  border-color: var(--border-soft);
-  box-shadow: none;
-}
-.order-items-block--legacy-layout .order-item-row--legacy:last-child {
-  border-bottom: none;
-}
-.order-items-block--legacy-layout .order-item-line--legacy {
-  align-items: flex-start;
-  gap: 1rem;
-}
-.order-items-block--legacy-layout .order-item-line-text {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 0.2rem;
-}
-.order-items-block--legacy-layout .order-item-name--legacy {
-  font-size: 0.9375rem;
-  font-weight: 600;
-  line-height: 1.4;
-  color: var(--text-dark);
-}
-.order-items-block--legacy-layout .order-item-unit-price--legacy {
-  font-size: 0.8125rem;
-  color: var(--text-muted-strong, var(--text-muted));
-  font-variant-numeric: tabular-nums;
-}
-.order-items-block--legacy-layout .order-item-line-total--legacy {
-  font-size: 0.9375rem;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-  color: var(--text-dark);
-  text-align: right;
-  white-space: nowrap;
-  padding-top: 0.1rem;
-}
-[data-theme="dark"] .order-items-block--legacy-layout .order-items-category-header--legacy {
-  color: var(--text-dark);
-}
-[data-theme="dark"] .order-items-block--legacy-layout .order-item-row--legacy {
-  background: transparent;
-  border-bottom-color: var(--border-medium);
-}
-[data-theme="dark"] .order-items-block--legacy-layout .order-items-category--legacy {
-  border-bottom-color: var(--border-medium);
-}
-[data-theme="dark"] .task-detail-section-title--items-legacy {
-  color: var(--text-muted-strong);
-}
-[data-theme="dark"] .order-items-block--legacy-layout .order-item-line-total--legacy {
-  color: var(--color-primary);
-}
 /* Unit price shown under the item name */
 .order-item-unit-price { font-size: 0.875rem; color: var(--text-muted-strong, var(--text-muted)); margin-top: 0.15rem; font-variant-numeric: tabular-nums; }
 .order-item-subtotal { font-size: 0.875rem; color: var(--text-muted-strong, var(--text-muted)); margin-top: 0.15rem; }
 .order-item-notes { font-size: 0.8125rem; color: var(--color-primary); margin-top: 0.2rem; line-height: 1.35; }
 .order-summary-block { margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border-soft); }
 .order-summary-block p { margin: 0.35rem 0; }
+
+/* Order Details tab — reference receipt layout (light + dark) */
+.order-details-panel--ref .order-details-quick-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem 1.25rem;
+  margin-bottom: 1.15rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--border-soft);
+}
+.order-details-quick-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  min-width: 0;
+}
+.order-details-quick-cell--end {
+  text-align: right;
+  align-items: flex-end;
+}
+.order-details-quick-label {
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted-strong, var(--text-muted));
+}
+.order-details-quick-value {
+  font-size: 0.95rem;
+  font-weight: 500;
+  color: var(--text-dark);
+  word-break: break-word;
+}
+.order-details-quick-value--emphasis {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.order-ref-ordered-section {
+  margin-top: 0.5rem;
+  padding-top: 0;
+  border-top: none;
+}
+.order-ref-cards-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+.order-ref-card {
+  border: 1px solid var(--border-soft);
+  border-radius: 12px;
+  background: var(--bg-elevated, var(--bg-card));
+  padding: 0.85rem 1rem 0.65rem;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+}
+[data-theme="dark"] .order-ref-card {
+  background: var(--bg-surface-1, rgba(0, 0, 0, 0.22));
+  border-color: var(--border-medium);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
+}
+.order-ref-card-category {
+  font-size: 0.8125rem;
+  font-weight: 800;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-dark);
+  margin: 0 0 0.65rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--border-soft);
+}
+.order-ref-items-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.order-ref-item-row {
+  padding: 0.55rem 0;
+  border-bottom: 1px solid var(--border-soft);
+}
+.order-ref-item-row:last-child {
+  border-bottom: none;
+  padding-bottom: 0.15rem;
+}
+.order-ref-item-line {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+.order-ref-item-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.25rem;
+}
+.order-ref-item-title {
+  font-size: 0.9375rem;
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--text-dark);
+}
+.order-ref-item-unit {
+  font-size: 0.8125rem;
+  color: var(--text-muted-strong, var(--text-muted));
+  font-variant-numeric: tabular-nums;
+}
+.order-ref-item-line-total {
+  font-size: 0.9375rem;
+  font-weight: 700;
+  color: var(--text-dark);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  padding-top: 0.05rem;
+}
+[data-theme="dark"] .order-ref-item-line-total {
+  color: var(--color-primary);
+}
+.order-summary-block--ref {
+  border-top: none;
+  padding-top: 0.35rem;
+  margin-top: 0.85rem;
+}
+.order-summary-ref-card {
+  padding: 0.9rem 1rem 0.85rem;
+}
+.order-summary-ref-heading {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text-dark);
+  margin: 0 0 0.75rem;
+}
+.order-summary-ref-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.85rem 1.25rem;
+}
+.order-summary-ref-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  min-width: 0;
+}
+.order-summary-ref-label {
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-muted-strong, var(--text-muted));
+}
+.order-summary-ref-value {
+  font-size: 0.9375rem;
+  font-weight: 500;
+  color: var(--text-dark);
+  font-variant-numeric: tabular-nums;
+}
+.order-summary-ref-value--total {
+  font-weight: 700;
+}
+[data-theme="dark"] .order-summary-ref-value--total {
+  color: var(--color-primary);
+}
 .modal-footer-actions { display: flex; flex-wrap: wrap; gap: 0.6rem; justify-content: flex-end; padding: 1.25rem 1.5rem; border-top: 1px solid #e5e7eb; background: #fafafa; }
 .task-details-modal .modal-footer-actions { border-radius: 0 0 8px 8px; }
 /* Match secondary footer buttons (Edit, Change status, Directions, Delete, Close) */
