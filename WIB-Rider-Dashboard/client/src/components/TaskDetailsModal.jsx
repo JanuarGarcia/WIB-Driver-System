@@ -27,6 +27,17 @@ function formatCategoryTitle(str) {
   return cleaned.trim().replace(/\w\S*/g, (txt) => txt.charAt(0).toUpperCase() + txt.slice(1).toLowerCase());
 }
 
+/** Display category like legacy driver UI: bold uppercase (e.g. MAIN, NON-COFFEE (DRINKS)). */
+function formatOrderItemsCategoryHeader(label) {
+  if (!label || !String(label).trim()) return 'ITEMS';
+  const t = String(label).trim();
+  if (t.toLowerCase() === 'other items') return 'ITEMS';
+  return t
+    .split(' — ')
+    .map((part) => part.trim().toUpperCase())
+    .join(' — ');
+}
+
 /** Group key + section label from category, subcategory, and fallbacks (API may set subcategory_name). */
 function orderItemGroupMeta(item) {
   const catRaw = (item.category_name || item.category || item.item_category || '').toString().trim();
@@ -562,21 +573,22 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
                         return a.label.localeCompare(b.label, undefined, { sensitivity: 'base' });
                       });
                       return (
-                        <div className="task-detail-section order-items-block order-items-block--modal">
+                        <div className="task-detail-section order-items-block order-items-block--modal order-items-block--legacy-layout">
                           <div className="order-items-block-heading">
-                            <div className="task-detail-section-title task-detail-section-title--order-items">Ordered items</div>
-                            <p className="order-items-block-hint">Grouped by menu category and subcategory when linked in the database.</p>
+                            <div className="task-detail-section-title task-detail-section-title--order-items task-detail-section-title--items-legacy">Items</div>
+                            <p className="order-items-block-hint">Category groups match the classic driver view when menu data is linked.</p>
                           </div>
                           <div className="order-items-by-category">
                             {categoryBuckets.map(({ key, label, items }) => (
-                              <div key={key} className="order-items-category">
-                                <div className="order-items-category-header" role="group" aria-label={label}>
-                                  <span className="order-items-category-header-label">{label}</span>
-                                  <span className="order-items-category-header-count" aria-hidden="true">
-                                    {items.length} {items.length === 1 ? 'item' : 'items'}
-                                  </span>
+                              <div key={key} className="order-items-category order-items-category--legacy">
+                                <div
+                                  className="order-items-category-header order-items-category-header--legacy"
+                                  role="group"
+                                  aria-label={formatOrderItemsCategoryHeader(label)}
+                                >
+                                  {formatOrderItemsCategoryHeader(label)}
                                 </div>
-                                <ul className="order-items-list">
+                                <ul className="order-items-list order-items-list--legacy">
                                   {items.map((item) => {
                                     const qty = Number(item.qty) || 0;
                                     const unitPrice = item.discounted_price != null ? Number(item.discounted_price) : item.normal_price != null ? Number(item.normal_price) : null;
@@ -584,14 +596,19 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
                                     const unitStr = unitPrice != null && !Number.isNaN(unitPrice) ? `₱${unitPrice.toFixed(2)}` : '—';
                                     const subtotalStr = subtotal != null ? `₱${subtotal.toFixed(2)}` : '—';
                                     const lineName = displaySanitized(item.item_name_display || item.item_name) || item.item_name || 'Item';
+                                    const withSize = item.size ? `${lineName} (${displaySanitized(item.size) || item.size})` : lineName;
+                                    const namePart = /[.!?…)]\s*$/.test(withSize.trim()) ? withSize : `${withSize}.`;
+                                    const nameWithStop = `${qty}× ${namePart}`;
                                     return (
-                                      <li key={item.id ?? item._idx} className="order-item-row">
-                                        <div className="order-item-line">
-                                          <span className="order-item-name">{qty}× {lineName}{item.size ? ` (${displaySanitized(item.size) || item.size})` : ''}</span>
-                                          <span className="order-item-line-total">{subtotalStr}</span>
-                                        </div>
-                                        <div className="order-item-unit-price" aria-label="Unit price">
-                                          {unitStr !== '—' ? `${unitStr} each` : unitStr}
+                                      <li key={item.id ?? item._idx} className="order-item-row order-item-row--legacy">
+                                        <div className="order-item-line order-item-line--legacy">
+                                          <div className="order-item-line-text">
+                                            <span className="order-item-name order-item-name--legacy">{nameWithStop}</span>
+                                            {unitStr !== '—' ? (
+                                              <span className="order-item-unit-price order-item-unit-price--legacy" aria-label="Unit price">{unitStr}</span>
+                                            ) : null}
+                                          </div>
+                                          <span className="order-item-line-total order-item-line-total--legacy">{subtotalStr}</span>
                                         </div>
                                         {item.order_notes && (
                                           <div className="order-item-notes">{displaySanitized(item.order_notes) || item.order_notes}</div>

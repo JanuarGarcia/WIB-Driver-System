@@ -64,29 +64,42 @@ function mergeOrderItemCategoryMap(best, rows, itemIdKey, nameKey, seqKey) {
 
 /**
  * Resolve category / subcategory / display names for mt_order_details lines:
- * mt_category_translation, mt_item_relationship_category, mt_item_relationship_subcategory,
- * mt_item_relationship_subcategory_item (parent inheritance), mt_item_translation.
+ * mt_view_item_cat (preferred when present), mt_category_translation, mt_item_relationship_category,
+ * mt_item_relationship_subcategory, mt_item_relationship_subcategory_item, mt_item_translation.
  */
 async function attachOrderDetailCategories(pool, detailRows, merchantId) {
   if (!Array.isArray(detailRows) || detailRows.length === 0) return detailRows;
   const itemIds = [];
   const seen = new Set();
+  const itemTokens = [];
+  const seenTok = new Set();
   for (const r of detailRows) {
     const id = r.item_id ?? r.menu_item_id ?? r.itemId;
-    if (id == null || String(id).trim() === '') continue;
-    if (String(id).trim() === '0') continue;
-    const key = String(id);
-    if (seen.has(key)) continue;
-    seen.add(key);
-    itemIds.push(id);
+    if (id != null && String(id).trim() !== '' && String(id).trim() !== '0') {
+      const key = String(id);
+      if (!seen.has(key)) {
+        seen.add(key);
+        itemIds.push(id);
+      }
+    }
+    const tok = r.item_token ?? r.itemToken;
+    if (tok != null && String(tok).trim() !== '') {
+      const tks = String(tok).trim();
+      if (!seenTok.has(tks)) {
+        seenTok.add(tks);
+        itemTokens.push(tks);
+      }
+    }
   }
-  if (itemIds.length === 0) return detailRows;
+  if (itemIds.length === 0 && itemTokens.length === 0) return detailRows;
 
-  const ph = itemIds.map(() => '?').join(',');
+  const ph = itemIds.length ? itemIds.map(() => '?').join(',') : '';
+  const pht = itemTokens.length ? itemTokens.map(() => '?').join(',') : '';
   const mid = merchantId != null && merchantId !== '' ? Number(merchantId) : null;
   const midOk = mid != null && Number.isFinite(mid);
 
-  const bestCat = new Map();
+  const viewMetaByItemId = new Map();
+  const viewMetaByToken = new Map();
 
   const tryBlock = async (fn) => {
     try {
@@ -97,50 +110,134 @@ async function attachOrderDetailCategories(pool, detailRows, merchantId) {
   };
 
   await tryBlock(async () => {
-    const sql = `SELECT ct.item_id AS tid,
-        COALESCE(NULLIF(TRIM(c.category_name_trans), ''), NULLIF(TRIM(c.category_name), '')) AS resolved_category,
-        COALESCE(c.sequence, 999999) AS cat_sequence
-       FROM mt_category_translation ct
-       LEFT JOIN mt_category c ON c.cat_id = ct.cat_id
-       WHERE ct.item_id IN (${ph})`;
-    if (midOk) {
-      const [rows] = await pool.query(`${sql} AND ct.merchant_id = ? ORDER BY ct.item_id ASC, cat_sequence ASC, ct.id ASC`, [...itemIds, mid]);
-      mergeOrderItemCategoryMap(bestCat, rows, 'tid', 'resolved_category', 'cat_sequence');
+    const parts = [];
+    const params = [];
+    if (itemIds.length) {
+      parts.push(`item_id IN (${ph})`);
+      params.push(...itemIds);
     }
-    const [rowsAll] = await pool.query(`${sql} ORDER BY ct.item_id ASC, cat_sequence ASC, ct.id ASC`, itemIds);
-    mergeOrderItemCategoryMap(bestCat, rowsAll, 'tid', 'resolved_category', 'cat_sequence');
-  });
-
-  await tryBlock(async () => {
-    const sql = `SELECT irc.item_id AS tid,
-        COALESCE(NULLIF(TRIM(c.category_name_trans), ''), NULLIF(TRIM(c.category_name), '')) AS resolved_category,
-        COALESCE(c.sequence, 999999) AS cat_sequence
-       FROM mt_item_relationship_category irc
-       LEFT JOIN mt_category c ON c.cat_id = irc.cat_id
-       WHERE irc.item_id IN (${ph})`;
-    if (midOk) {
-      const [rows] = await pool.query(`${sql} AND irc.merchant_id = ? ORDER BY irc.item_id ASC, cat_sequence ASC, irc.id ASC`, [...itemIds, mid]);
-      mergeOrderItemCategoryMap(bestCat, rows, 'tid', 'resolved_category', 'cat_sequence');
+    if (itemTokens.length) {
+      parts.push(`item_token IN (${pht})`);
+      params.push(...itemTokens);
     }
-    const [rowsAll] = await pool.query(`${sql} ORDER BY irc.item_id ASC, cat_sequence ASC, irc.id ASC`, itemIds);
-    mergeOrderItemCategoryMap(bestCat, rowsAll, 'tid', 'resolved_category', 'cat_sequence');
-  });
-
-  const parentBySub = new Map();
-  await tryBlock(async () => {
-    let sql = `SELECT sub_item_id AS sid, item_id AS pid FROM mt_item_relationship_subcategory_item WHERE sub_item_id IN (${ph})`;
-    const params = [...itemIds];
+    if (!parts.length) return;
+    let sql = `SELECT item_id AS tid, item_token AS vtok,
+        COALESCE(NULLIF(TRIM(category_name_trans), ''), NULLIF(TRIM(category_name), '')) AS resolved_category,
+        COALESCE(category_sequence, 999999) AS cat_sequence,
+        COALESCE(NULLIF(TRIM(item_name_trans), ''), NULLIF(TRIM(item_name), '')) AS resolved_item_name
+       FROM mt_view_item_cat
+       WHERE (${parts.join(' OR ')})`;
     if (midOk) {
       sql += ' AND merchant_id = ?';
       params.push(mid);
     }
-    const [rows] = await pool.query(`${sql} ORDER BY id ASC`, params);
-    for (const r of rows || []) {
-      if (r.sid == null || r.pid == null) continue;
-      const ks = String(r.sid);
-      if (!parentBySub.has(ks)) parentBySub.set(ks, String(r.pid));
+    sql += ' ORDER BY COALESCE(item_id, 0) ASC, COALESCE(item_token, \'\') ASC, COALESCE(category_sequence, 999999) ASC, COALESCE(item_sequence, 999999) ASC';
+    const [rows] = await pool.query(sql, params);
+    for (const row of rows || []) {
+      const cat = row.resolved_category && String(row.resolved_category).trim();
+      const iname = row.resolved_item_name && String(row.resolved_item_name).trim();
+      if (!cat && !iname) continue;
+      if (row.tid != null && String(row.tid).trim() !== '' && String(row.tid).trim() !== '0') {
+        const k = String(row.tid);
+        if (!viewMetaByItemId.has(k)) {
+          viewMetaByItemId.set(k, { category: cat || null, itemName: iname || null });
+        }
+      }
+      const vt = row.vtok != null ? String(row.vtok).trim() : '';
+      if (vt && !viewMetaByToken.has(vt)) {
+        viewMetaByToken.set(vt, { category: cat || null, itemName: iname || null });
+      }
     }
   });
+
+  if (midOk && viewMetaByItemId.size === 0 && viewMetaByToken.size === 0 && (itemIds.length || itemTokens.length)) {
+    await tryBlock(async () => {
+      const parts = [];
+      const params = [];
+      if (itemIds.length) {
+        parts.push(`item_id IN (${ph})`);
+        params.push(...itemIds);
+      }
+      if (itemTokens.length) {
+        parts.push(`item_token IN (${pht})`);
+        params.push(...itemTokens);
+      }
+      if (!parts.length) return;
+      const sql = `SELECT item_id AS tid, item_token AS vtok,
+          COALESCE(NULLIF(TRIM(category_name_trans), ''), NULLIF(TRIM(category_name), '')) AS resolved_category,
+          COALESCE(category_sequence, 999999) AS cat_sequence,
+          COALESCE(NULLIF(TRIM(item_name_trans), ''), NULLIF(TRIM(item_name), '')) AS resolved_item_name
+         FROM mt_view_item_cat
+         WHERE (${parts.join(' OR ')})
+         ORDER BY COALESCE(item_id, 0) ASC, COALESCE(item_token, '') ASC, COALESCE(category_sequence, 999999) ASC, COALESCE(item_sequence, 999999) ASC`;
+      const [rows] = await pool.query(sql, params);
+      for (const row of rows || []) {
+        const cat = row.resolved_category && String(row.resolved_category).trim();
+        const iname = row.resolved_item_name && String(row.resolved_item_name).trim();
+        if (!cat && !iname) continue;
+        if (row.tid != null && String(row.tid).trim() !== '' && String(row.tid).trim() !== '0') {
+          const k = String(row.tid);
+          if (!viewMetaByItemId.has(k)) viewMetaByItemId.set(k, { category: cat || null, itemName: iname || null });
+        }
+        const vt = row.vtok != null ? String(row.vtok).trim() : '';
+        if (vt && !viewMetaByToken.has(vt)) {
+          viewMetaByToken.set(vt, { category: cat || null, itemName: iname || null });
+        }
+      }
+    });
+  }
+
+  const bestCat = new Map();
+
+  if (itemIds.length) {
+    await tryBlock(async () => {
+      const sql = `SELECT ct.item_id AS tid,
+          COALESCE(NULLIF(TRIM(c.category_name_trans), ''), NULLIF(TRIM(c.category_name), '')) AS resolved_category,
+          COALESCE(c.sequence, 999999) AS cat_sequence
+         FROM mt_category_translation ct
+         LEFT JOIN mt_category c ON c.cat_id = ct.cat_id
+         WHERE ct.item_id IN (${ph})`;
+      if (midOk) {
+        const [rows] = await pool.query(`${sql} AND ct.merchant_id = ? ORDER BY ct.item_id ASC, cat_sequence ASC, ct.id ASC`, [...itemIds, mid]);
+        mergeOrderItemCategoryMap(bestCat, rows, 'tid', 'resolved_category', 'cat_sequence');
+      }
+      const [rowsAll] = await pool.query(`${sql} ORDER BY ct.item_id ASC, cat_sequence ASC, ct.id ASC`, itemIds);
+      mergeOrderItemCategoryMap(bestCat, rowsAll, 'tid', 'resolved_category', 'cat_sequence');
+    });
+
+    await tryBlock(async () => {
+      const sql = `SELECT irc.item_id AS tid,
+          COALESCE(NULLIF(TRIM(c.category_name_trans), ''), NULLIF(TRIM(c.category_name), '')) AS resolved_category,
+          COALESCE(c.sequence, 999999) AS cat_sequence
+         FROM mt_item_relationship_category irc
+         LEFT JOIN mt_category c ON c.cat_id = irc.cat_id
+         WHERE irc.item_id IN (${ph})`;
+      if (midOk) {
+        const [rows] = await pool.query(`${sql} AND irc.merchant_id = ? ORDER BY irc.item_id ASC, cat_sequence ASC, irc.id ASC`, [...itemIds, mid]);
+        mergeOrderItemCategoryMap(bestCat, rows, 'tid', 'resolved_category', 'cat_sequence');
+      }
+      const [rowsAll] = await pool.query(`${sql} ORDER BY irc.item_id ASC, cat_sequence ASC, irc.id ASC`, itemIds);
+      mergeOrderItemCategoryMap(bestCat, rowsAll, 'tid', 'resolved_category', 'cat_sequence');
+    });
+  }
+
+  const parentBySub = new Map();
+  if (itemIds.length) {
+    await tryBlock(async () => {
+      let sql = `SELECT sub_item_id AS sid, item_id AS pid FROM mt_item_relationship_subcategory_item WHERE sub_item_id IN (${ph})`;
+      const params = [...itemIds];
+      if (midOk) {
+        sql += ' AND merchant_id = ?';
+        params.push(mid);
+      }
+      const [rows] = await pool.query(`${sql} ORDER BY id ASC`, params);
+      for (const r of rows || []) {
+        if (r.sid == null || r.pid == null) continue;
+        const ks = String(r.sid);
+        if (!parentBySub.has(ks)) parentBySub.set(ks, String(r.pid));
+      }
+    });
+  }
 
   for (let pass = 0; pass < Math.min(itemIds.length, 8); pass += 1) {
     let changed = false;
@@ -172,20 +269,22 @@ async function attachOrderDetailCategories(pool, detailRows, merchantId) {
     }
   };
 
-  await tryBlock(async () => {
-    const sql = `SELECT irs.item_id AS tid,
-        COALESCE(NULLIF(TRIM(s.subcategory_name), ''), NULLIF(TRIM(s.sub_cat_name), ''), NULLIF(TRIM(s.name), '')) AS sub_name,
-        COALESCE(irs.id, 0) AS sub_row_id
-       FROM mt_item_relationship_subcategory irs
-       LEFT JOIN mt_subcategory s ON s.subcat_id = irs.subcat_id
-       WHERE irs.item_id IN (${ph})`;
-    const params = midOk ? [...itemIds, mid] : [...itemIds];
-    const [rows] = await pool.query(
-      midOk ? `${sql} AND irs.merchant_id = ? ORDER BY irs.item_id ASC, irs.id ASC` : `${sql} ORDER BY irs.item_id ASC, irs.id ASC`,
-      params
-    );
-    mergeSub(rows, 'sub_name', 'sub_row_id');
-  });
+  if (itemIds.length) {
+    await tryBlock(async () => {
+      const sql = `SELECT irs.item_id AS tid,
+          COALESCE(NULLIF(TRIM(s.subcategory_name), ''), NULLIF(TRIM(s.sub_cat_name), ''), NULLIF(TRIM(s.name), '')) AS sub_name,
+          COALESCE(irs.id, 0) AS sub_row_id
+         FROM mt_item_relationship_subcategory irs
+         LEFT JOIN mt_subcategory s ON s.subcat_id = irs.subcat_id
+         WHERE irs.item_id IN (${ph})`;
+      const params = midOk ? [...itemIds, mid] : [...itemIds];
+      const [rows] = await pool.query(
+        midOk ? `${sql} AND irs.merchant_id = ? ORDER BY irs.item_id ASC, irs.id ASC` : `${sql} ORDER BY irs.item_id ASC, irs.id ASC`,
+        params
+      );
+      mergeSub(rows, 'sub_name', 'sub_row_id');
+    });
+  }
 
   for (let pass = 0; pass < Math.min(itemIds.length, 8); pass += 1) {
     let changed = false;
@@ -204,34 +303,49 @@ async function attachOrderDetailCategories(pool, detailRows, merchantId) {
   }
 
   const nameTrans = new Map();
-  await tryBlock(async () => {
-    const [trows] = await pool.query(
-      `SELECT item_id AS tid, item_name AS tname, language AS lang
-       FROM mt_item_translation
-       WHERE item_id IN (${ph})
-       ORDER BY item_id ASC,
-         CASE WHEN LOWER(TRIM(COALESCE(language,''))) = 'en' THEN 0 ELSE 1 END,
-         id ASC`,
-      itemIds
-    );
-    for (const r of trows || []) {
-      const k = String(r.tid);
-      if (!r.tname || !String(r.tname).trim()) continue;
-      if (!nameTrans.has(k)) nameTrans.set(k, String(r.tname).trim());
-    }
-  });
+  if (itemIds.length) {
+    await tryBlock(async () => {
+      const [trows] = await pool.query(
+        `SELECT item_id AS tid, item_name AS tname, language AS lang
+         FROM mt_item_translation
+         WHERE item_id IN (${ph})
+         ORDER BY item_id ASC,
+           CASE WHEN LOWER(TRIM(COALESCE(language,''))) = 'en' THEN 0 ELSE 1 END,
+           id ASC`,
+        itemIds
+      );
+      for (const r of trows || []) {
+        const k = String(r.tid);
+        if (!r.tname || !String(r.tname).trim()) continue;
+        if (!nameTrans.has(k)) nameTrans.set(k, String(r.tname).trim());
+      }
+    });
+  }
+
+  /* mt_view_item_cat wins over relationship joins when it supplies a category */
+  for (const [k, meta] of viewMetaByItemId) {
+    if (meta.category) bestCat.set(k, { name: meta.category, seq: -999999 });
+  }
 
   return detailRows.map((r) => {
     const idVal = r.item_id ?? r.menu_item_id ?? r.itemId;
-    if (idVal == null || String(idVal).trim() === '' || String(idVal).trim() === '0') return { ...r };
-    const k = String(idVal);
+    const tok = (r.item_token ?? r.itemToken ?? '').toString().trim();
+    const hasNumericId = idVal != null && String(idVal).trim() !== '' && String(idVal).trim() !== '0';
+    const k = hasNumericId ? String(idVal) : null;
+    const vm = (k && viewMetaByItemId.get(k)) || (tok ? viewMetaByToken.get(tok) : null);
+
+    if (!hasNumericId && !vm) return { ...r };
+
     const existingCat = r.category_name != null && String(r.category_name).trim() !== '' ? String(r.category_name).trim() : '';
-    const cat = existingCat || bestCat.get(k)?.name || r.category_name;
-    const sub = bestSub.get(k)?.name;
-    const tname = nameTrans.get(k);
+    const cat = (vm?.category && String(vm.category).trim())
+      || existingCat
+      || (k ? bestCat.get(k)?.name : null)
+      || r.category_name;
+    const sub = k ? bestSub.get(k)?.name : undefined;
+    const tname = (vm?.itemName && String(vm.itemName).trim()) || (k ? nameTrans.get(k) : null);
     const out = { ...r, category_name: cat || r.category_name };
     if (sub && String(sub).trim()) out.subcategory_name = String(sub).trim();
-    if (tname) out.item_name_display = tname;
+    if (tname) out.item_name_display = String(tname).trim();
     return out;
   });
 }
