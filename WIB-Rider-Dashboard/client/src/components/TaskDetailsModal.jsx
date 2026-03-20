@@ -18,7 +18,16 @@ function displaySanitizedOrDash(raw) {
   return v || '—';
 }
 
-/** Order summary: tip from mt_order.cart_tip_percentage + cart_tip_value (replaces legacy delivery line). */
+/** Title-case category heading for order line groups (e.g. mt_category.category_name). */
+function formatCategoryTitle(str) {
+  const t = (str || '').trim();
+  if (!t) return 'Other items';
+  const cleaned = displaySanitized(t) || t;
+  if (!cleaned.trim()) return 'Other items';
+  return cleaned.trim().replace(/\w\S*/g, (txt) => txt.charAt(0).toUpperCase() + txt.slice(1).toLowerCase());
+}
+
+/** Order summary row: mt_order.cart_tip_percentage + cart_tip_value. */
 function formatOrderTipRow(order) {
   if (!order || typeof order !== 'object') return { label: 'Tips', display: '—' };
   const valRaw = order.cart_tip_value;
@@ -518,31 +527,39 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
                     </div>
                     {orderDetails.length > 0 && (() => {
                       const details = orderDetails.filter(Boolean);
-                      const getCategory = (item) => {
-                        const raw = (item.category_name || item.category || item.item_category || '').toString().trim();
-                        if (!raw) return 'Items';
-                        const cleaned = displaySanitized(raw) || raw;
-                        return cleaned.toUpperCase();
-                      };
-                      const groups = {};
-                      const categoryOrder = [];
+                      const indexByKey = new Map();
+                      const categoryBuckets = [];
                       details.forEach((item, i) => {
-                        const cat = getCategory(item);
-                        if (!groups[cat]) {
-                          groups[cat] = [];
-                          categoryOrder.push(cat);
+                        const raw = (item.category_name || item.category || item.item_category || '').toString().trim();
+                        const cleaned = raw ? (displaySanitized(raw) || raw).trim() : '';
+                        const normKey = !cleaned ? '__other__' : cleaned.toLowerCase();
+                        const label = !cleaned ? 'Other items' : formatCategoryTitle(cleaned);
+                        let idx = indexByKey.get(normKey);
+                        if (idx === undefined) {
+                          idx = categoryBuckets.length;
+                          indexByKey.set(normKey, idx);
+                          categoryBuckets.push({ key: normKey, label, items: [] });
                         }
-                        groups[cat].push({ ...item, _idx: i });
+                        categoryBuckets[idx].items.push({ ...item, _idx: i });
+                      });
+                      categoryBuckets.sort((a, b) => {
+                        if (a.key === '__other__') return 1;
+                        if (b.key === '__other__') return -1;
+                        return a.label.localeCompare(b.label, undefined, { sensitivity: 'base' });
                       });
                       return (
                         <div className="task-detail-section order-items-block">
-                          <div className="task-detail-section-title">Ordered items</div>
+                          <div className="task-detail-section-title task-detail-section-title--order-items">Ordered items</div>
+                          <p className="order-items-block-hint">Grouped by menu category when available.</p>
                           <div className="order-items-by-category">
-                            {categoryOrder.map((cat) => (
-                              <div key={cat} className="order-items-category">
-                                <div className="order-items-category-header">{cat}</div>
+                            {categoryBuckets.map(({ key, label, items }) => (
+                              <div key={key} className="order-items-category">
+                                <div className="order-items-category-header" role="heading" aria-level={3}>
+                                  <span className="order-items-category-header-label">{label}</span>
+                                  <span className="order-items-category-header-count">{items.length} {items.length === 1 ? 'item' : 'items'}</span>
+                                </div>
                                 <ul className="order-items-list">
-                                  {(groups[cat] || []).map((item) => {
+                                  {items.map((item) => {
                                     const qty = Number(item.qty) || 0;
                                     const unitPrice = item.discounted_price != null ? Number(item.discounted_price) : item.normal_price != null ? Number(item.normal_price) : null;
                                     const subtotal = unitPrice != null && !Number.isNaN(unitPrice) ? qty * unitPrice : null;
@@ -551,10 +568,12 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
                                     return (
                                       <li key={item.id ?? item._idx} className="order-item-row">
                                         <div className="order-item-line">
-                                          <span className="order-item-name">{qty}x {displaySanitized(item.item_name) || item.item_name || 'Item'}{item.size ? ` (${displaySanitized(item.size) || item.size})` : ''}</span>
+                                          <span className="order-item-name">{qty}× {displaySanitized(item.item_name) || item.item_name || 'Item'}{item.size ? ` (${displaySanitized(item.size) || item.size})` : ''}</span>
                                           <span className="order-item-line-total">{subtotalStr}</span>
                                         </div>
-                                        <div className="order-item-unit-price">{unitStr}</div>
+                                        <div className="order-item-unit-price" aria-label="Unit price">
+                                          {unitStr !== '—' ? `${unitStr} each` : unitStr}
+                                        </div>
                                         {item.order_notes && (
                                           <div className="order-item-notes">{displaySanitized(item.order_notes) || item.order_notes}</div>
                                         )}

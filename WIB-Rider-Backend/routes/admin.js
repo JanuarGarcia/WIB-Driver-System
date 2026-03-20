@@ -45,6 +45,78 @@ const uploadProfile = multer({
   },
 });
 
+/**
+ * Resolve menu category labels (e.g. "Pizza") for order lines via mt_category_translation + mt_category.
+ * Sets category_name on each row when missing. Fails soft if tables/columns differ.
+ */
+async function attachOrderDetailCategories(pool, detailRows, merchantId) {
+  if (!Array.isArray(detailRows) || detailRows.length === 0) return detailRows;
+  const itemIds = [];
+  const seen = new Set();
+  for (const r of detailRows) {
+    const id = r.item_id;
+    if (id == null || String(id).trim() === '') continue;
+    const key = String(id);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    itemIds.push(id);
+  }
+  if (itemIds.length === 0) return detailRows;
+
+  const placeholders = itemIds.map(() => '?').join(',');
+  const sqlBase = `SELECT ct.item_id AS ct_item_id,
+      COALESCE(NULLIF(TRIM(c.category_name_trans), ''), NULLIF(TRIM(c.category_name), '')) AS resolved_category,
+      COALESCE(c.sequence, 999999) AS cat_sequence,
+      ct.id AS ct_row_id
+     FROM mt_category_translation ct
+     LEFT JOIN mt_category c ON c.cat_id = ct.cat_id
+     WHERE ct.item_id IN (${placeholders})`;
+
+  const runQuery = async (extraWhere, params) => {
+    const [rows] = await pool.query(
+      `${sqlBase}${extraWhere} ORDER BY ct.item_id ASC, cat_sequence ASC, ct_row_id ASC`,
+      params
+    );
+    return rows || [];
+  };
+
+  try {
+    const mid = merchantId != null && merchantId !== '' ? Number(merchantId) : null;
+    let rows = [];
+    if (mid != null && Number.isFinite(mid)) {
+      rows = await runQuery(' AND ct.merchant_id = ?', [...itemIds, mid]);
+    }
+    if (!rows.length && mid != null && Number.isFinite(mid)) {
+      rows = await runQuery('', itemIds);
+    }
+    if (!rows.length && (mid == null || !Number.isFinite(mid))) {
+      rows = await runQuery('', itemIds);
+    }
+
+    const best = new Map();
+    for (const row of rows) {
+      const name = row.resolved_category;
+      if (!name || !String(name).trim()) continue;
+      const k = String(row.ct_item_id);
+      if (!best.has(k)) best.set(k, String(name).trim());
+    }
+
+    return detailRows.map((r) => {
+      const resolved = best.get(String(r.item_id));
+      const existing = r.category_name != null && String(r.category_name).trim() !== '' ? String(r.category_name).trim() : '';
+      return {
+        ...r,
+        category_name: existing || resolved || r.category_name,
+      };
+    });
+  } catch (e) {
+    if (e.code === 'ER_NO_SUCH_TABLE' || e.code === 'ER_BAD_FIELD_ERROR') {
+      return detailRows;
+    }
+    throw e;
+  }
+}
+
 /** Validate password against stored hash (bcrypt, md5, or plain). */
 async function checkPassword(password, stored) {
   const s = (stored || '').trim();
@@ -983,8 +1055,8 @@ router.get('/tasks/:id', async (req, res) => {
       result.order = orderRows.length ? orderRows[0] : null;
       if (result.order) {
         const [detailRows] = await pool.query('SELECT * FROM mt_order_details WHERE order_id = ? ORDER BY id', [orderId]);
-        result.order_details = detailRows || [];
         const merchantId = result.order.merchant_id;
+        result.order_details = await attachOrderDetailCategories(pool, detailRows || [], merchantId);
         if (merchantId) {
           const [merchantRows] = await pool.query('SELECT merchant_id, restaurant_name, restaurant_phone, contact_name, contact_phone, contact_email, street, city, state, post_code FROM mt_merchant WHERE merchant_id = ? LIMIT 1', [merchantId]);
           result.merchant = merchantRows.length ? merchantRows[0] : null;
