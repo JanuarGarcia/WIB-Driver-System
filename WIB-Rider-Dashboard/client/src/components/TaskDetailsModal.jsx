@@ -656,7 +656,7 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
                   </div>
                 )}
               </div>
-              <div className="modal-footer-actions">
+              <div className="modal-footer-actions task-details-footer-actions">
                 {(String(task.status || '').toLowerCase() === 'unassigned') && (
                   <>
                     <button type="button" className="btn btn-primary" onClick={handleAssignDriver} disabled={actionLoading}>Assign driver</button>
