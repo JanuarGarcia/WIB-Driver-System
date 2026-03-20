@@ -88,12 +88,6 @@ export default function DriverDetailsModal({
             <h2 id="driver-details-modal-title" className="agent-detail-modal-title">
               Driver Details
             </h2>
-            <p className="agent-detail-modal-subtitle">
-              {summaryDriver?.full_name ||
-                summaryDriver?.username ||
-                state.driver?.full_name ||
-                `Driver #${driverId}`}
-            </p>
           </div>
           <button type="button" className="agent-detail-modal-close" aria-label="Close" onClick={onClose}>
             ×

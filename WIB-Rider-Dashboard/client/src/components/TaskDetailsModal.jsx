@@ -506,9 +506,13 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
                           <div className="task-detail-row">
                             <span className="task-detail-label">Convenience</span>
                             <span className="task-detail-value">
-                              {order.convenience_fee != null && order.convenience_fee !== '' && !Number.isNaN(Number(order.convenience_fee))
-                                ? `₱${Number(order.convenience_fee).toFixed(2)}`
-                                : '—'}
+                              {(() => {
+                                const raw = order.packaging != null && String(order.packaging).trim() !== ''
+                                  ? order.packaging
+                                  : order.convenience_fee;
+                                const n = raw != null && String(raw).trim() !== '' ? Number(raw) : NaN;
+                                return !Number.isNaN(n) ? `₱${n.toFixed(2)}` : '—';
+                              })()}
                             </span>
                           </div>
                           <div className="task-detail-row">

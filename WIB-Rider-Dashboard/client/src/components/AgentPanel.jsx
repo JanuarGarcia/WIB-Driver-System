@@ -654,6 +654,7 @@ export default function AgentPanel({ onOpenTaskDetails }) {
 
       {selectedDriver && (
         <DriverDetailsModal
+          size="wide"
           driverId={selectedDriver.id ?? selectedDriver.driver_id}
           summaryDriver={selectedDriver}
           onClose={() => setSelectedDriver(null)}
