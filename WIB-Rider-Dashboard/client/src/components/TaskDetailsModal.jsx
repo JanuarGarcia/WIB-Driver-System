@@ -21,10 +21,27 @@ function displaySanitizedOrDash(raw) {
 /** Title-case category heading for order line groups (e.g. mt_category.category_name). */
 function formatCategoryTitle(str) {
   const t = (str || '').trim();
-  if (!t) return 'Other items';
+  if (!t) return '';
   const cleaned = displaySanitized(t) || t;
-  if (!cleaned.trim()) return 'Other items';
+  if (!cleaned.trim()) return '';
   return cleaned.trim().replace(/\w\S*/g, (txt) => txt.charAt(0).toUpperCase() + txt.slice(1).toLowerCase());
+}
+
+/** Group key + section label from category, subcategory, and fallbacks (API may set subcategory_name). */
+function orderItemGroupMeta(item) {
+  const catRaw = (item.category_name || item.category || item.item_category || '').toString().trim();
+  const subRaw = (item.subcategory_name || '').toString().trim();
+  const cat = catRaw ? (displaySanitized(catRaw) || catRaw).trim() : '';
+  const sub = subRaw ? (displaySanitized(subRaw) || subRaw).trim() : '';
+  if (!cat && !sub) return { key: '__other__', label: 'Other items' };
+  const catLbl = cat ? formatCategoryTitle(cat) : '';
+  const subLbl = sub ? formatCategoryTitle(sub) : '';
+  if (!cat && sub) return { key: `__sub__|${sub.toLowerCase()}`, label: subLbl || 'Other items' };
+  if (cat && !sub) return { key: cat.toLowerCase(), label: catLbl || 'Other items' };
+  return {
+    key: `${cat.toLowerCase()}|||${sub.toLowerCase()}`,
+    label: `${catLbl} — ${subLbl}`,
+  };
 }
 
 /** Order summary row: mt_order.cart_tip_percentage + cart_tip_value. */
@@ -530,10 +547,7 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
                       const indexByKey = new Map();
                       const categoryBuckets = [];
                       details.forEach((item, i) => {
-                        const raw = (item.category_name || item.category || item.item_category || '').toString().trim();
-                        const cleaned = raw ? (displaySanitized(raw) || raw).trim() : '';
-                        const normKey = !cleaned ? '__other__' : cleaned.toLowerCase();
-                        const label = !cleaned ? 'Other items' : formatCategoryTitle(cleaned);
+                        const { key: normKey, label } = orderItemGroupMeta(item);
                         let idx = indexByKey.get(normKey);
                         if (idx === undefined) {
                           idx = categoryBuckets.length;
@@ -548,15 +562,19 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
                         return a.label.localeCompare(b.label, undefined, { sensitivity: 'base' });
                       });
                       return (
-                        <div className="task-detail-section order-items-block">
-                          <div className="task-detail-section-title task-detail-section-title--order-items">Ordered items</div>
-                          <p className="order-items-block-hint">Grouped by menu category when available.</p>
+                        <div className="task-detail-section order-items-block order-items-block--modal">
+                          <div className="order-items-block-heading">
+                            <div className="task-detail-section-title task-detail-section-title--order-items">Ordered items</div>
+                            <p className="order-items-block-hint">Grouped by menu category and subcategory when linked in the database.</p>
+                          </div>
                           <div className="order-items-by-category">
                             {categoryBuckets.map(({ key, label, items }) => (
                               <div key={key} className="order-items-category">
-                                <div className="order-items-category-header" role="heading" aria-level={3}>
+                                <div className="order-items-category-header" role="group" aria-label={label}>
                                   <span className="order-items-category-header-label">{label}</span>
-                                  <span className="order-items-category-header-count">{items.length} {items.length === 1 ? 'item' : 'items'}</span>
+                                  <span className="order-items-category-header-count" aria-hidden="true">
+                                    {items.length} {items.length === 1 ? 'item' : 'items'}
+                                  </span>
                                 </div>
                                 <ul className="order-items-list">
                                   {items.map((item) => {
@@ -565,10 +583,11 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
                                     const subtotal = unitPrice != null && !Number.isNaN(unitPrice) ? qty * unitPrice : null;
                                     const unitStr = unitPrice != null && !Number.isNaN(unitPrice) ? `₱${unitPrice.toFixed(2)}` : '—';
                                     const subtotalStr = subtotal != null ? `₱${subtotal.toFixed(2)}` : '—';
+                                    const lineName = displaySanitized(item.item_name_display || item.item_name) || item.item_name || 'Item';
                                     return (
                                       <li key={item.id ?? item._idx} className="order-item-row">
                                         <div className="order-item-line">
-                                          <span className="order-item-name">{qty}× {displaySanitized(item.item_name) || item.item_name || 'Item'}{item.size ? ` (${displaySanitized(item.size) || item.size})` : ''}</span>
+                                          <span className="order-item-name">{qty}× {lineName}{item.size ? ` (${displaySanitized(item.size) || item.size})` : ''}</span>
                                           <span className="order-item-line-total">{subtotalStr}</span>
                                         </div>
                                         <div className="order-item-unit-price" aria-label="Unit price">
