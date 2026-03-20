@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { api, formatDate, statusDisplayClass } from '../api';
-import { sanitizeLocationDisplayName } from '../utils/displayText';
+import { sanitizeLocationDisplayName, pickLocalizedMenuString } from '../utils/displayText';
 import { getAdvanceOrderLines } from '../utils/advanceOrder';
 
 /** Strip bogus \\ / escapes for read-only UI; hide literal "undefined"/"null" strings from API. */
@@ -31,8 +31,10 @@ function formatCategoryTitle(str) {
 function orderItemGroupMeta(item) {
   const catRaw = (item.category_name || item.category || item.item_category || '').toString().trim();
   const subRaw = (item.subcategory_name || '').toString().trim();
-  const cat = catRaw ? (displaySanitized(catRaw) || catRaw).trim() : '';
-  const sub = subRaw ? (displaySanitized(subRaw) || subRaw).trim() : '';
+  const catPick = pickLocalizedMenuString(catRaw);
+  const subPick = pickLocalizedMenuString(subRaw);
+  const cat = catPick ? (displaySanitized(catPick) || catPick).trim() : '';
+  const sub = subPick ? (displaySanitized(subPick) || subPick).trim() : '';
   if (!cat && !sub) return { key: '__other__', label: 'Other items' };
   const catLbl = cat ? formatCategoryTitle(cat) : '';
   const subLbl = sub ? formatCategoryTitle(sub) : '';
@@ -46,9 +48,11 @@ function orderItemGroupMeta(item) {
 
 /** Uppercase category line inside ordered-items card (matches driver-style receipt). */
 function formatOrderRefCategoryHeader(label) {
-  if (!label || !String(label).trim()) return 'ITEMS';
-  const t = String(label).trim();
+  const picked = pickLocalizedMenuString(label);
+  const t = (picked || String(label || '').trim()).trim();
+  if (!t) return 'ITEMS';
   if (t.toLowerCase() === 'other items') return 'ITEMS';
+  if (/^\s*\{/.test(t) && t.includes('"')) return 'ITEMS';
   return t
     .split(' — ')
     .map((part) => part.trim().toUpperCase())
@@ -584,9 +588,13 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
                       });
                       return (
                         <div className="task-detail-section order-ref-ordered-section">
-                          <div className="order-ref-cards-stack">
-                            {categoryBuckets.map(({ key, label, items }) => (
-                              <div key={key} className="order-ref-card" role="region" aria-label={`Ordered items: ${label}`}>
+                          <div className="order-ref-section-heading">Ordered items</div>
+                          <div className="order-ref-card order-ref-card--panel" role="region" aria-label="Ordered items">
+                            {categoryBuckets.map(({ key, label, items }, bucketIdx) => (
+                              <div
+                                key={key}
+                                className={`order-ref-category-block${bucketIdx > 0 ? ' order-ref-category-block--split' : ''}`}
+                              >
                                 <div className="order-ref-card-category">{formatOrderRefCategoryHeader(label)}</div>
                                 <ul className="order-ref-items-list">
                                   {items.map((item) => {
@@ -595,8 +603,17 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
                                     const subtotal = unitPrice != null && !Number.isNaN(unitPrice) ? qty * unitPrice : null;
                                     const unitStr = unitPrice != null && !Number.isNaN(unitPrice) ? `₱${unitPrice.toFixed(2)}` : '—';
                                     const subtotalStr = subtotal != null ? `₱${subtotal.toFixed(2)}` : '—';
-                                    const lineName = displaySanitized(item.item_name_display || item.item_name) || item.item_name || 'Item';
-                                    const sizePart = item.size ? ` (${displaySanitized(item.size) || item.size})` : '';
+                                    const nameRaw = item.item_name_display || item.item_name;
+                                    const namePick = pickLocalizedMenuString(nameRaw);
+                                    const rawStr = nameRaw != null ? String(nameRaw).trim() : '';
+                                    const lineName = (namePick && (displaySanitized(namePick) || namePick))
+                                      || displaySanitized(nameRaw)
+                                      || (rawStr.startsWith('{') && rawStr.includes('"') ? 'Item' : rawStr)
+                                      || 'Item';
+                                    const sizePick = item.size ? pickLocalizedMenuString(item.size) : '';
+                                    const sizePart = item.size
+                                      ? ` (${displaySanitized(sizePick || item.size) || sizePick || item.size})`
+                                      : '';
                                     return (
                                       <li key={item.id ?? item._idx} className="order-ref-item-row">
                                         <div className="order-ref-item-line">
@@ -632,8 +649,8 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
                       const tipRow = formatOrderTipRow(order);
                       return (
                         <div className="task-detail-section order-summary-block order-summary-block--ref">
-                          <div className="order-ref-card order-summary-ref-card">
-                            <div className="order-summary-ref-heading">Order summary</div>
+                          <div className="order-ref-section-heading">Order summary</div>
+                          <div className="order-ref-card order-ref-card--panel order-summary-ref-panel" role="region" aria-label="Order summary">
                             <div className="order-summary-ref-grid">
                               <div className="order-summary-ref-cell">
                                 <span className="order-summary-ref-label">SUB TOTAL</span>
@@ -648,7 +665,7 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
                                 <span className="order-summary-ref-value">{tipRow.display}</span>
                               </div>
                               <div className="order-summary-ref-cell">
-                                <span className="order-summary-ref-label">TOTAL</span>
+                                <span className="order-summary-ref-label order-summary-ref-label--total">TOTAL</span>
                                 <span className="order-summary-ref-value order-summary-ref-value--total">{order?.total_w_tax != null ? `₱${Number(order.total_w_tax).toFixed(2)}` : '—'}</span>
                               </div>
                             </div>

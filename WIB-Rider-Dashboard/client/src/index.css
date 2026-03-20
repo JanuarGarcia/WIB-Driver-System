@@ -5062,10 +5062,12 @@ tr:hover { background: var(--bg-hover) !important; }
   padding-top: 0;
   border-top: none;
 }
-.order-ref-cards-stack {
-  display: flex;
-  flex-direction: column;
-  gap: 0.85rem;
+.order-ref-section-heading {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text-dark);
+  margin: 0 0 0.5rem;
+  letter-spacing: 0.02em;
 }
 .order-ref-card {
   border: 1px solid var(--border-soft);
@@ -5074,10 +5076,18 @@ tr:hover { background: var(--bg-hover) !important; }
   padding: 0.85rem 1rem 0.65rem;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
 }
+.order-ref-card--panel {
+  padding: 0.7rem 1rem 0.5rem;
+}
 [data-theme="dark"] .order-ref-card {
   background: var(--bg-surface-1, rgba(0, 0, 0, 0.22));
   border-color: var(--border-medium);
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
+}
+.order-ref-category-block--split {
+  margin-top: 0.6rem;
+  padding-top: 0.6rem;
+  border-top: 1px solid var(--border-soft);
 }
 .order-ref-card-category {
   font-size: 0.8125rem;
@@ -5085,9 +5095,13 @@ tr:hover { background: var(--bg-hover) !important; }
   letter-spacing: 0.07em;
   text-transform: uppercase;
   color: var(--text-dark);
-  margin: 0 0 0.65rem;
-  padding-bottom: 0.5rem;
+  margin: 0 0 0.55rem;
+  padding-bottom: 0.45rem;
   border-bottom: 1px solid var(--border-soft);
+}
+[data-theme="dark"] .order-ref-card-category {
+  color: var(--color-primary);
+  border-bottom-color: var(--border-medium);
 }
 .order-ref-items-list {
   margin: 0;
@@ -5143,14 +5157,8 @@ tr:hover { background: var(--bg-hover) !important; }
   padding-top: 0.35rem;
   margin-top: 0.85rem;
 }
-.order-summary-ref-card {
-  padding: 0.9rem 1rem 0.85rem;
-}
-.order-summary-ref-heading {
-  font-size: 0.95rem;
-  font-weight: 600;
-  color: var(--text-dark);
-  margin: 0 0 0.75rem;
+.order-summary-ref-panel {
+  padding: 0.8rem 1rem 0.75rem;
 }
 .order-summary-ref-grid {
   display: grid;
@@ -5179,6 +5187,7 @@ tr:hover { background: var(--bg-hover) !important; }
 .order-summary-ref-value--total {
   font-weight: 700;
 }
+[data-theme="dark"] .order-summary-ref-label--total,
 [data-theme="dark"] .order-summary-ref-value--total {
   color: var(--color-primary);
 }
