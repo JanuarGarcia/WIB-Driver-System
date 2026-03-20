@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { api, statusClass, statusLabel } from '../api';
 import { sanitizeLocationDisplayName } from '../utils/displayText';
+import { getAdvanceOrderLines } from '../utils/advanceOrder';
 import { useTableAutoRefresh } from '../hooks/useTableAutoRefresh';
 
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
@@ -557,6 +558,7 @@ export default function TaskPanel({ onOpenTaskDetails }) {
               const isCompleted = ['completed', 'delivered', 'successful'].includes(statusNorm);
               const isCritical = taskCriticalEnabled && isUnassigned && minsWaiting !== null && minsWaiting >= taskCriticalMinutes;
               const driverName = (t.driver_name || '').trim();
+              const advanceLines = getAdvanceOrderLines(t, t.date_created);
               return (
                 <li key={t.task_id} className={`task-card-v2${isCritical ? ' task-card-v2-critical' : ''}`}>
                   <div className="task-card-v2-top">
@@ -611,6 +613,14 @@ export default function TaskPanel({ onOpenTaskDetails }) {
                       })()}
                     </div>
                   </div>
+                  {advanceLines && (
+                    <div className="task-card-v2-advance" role="status" aria-label="Advance order schedule">
+                      <span className="task-card-v2-advance-line">{advanceLines.deliveryLine}</span>
+                      {advanceLines.orderedLine ? (
+                        <span className="task-card-v2-advance-line">{advanceLines.orderedLine}</span>
+                      ) : null}
+                    </div>
+                  )}
                   {isUnassigned && waitingMins && (
                     <div className="task-card-v2-waiting">
                       <span className="task-card-v2-icon" aria-hidden="true">

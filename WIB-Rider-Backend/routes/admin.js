@@ -1171,7 +1171,11 @@ router.get('/tasks', async (req, res) => {
   const { date, status } = req.query;
   let sql = `SELECT t.*, CONCAT(COALESCE(d.first_name,''), ' ', COALESCE(d.last_name,'')) AS driver_name,
     d.location_lat AS driver_lat, d.location_lng AS driver_lng,
-    COALESCE(m.restaurant_name, m2.restaurant_name) AS restaurant_name
+    COALESCE(m.restaurant_name, m2.restaurant_name) AS restaurant_name,
+    o.status AS order_status,
+    o.delivery_time AS order_delivery_time,
+    o.delivery_date AS order_delivery_date,
+    o.date_created AS order_placed_at
     FROM mt_driver_task t
     LEFT JOIN mt_driver d ON t.driver_id = d.driver_id
     LEFT JOIN mt_order o ON t.order_id = o.order_id

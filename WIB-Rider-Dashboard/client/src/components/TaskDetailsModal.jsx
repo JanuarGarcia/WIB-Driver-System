@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { api, formatDate, statusDisplayClass } from '../api';
 import { sanitizeLocationDisplayName } from '../utils/displayText';
+import { getAdvanceOrderLines } from '../utils/advanceOrder';
 
 /** Strip bogus \\ / escapes for read-only UI; hide literal "undefined"/"null" strings from API. */
 function displaySanitized(raw) {
@@ -308,6 +309,7 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
   const completeBefore = order?.delivery_date && order?.delivery_time
     ? `${formatDate(order.delivery_date)} ${String(order.delivery_time).slice(0, 5)}`
     : formatDate(task?.delivery_date);
+  const advanceLinesModal = order ? getAdvanceOrderLines(order, task?.date_created) : null;
 
   return (
     <div className={`modal-backdrop task-details-backdrop ${editOpen ? 'task-details-backdrop-edit-open' : ''}`} onClick={() => !loading && !editOpen && handleClose()}>
@@ -336,6 +338,17 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
               <div className="modal-body">
                 {tab === 'details' && (
                   <div className="task-details-content">
+                    {advanceLinesModal && (
+                      <div className="task-detail-advance-banner" role="status">
+                        <div className="task-detail-advance-banner-title">Advance order</div>
+                        <div className="task-detail-advance-banner-line">{advanceLinesModal.deliveryLine}</div>
+                        {advanceLinesModal.orderedLine ? (
+                          <div className="task-detail-advance-banner-line task-detail-advance-banner-line--secondary">
+                            {advanceLinesModal.orderedLine}
+                          </div>
+                        ) : null}
+                      </div>
+                    )}
                     <div className="task-detail-section task-detail-section-split">
                       <div className="task-detail-col">
                         <div className="task-detail-row task-detail-row-status">

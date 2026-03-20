@@ -4,6 +4,7 @@ import { api, statusClass, statusLabel } from '../api';
 import DriverDetailsModal from './DriverDetailsModal';
 import { useTeamFilter } from '../context/TeamFilterContext';
 import { sanitizeLocationDisplayName } from '../utils/displayText';
+import { getAdvanceOrderLines } from '../utils/advanceOrder';
 
 const TABS = ['active', 'offline', 'total'];
 const AGENT_REFRESH_INTERVAL_MS = 5000;
@@ -489,6 +490,7 @@ export default function AgentPanel({ onOpenTaskDetails }) {
                   const location = sanitizeLocationDisplayName(rawLocation) || '—';
                   const locationShort = location.length > 50 ? `${location.slice(0, 50)}…` : location;
                   const orderedTime = created ? created.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit', hour12: true }) : null;
+                  const advanceLines = getAdvanceOrderLines(t, t.date_created);
                   return (
                     <li key={t.task_id} className="task-card-all-tasks">
                       <div className="task-card-all-tasks-inner">
@@ -514,7 +516,15 @@ export default function AgentPanel({ onOpenTaskDetails }) {
                           {location !== '—' && (
                             <div className="task-card-all-tasks-location" title={location}>{locationShort}</div>
                           )}
-                          {orderedTime && (
+                          {advanceLines && (
+                            <div className="task-card-v2-advance task-card-all-tasks-advance" role="status" aria-label="Advance order schedule">
+                              <span className="task-card-v2-advance-line">{advanceLines.deliveryLine}</span>
+                              {advanceLines.orderedLine ? (
+                                <span className="task-card-v2-advance-line">{advanceLines.orderedLine}</span>
+                              ) : null}
+                            </div>
+                          )}
+                          {!advanceLines && orderedTime && (
                             <div className="task-card-all-tasks-order-time">Ordered Time {orderedTime}</div>
                           )}
                           {waitingMins && (

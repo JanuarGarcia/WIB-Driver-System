@@ -1,9 +1,18 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api, statusClass, statusLabel } from '../api';
+import { sanitizeLocationDisplayName } from '../utils/displayText';
 
 function todayStr() {
   return new Date().toISOString().slice(0, 10);
+}
+
+/** Display-only: fix escapes + hide literal "undefined" from APIs */
+function taskFieldDisplay(raw) {
+  if (raw == null) return '—';
+  const s = String(raw).trim();
+  if (!s || s.toLowerCase() === 'undefined' || s.toLowerCase() === 'null') return '—';
+  return sanitizeLocationDisplayName(s) || '—';
 }
 
 /** Read-only driver details + today's tasks (same UX as Agent panel "Details"). */
@@ -80,7 +89,7 @@ export default function DriverDetailsModal({
       onClick={(e) => e.target === e.currentTarget && onClose()}
     >
       <div
-        className={`agent-detail-modal-card ${size === 'wide' ? 'agent-detail-modal-card--wide' : ''}`}
+        className={`agent-detail-modal-card driver-details-modal ${size === 'wide' ? 'agent-detail-modal-card--wide' : ''}`}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="agent-detail-modal-header">
@@ -153,7 +162,7 @@ export default function DriverDetailsModal({
 
               <div className="agent-driver-details-section-title">Task</div>
 
-              <div className="agent-driver-details-table-wrap">
+              <div className="agent-driver-details-table-wrap agent-driver-details-table-wrap--desktop">
                 <table className="agent-driver-details-table">
                   <thead>
                     <tr>
@@ -172,31 +181,76 @@ export default function DriverDetailsModal({
                         </td>
                       </tr>
                     ) : (
-                      state.tasks.map((t) => (
-                        <tr key={t.task_id ?? t.id}>
-                          <td>
-                            <button
-                              type="button"
-                              className="agent-driver-details-task-link"
-                              onClick={() => handleTaskClick(t.task_id ?? t.id)}
-                            >
-                              {t.task_id ?? t.id}
-                            </button>
-                          </td>
-                          <td>{t.customer_name ?? t.task_description ?? '—'}</td>
-                          <td>{t.trans_type ?? t.task_type ?? t.type ?? '—'}</td>
-                          <td>{t.delivery_address ?? '—'}</td>
-                          <td>
-                            <span className={`agent-driver-details-task-status ${statusClass(t.status)}`}>
-                              {statusLabel(t.status)}
-                            </span>
-                          </td>
-                        </tr>
-                      ))
+                      state.tasks.map((t) => {
+                        const tid = t.task_id ?? t.id;
+                        const nameRaw = t.customer_name ?? t.task_description;
+                        const typeRaw = t.trans_type ?? t.task_type ?? t.type;
+                        return (
+                          <tr key={tid}>
+                            <td>
+                              <button
+                                type="button"
+                                className="agent-driver-details-task-link"
+                                onClick={() => handleTaskClick(tid)}
+                              >
+                                {tid}
+                              </button>
+                            </td>
+                            <td>{taskFieldDisplay(nameRaw)}</td>
+                            <td>{taskFieldDisplay(typeRaw)}</td>
+                            <td>{taskFieldDisplay(t.delivery_address)}</td>
+                            <td>
+                              <span className={`agent-driver-details-task-status ${statusClass(t.status)}`}>
+                                {statusLabel(t.status)}
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      })
                     )}
                   </tbody>
                 </table>
               </div>
+
+              <ul className="agent-driver-task-cards" aria-label="Tasks list">
+                {state.tasks.length === 0 ? (
+                  <li className="agent-driver-task-card agent-driver-task-card--empty">No tasks</li>
+                ) : (
+                  state.tasks.map((t) => {
+                    const tid = t.task_id ?? t.id;
+                    const nameRaw = t.customer_name ?? t.task_description;
+                    const typeRaw = t.trans_type ?? t.task_type ?? t.type;
+                    return (
+                      <li key={tid} className="agent-driver-task-card">
+                        <div className="agent-driver-task-card-top">
+                          <button
+                            type="button"
+                            className="agent-driver-task-card-id"
+                            onClick={() => handleTaskClick(tid)}
+                          >
+                            Task #{tid}
+                          </button>
+                          <span className={`agent-driver-details-task-status ${statusClass(t.status)}`}>
+                            {statusLabel(t.status)}
+                          </span>
+                        </div>
+                        <div className="agent-driver-task-card-row">
+                          <span className="agent-driver-task-card-label">Name</span>
+                          <span className="agent-driver-task-card-value">{taskFieldDisplay(nameRaw)}</span>
+                        </div>
+                        <div className="agent-driver-task-card-row">
+                          <span className="agent-driver-task-card-label">Type</span>
+                          <span className="agent-driver-task-card-value">{taskFieldDisplay(typeRaw)}</span>
+                        </div>
+                        <div className="agent-driver-task-card-row agent-driver-task-card-row--address">
+                          <span className="agent-driver-task-card-label">Address</span>
+                          <span className="agent-driver-task-card-value">{taskFieldDisplay(t.delivery_address)}</span>
+                        </div>
+                      </li>
+                    );
+                  })
+                )}
+              </ul>
             </>
           )}
         </div>
