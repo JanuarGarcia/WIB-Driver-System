@@ -177,6 +177,9 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
       setTab('details');
       setDeleteConfirmOpen(false);
       setAssignOpen(false);
+      setChangeStatusOpen(false);
+      setChangeStatusValue('');
+      setChangeStatusReason('');
       return;
     }
     setData(null);
@@ -185,6 +188,9 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
     setTab('details');
     setDeleteConfirmOpen(false);
     setAssignOpen(false);
+    setChangeStatusOpen(false);
+    setChangeStatusValue('');
+    setChangeStatusReason('');
     setLoading(true);
     api(`tasks/${taskId}`)
       .then((res) => {
@@ -207,7 +213,7 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
   }, [taskId]);
 
   useEffect(() => {
-    if (!deleteConfirmOpen && !assignOpen) return;
+    if (!deleteConfirmOpen && !assignOpen && !changeStatusOpen) return;
     const onKey = (e) => {
       if (e.key !== 'Escape' || actionLoading) return;
       if (deleteConfirmOpen) setDeleteConfirmOpen(false);
@@ -216,10 +222,15 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
         setAssignTeamId('');
         setAssignDriverId('');
       }
+      if (changeStatusOpen) {
+        setChangeStatusOpen(false);
+        setChangeStatusValue('');
+        setChangeStatusReason('');
+      }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [deleteConfirmOpen, assignOpen, actionLoading]);
+  }, [deleteConfirmOpen, assignOpen, changeStatusOpen, actionLoading]);
 
   useEffect(() => {
     if (!taskId || !data?.task) return;
@@ -237,6 +248,10 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
     setAssignTeamId('');
     setAssignDriverId('');
     setDeleteConfirmOpen(false);
+    setChangeStatusOpen(false);
+    setChangeStatusValue('');
+    setChangeStatusReason('');
+    setEditOpen(false);
     onClose?.();
   };
 
@@ -323,9 +338,17 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
       .finally(() => setActionLoading(false));
   };
 
+  const cancelChangeStatusModal = () => {
+    if (actionLoading) return;
+    setChangeStatusOpen(false);
+    setChangeStatusValue('');
+    setChangeStatusReason('');
+  };
+
   const openChangeStatus = () => {
     setAssignOpen(false);
     setEditOpen(false);
+    setDeleteConfirmOpen(false);
     setChangeStatusValue('');
     setChangeStatusReason('');
     setChangeStatusOpen(true);
@@ -374,6 +397,9 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
   const openEdit = () => {
     const t = data?.task ?? data;
     if (t) {
+      setChangeStatusOpen(false);
+      setChangeStatusValue('');
+      setChangeStatusReason('');
       setEditForm({
         task_description: displaySanitized(t.task_description) || (t.task_description ?? ''),
         delivery_address: displaySanitized(t.delivery_address) || (t.delivery_address ?? ''),
@@ -811,50 +837,6 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
                     })()}
                   </div>
                 )}
-                {changeStatusOpen && (
-                  <div className="task-detail-change-status-wrap task-detail-inner-form">
-                    <form onSubmit={handleChangeStatus} className="task-detail-change-status-form">
-                      <label className="modal-label" htmlFor="task-change-status-select">Status</label>
-                      <select
-                        id="task-change-status-select"
-                        className="form-control task-change-status-select"
-                        value={changeStatusValue}
-                        onChange={(e) => setChangeStatusValue(e.target.value)}
-                        required
-                        disabled={actionLoading}
-                        aria-label="Task status"
-                      >
-                        <option value="">Please select status</option>
-                        {TASK_CHANGE_STATUS_OPTIONS.map(({ value, label }) => (
-                          <option key={value} value={value}>{label}</option>
-                        ))}
-                      </select>
-                      <label className="modal-label task-change-status-reason-label" htmlFor="task-change-status-reason">Reason (optional)</label>
-                      <input
-                        id="task-change-status-reason"
-                        type="text"
-                        className="form-control"
-                        placeholder="Reason (optional)"
-                        value={changeStatusReason}
-                        onChange={(e) => setChangeStatusReason(e.target.value)}
-                        disabled={actionLoading}
-                      />
-                      <div className="task-change-status-actions">
-                        <button type="submit" className="btn btn-primary" disabled={actionLoading}>
-                          {actionLoading ? 'Updating…' : 'Update'}
-                        </button>
-                        <button
-                          type="button"
-                          className="btn"
-                          onClick={() => { setChangeStatusOpen(false); setChangeStatusValue(''); setChangeStatusReason(''); }}
-                          disabled={actionLoading}
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    </form>
-                  </div>
-                )}
               </div>
               <div className="modal-footer-actions task-details-footer-actions">
                 {(String(task.status || '').toLowerCase() === 'unassigned') && (
@@ -958,6 +940,71 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
                     {actionLoading ? 'Submitting…' : 'Submit'}
                   </button>
                   <button type="button" className="btn" onClick={cancelAssignModal} disabled={actionLoading}>
+                    Cancel
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </div>
+      )}
+      {changeStatusOpen && (
+        <div
+          className="task-modal-nested-overlay"
+          role="presentation"
+          onClick={cancelChangeStatusModal}
+        >
+          <div
+            className="modal-box task-detail-change-status-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="task-change-status-modal-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="modal-header">
+              <h3 id="task-change-status-modal-title">Task ID : {task?.task_id ?? taskId ?? '…'}</h3>
+              <button
+                type="button"
+                className="task-detail-edit-modal-close"
+                onClick={cancelChangeStatusModal}
+                disabled={actionLoading}
+                aria-label="Close"
+              >
+                ×
+              </button>
+            </div>
+            <div className="modal-body">
+              <form onSubmit={handleChangeStatus} className="task-detail-change-status-form">
+                <label className="modal-label" htmlFor="task-change-status-select">Status</label>
+                <select
+                  id="task-change-status-select"
+                  className="form-control task-change-status-select"
+                  value={changeStatusValue}
+                  onChange={(e) => setChangeStatusValue(e.target.value)}
+                  required
+                  disabled={actionLoading}
+                  aria-label="Task status"
+                >
+                  <option value="">Please select status</option>
+                  {TASK_CHANGE_STATUS_OPTIONS.map(({ value, label }) => (
+                    <option key={value} value={value}>{label}</option>
+                  ))}
+                </select>
+                <label className="modal-label task-change-status-reason-label" htmlFor="task-change-status-reason">Reason (optional)</label>
+                <input
+                  id="task-change-status-reason"
+                  type="text"
+                  className="form-control"
+                  placeholder="Reason (optional)"
+                  value={changeStatusReason}
+                  onChange={(e) => setChangeStatusReason(e.target.value)}
+                  disabled={actionLoading}
+                />
+                <div className="task-change-status-actions">
+                  <button type="submit" className="btn btn-primary" disabled={actionLoading}>
+                    {actionLoading ? 'Updating…' : 'Update'}
+                  </button>
+                  <button type="button" className="btn" onClick={cancelChangeStatusModal} disabled={actionLoading}>
                     Cancel
                   </button>
                 </div>

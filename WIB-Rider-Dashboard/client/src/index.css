@@ -4924,6 +4924,26 @@ tr:hover { background: var(--bg-hover) !important; }
   border-top: 4px solid var(--color-primary);
   box-shadow: 0 20px 48px rgba(0, 0, 0, 0.35);
 }
+/* Change status — nested modal (long option labels need width) */
+.task-detail-change-status-modal {
+  max-width: min(520px, 100vw - 2rem);
+  width: 100%;
+  border-top: 4px solid var(--color-primary);
+  box-shadow: 0 20px 48px rgba(0, 0, 0, 0.35);
+}
+.task-detail-change-status-modal .modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.task-detail-change-status-modal .modal-header h3 {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 500;
+}
+.task-detail-change-status-modal .task-detail-change-status-form {
+  padding-top: 0.25rem;
+}
 .task-detail-assign-modal .modal-header {
   display: flex;
   align-items: center;
@@ -4963,12 +4983,7 @@ tr:hover { background: var(--bg-hover) !important; }
 /* Task details – section cards and spacing (colors unchanged) */
 .task-details-content { display: flex; flex-direction: column; gap: 1.25rem; }
 
-/* Task details — change status (legacy option order/labels, stacked layout) */
-.task-detail-change-status-wrap {
-  border-top: 1px solid var(--border-soft);
-  padding-top: 1rem;
-  margin-top: 1rem;
-}
+/* Task details — change status form (nested modal; legacy option order/labels) */
 .task-detail-change-status-form {
   display: flex;
   flex-direction: column;
