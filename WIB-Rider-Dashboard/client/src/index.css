@@ -4869,8 +4869,8 @@ tr:hover { background: var(--bg-hover) !important; }
 .task-detail-edit-modal .form-control { width: 100%; }
 .task-detail-edit-modal .modal-footer-actions { margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border-soft); display: flex; gap: 0.5rem; justify-content: flex-end; }
 
-/* Task details — delete confirmation (dark-friendly overlay) */
-.task-delete-confirm-overlay {
+/* Task details — nested modals (assign agent, delete confirm) */
+.task-modal-nested-overlay {
   position: fixed;
   inset: 0;
   z-index: 1200;
@@ -4915,6 +4915,49 @@ tr:hover { background: var(--bg-hover) !important; }
   justify-content: flex-end;
   flex-wrap: wrap;
   gap: 0.5rem;
+}
+
+/* Assign driver / agent (legacy fields, dark UI) */
+.task-detail-assign-modal {
+  max-width: 440px;
+  width: 100%;
+  border-top: 4px solid var(--color-primary);
+  box-shadow: 0 20px 48px rgba(0, 0, 0, 0.35);
+}
+.task-detail-assign-modal .modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.task-detail-assign-modal .modal-header h3 {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 500;
+}
+.task-detail-assign-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+.task-detail-assign-form .modal-label {
+  margin-bottom: 0.15rem;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: var(--text-muted, #6b7280);
+}
+.task-detail-assign-form .form-control {
+  width: 100%;
+  margin-bottom: 0;
+}
+.task-detail-assign-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  justify-content: flex-start;
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border-soft);
 }
 
 /* Task details – section cards and spacing (colors unchanged) */

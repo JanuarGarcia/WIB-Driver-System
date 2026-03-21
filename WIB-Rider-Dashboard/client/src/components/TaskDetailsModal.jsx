@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { api, formatDate, formatActivityTimelineDateTime, statusDisplayClass } from '../api';
 import { sanitizeLocationDisplayName, pickLocalizedMenuString } from '../utils/displayText';
 import { getAdvanceOrderLines } from '../utils/advanceOrder';
@@ -176,6 +176,7 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
       setError(null);
       setTab('details');
       setDeleteConfirmOpen(false);
+      setAssignOpen(false);
       return;
     }
     setData(null);
@@ -183,6 +184,7 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
     setError(null);
     setTab('details');
     setDeleteConfirmOpen(false);
+    setAssignOpen(false);
     setLoading(true);
     api(`tasks/${taskId}`)
       .then((res) => {
@@ -205,13 +207,19 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
   }, [taskId]);
 
   useEffect(() => {
-    if (!deleteConfirmOpen) return;
+    if (!deleteConfirmOpen && !assignOpen) return;
     const onKey = (e) => {
-      if (e.key === 'Escape' && !actionLoading) setDeleteConfirmOpen(false);
+      if (e.key !== 'Escape' || actionLoading) return;
+      if (deleteConfirmOpen) setDeleteConfirmOpen(false);
+      if (assignOpen) {
+        setAssignOpen(false);
+        setAssignTeamId('');
+        setAssignDriverId('');
+      }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [deleteConfirmOpen, actionLoading]);
+  }, [deleteConfirmOpen, assignOpen, actionLoading]);
 
   useEffect(() => {
     if (!taskId || !data?.task) return;
@@ -225,13 +233,32 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
   if (!taskId) return null;
 
   const handleClose = () => {
+    setAssignOpen(false);
+    setAssignTeamId('');
+    setAssignDriverId('');
+    setDeleteConfirmOpen(false);
     onClose?.();
   };
 
-  const handleAssignDriver = () => {
+  /** Legacy-style assign dialog: Select Team + Assign Agent (opens as nested modal). */
+  const openAssignModal = () => {
+    const t = data?.task;
+    const prefTeam =
+      t?.team_id != null && String(t.team_id).trim() !== '' && String(t.team_id).trim() !== '0'
+        ? String(t.team_id)
+        : '';
+    setAssignTeamId(prefTeam);
+    setAssignDriverId('');
     setAssignOpen(true);
     setChangeStatusOpen(false);
     setEditOpen(false);
+  };
+
+  const cancelAssignModal = () => {
+    if (actionLoading) return;
+    setAssignOpen(false);
+    setAssignTeamId('');
+    setAssignDriverId('');
   };
 
   useEffect(() => {
@@ -240,10 +267,15 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
     api('drivers').then((d) => setDrivers(Array.isArray(d) ? d : (d?.drivers || []))).catch(() => setDrivers([]));
   }, [assignOpen]);
 
+  const prevAssignTeamRef = useRef('');
   useEffect(() => {
-    if (!assignOpen) return;
-    // Reset driver when team changes
-    setAssignDriverId('');
+    if (!assignOpen) {
+      prevAssignTeamRef.current = '';
+      return;
+    }
+    const prev = prevAssignTeamRef.current;
+    prevAssignTeamRef.current = assignTeamId;
+    if (prev !== '' && prev !== assignTeamId) setAssignDriverId('');
   }, [assignOpen, assignTeamId]);
 
   const doAssign = (e) => {
@@ -823,65 +855,11 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
                     </form>
                   </div>
                 )}
-                {assignOpen && (
-                  <div className="task-detail-assign-wrap task-detail-inner-form" style={{ borderTop: '1px solid var(--border-soft)', paddingTop: '1rem', marginTop: '1rem' }}>
-                    <form onSubmit={doAssign} className="task-detail-assign-form">
-                      <label className="modal-label" htmlFor="task-assign-team">Assign to team</label>
-                      <select
-                        id="task-assign-team"
-                        className="form-control"
-                        value={assignTeamId}
-                        onChange={(e) => setAssignTeamId(e.target.value)}
-                        disabled={actionLoading}
-                      >
-                        <option value="">All teams</option>
-                        {(teams || []).map((t) => (
-                          <option key={t.team_id ?? t.id} value={String(t.team_id ?? t.id)}>
-                            {t.team_name ?? t.name ?? `Team ${t.team_id ?? t.id}`}
-                          </option>
-                        ))}
-                      </select>
-
-                      <label className="modal-label" htmlFor="task-assign-driver" style={{ marginTop: '0.75rem' }}>Assign to driver</label>
-                      <select
-                        id="task-assign-driver"
-                        className="form-control"
-                        value={assignDriverId}
-                        onChange={(e) => setAssignDriverId(e.target.value)}
-                        disabled={actionLoading}
-                        required
-                      >
-                        <option value="">Select driver…</option>
-                        {(drivers || [])
-                          .filter((d) => !assignTeamId || String(d.team_id ?? d.team) === String(assignTeamId))
-                          .map((d) => (
-                            <option key={d.driver_id ?? d.id} value={String(d.driver_id ?? d.id)}>
-                              {d.full_name || [d.first_name, d.last_name].filter(Boolean).join(' ') || d.username || d.email || `Driver ${d.driver_id ?? d.id}`}
-                            </option>
-                          ))}
-                      </select>
-
-                      <div className="modal-actions" style={{ marginTop: '0.75rem' }}>
-                        <button type="submit" className="btn btn-primary" disabled={actionLoading || !assignDriverId}>
-                          {actionLoading ? 'Assigning…' : 'Assign'}
-                        </button>
-                        <button
-                          type="button"
-                          className="btn"
-                          onClick={() => { setAssignOpen(false); setAssignTeamId(''); setAssignDriverId(''); }}
-                          disabled={actionLoading}
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    </form>
-                  </div>
-                )}
               </div>
               <div className="modal-footer-actions task-details-footer-actions">
                 {(String(task.status || '').toLowerCase() === 'unassigned') && (
                   <>
-                    <button type="button" className="btn btn-primary" onClick={handleAssignDriver} disabled={actionLoading}>Assign driver</button>
+                    <button type="button" className="btn btn-primary" onClick={openAssignModal} disabled={actionLoading}>Assign driver</button>
                     <button type="button" className="btn" onClick={handleAssignToAll} disabled={actionLoading}>Assign to all drivers</button>
                     <button type="button" className="btn" onClick={handleRetryAutoAssign} disabled={actionLoading}>Retry auto-assign</button>
                   </>
@@ -911,9 +889,86 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
             </>
         )}
       </div>
+      {assignOpen && (
+        <div
+          className="task-modal-nested-overlay"
+          role="presentation"
+          onClick={cancelAssignModal}
+        >
+          <div
+            className="modal-box task-detail-assign-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="task-assign-modal-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="modal-header">
+              <h3 id="task-assign-modal-title">Task ID : {task?.task_id ?? taskId ?? '…'}</h3>
+              <button
+                type="button"
+                className="task-detail-edit-modal-close"
+                onClick={cancelAssignModal}
+                disabled={actionLoading}
+                aria-label="Close"
+              >
+                ×
+              </button>
+            </div>
+            <div className="modal-body">
+              <form onSubmit={doAssign} className="task-detail-assign-form">
+                <label className="modal-label" htmlFor="task-assign-team">Select Team</label>
+                <select
+                  id="task-assign-team"
+                  className="form-control"
+                  value={assignTeamId}
+                  onChange={(e) => setAssignTeamId(e.target.value)}
+                  disabled={actionLoading}
+                  aria-label="Select team"
+                >
+                  <option value="">All teams</option>
+                  {(teams || []).map((t) => (
+                    <option key={t.team_id ?? t.id} value={String(t.team_id ?? t.id)}>
+                      {t.team_name ?? t.name ?? `Team ${t.team_id ?? t.id}`}
+                    </option>
+                  ))}
+                </select>
+
+                <label className="modal-label" htmlFor="task-assign-driver">Assign Agent</label>
+                <select
+                  id="task-assign-driver"
+                  className="form-control"
+                  value={assignDriverId}
+                  onChange={(e) => setAssignDriverId(e.target.value)}
+                  disabled={actionLoading}
+                  required
+                  aria-label="Assign agent"
+                >
+                  <option value="">Please select agent</option>
+                  {(drivers || [])
+                    .filter((d) => !assignTeamId || String(d.team_id ?? d.team) === String(assignTeamId))
+                    .map((d) => (
+                      <option key={d.driver_id ?? d.id} value={String(d.driver_id ?? d.id)}>
+                        {d.full_name || [d.first_name, d.last_name].filter(Boolean).join(' ') || d.username || d.email || `Driver ${d.driver_id ?? d.id}`}
+                      </option>
+                    ))}
+                </select>
+
+                <div className="task-detail-assign-actions">
+                  <button type="submit" className="btn btn-primary" disabled={actionLoading || !assignDriverId}>
+                    {actionLoading ? 'Submitting…' : 'Submit'}
+                  </button>
+                  <button type="button" className="btn" onClick={cancelAssignModal} disabled={actionLoading}>
+                    Cancel
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </div>
+      )}
       {deleteConfirmOpen && (
         <div
-          className="task-delete-confirm-overlay"
+          className="task-modal-nested-overlay"
           role="presentation"
           onClick={cancelDeleteConfirm}
         >

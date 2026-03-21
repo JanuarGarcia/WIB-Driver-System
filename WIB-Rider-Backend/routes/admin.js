@@ -1500,12 +1500,13 @@ router.post('/tasks', async (req, res) => {
   }
 });
 
-router.put('/tasks/:id/assign', async (req, res) => {
+router.put('/tasks/:id/assign', express.json(), async (req, res) => {
   const taskId = parseInt(req.params.id, 10);
-  const driverId = parseInt(req.body.driver_id, 10);
+  if (!Number.isFinite(taskId)) return res.status(400).json({ error: 'Invalid task id' });
+  const driverId = parseInt(req.body?.driver_id, 10);
   const teamIdRaw = req.body?.team_id;
   const teamId = teamIdRaw != null && String(teamIdRaw).trim() !== '' ? parseInt(teamIdRaw, 10) : null;
-  if (!driverId) return res.status(400).json({ error: 'driver_id required' });
+  if (!Number.isFinite(driverId)) return res.status(400).json({ error: 'driver_id required' });
   try {
     const [[task]] = await pool.query('SELECT task_id, order_id, task_description FROM mt_driver_task WHERE task_id = ?', [taskId]);
     if (!task) return res.status(404).json({ error: 'Task not found' });
