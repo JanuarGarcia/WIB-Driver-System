@@ -1595,29 +1595,80 @@ router.delete('/tasks/:id', async (req, res) => {
   }
 });
 
+/** Task statuses accepted from dashboard / legacy admin (lowercase). Synonyms allowed for DB compatibility. */
+const ADMIN_TASK_STATUS_ALLOWED = new Set([
+  'unassigned',
+  'assigned',
+  'acknowledged',
+  'started',
+  'inprogress',
+  'successful',
+  'failed',
+  'declined',
+  'cancelled',
+  'canceled',
+  'delivered',
+  'completed',
+]);
+
 // ---- changeStatus (dashboard-driven task status change) ----
-router.put('/tasks/:id/status', async (req, res) => {
+router.put('/tasks/:id/status', express.json(), async (req, res) => {
   const taskId = parseInt(req.params.id, 10);
+  if (!Number.isFinite(taskId)) return res.status(400).json({ error: 'Invalid task id' });
   const { status, reason } = req.body || {};
-  const newStatus = (status || '').toString().trim();
-  if (!newStatus) return res.status(400).json({ error: 'status required' });
+  const raw = (status || '').toString().trim();
+  if (!raw) return res.status(400).json({ error: 'status required' });
+  const newStatus = raw.toLowerCase();
+  if (!ADMIN_TASK_STATUS_ALLOWED.has(newStatus)) {
+    return res.status(400).json({
+      error: `Invalid status. Allowed: ${[...ADMIN_TASK_STATUS_ALLOWED].sort().join(', ')}`,
+    });
+  }
+  const remarks = reason != null && String(reason).trim() ? String(reason).trim() : '';
+
   try {
-    const [result] = await pool.query(
-      'UPDATE mt_driver_task SET status = ?, date_modified = NOW() WHERE task_id = ?',
-      [newStatus, taskId]
-    );
-    if (result.affectedRows === 0) return res.status(404).json({ error: 'Task not found' });
-    if (reason && (reason + '').trim()) {
+    let result;
+    if (newStatus === 'unassigned') {
       try {
-        const [[task]] = await pool.query('SELECT order_id FROM mt_driver_task WHERE task_id = ?', [taskId]);
-        await pool.query(
-          'INSERT INTO mt_order_history (order_id, task_id, status, remarks, date_created, update_by_type) VALUES (?, ?, ?, ?, NOW(), ?)',
-          [task?.order_id || null, taskId, newStatus, (reason + '').trim(), 'admin']
+        [result] = await pool.query(
+          'UPDATE mt_driver_task SET status = ?, driver_id = NULL, team_id = NULL, date_modified = NOW() WHERE task_id = ?',
+          [newStatus, taskId]
         );
-      } catch (_) {}
+      } catch (e) {
+        if (e.code === 'ER_BAD_FIELD_ERROR') {
+          [result] = await pool.query(
+            'UPDATE mt_driver_task SET status = ?, driver_id = NULL, date_modified = NOW() WHERE task_id = ?',
+            [newStatus, taskId]
+          );
+        } else {
+          throw e;
+        }
+      }
+    } else {
+      [result] = await pool.query(
+        'UPDATE mt_driver_task SET status = ?, date_modified = NOW() WHERE task_id = ?',
+        [newStatus, taskId]
+      );
     }
-    return res.json({ ok: true });
+    if (result.affectedRows === 0) return res.status(404).json({ error: 'Task not found' });
+
+    try {
+      const [[task]] = await pool.query('SELECT order_id FROM mt_driver_task WHERE task_id = ?', [taskId]);
+      await pool.query(
+        'INSERT INTO mt_order_history (order_id, task_id, status, remarks, date_created, update_by_type) VALUES (?, ?, ?, ?, NOW(), ?)',
+        [task?.order_id || null, taskId, newStatus, remarks, 'admin']
+      );
+    } catch (_) {
+      /* mt_order_history optional — do not fail status update */
+    }
+
+    return res.json({ ok: true, status: newStatus });
   } catch (e) {
+    if (e.errno === 1265 || (e.message && /Data truncated|Incorrect.*enum/i.test(String(e.message)))) {
+      return res.status(400).json({
+        error: 'This status is not allowed by the database for this column. Update the status ENUM or use a value your schema accepts.',
+      });
+    }
     if (e.code === 'ER_NO_SUCH_TABLE' || e.code === 'ER_BAD_FIELD_ERROR') {
       return res.status(503).json({ error: 'Tasks table unavailable.' });
     }

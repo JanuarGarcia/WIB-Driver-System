@@ -1937,7 +1937,7 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
 }
 .panel.tasks-panel .tasks-panel-header-date .panel-header-date-icon { color: rgba(255,255,255,.9); display: inline-flex; align-items: center; }
 .panel.tasks-panel .tasks-panel-header-date .panel-header-date-icon svg { width: 14px; height: 14px; flex-shrink: 0; }
-.tasks-panel-date-wrap { position: relative; display: inline-flex; flex: 1; min-width: 0; justify-content: flex-start; }
+.tasks-panel-date-wrap { position: relative; display: inline-flex; flex: 1; min-width: 0; justify-content: flex-end; }
 .tasks-panel-date-trigger {
   display: inline-flex;
   align-items: center;
@@ -4860,6 +4860,39 @@ tr:hover { background: var(--bg-hover) !important; }
 
 /* Task details – section cards and spacing (colors unchanged) */
 .task-details-content { display: flex; flex-direction: column; gap: 1.25rem; }
+
+/* Task details — change status (legacy option order/labels, stacked layout) */
+.task-detail-change-status-wrap {
+  border-top: 1px solid var(--border-soft);
+  padding-top: 1rem;
+  margin-top: 1rem;
+}
+.task-detail-change-status-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.task-detail-change-status-form .modal-label {
+  margin-bottom: 0;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: var(--text-muted, #6b7280);
+}
+.task-detail-change-status-form .task-change-status-reason-label { margin-top: 0.25rem; }
+.task-detail-change-status-form .task-change-status-select {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  margin-bottom: 0;
+}
+.task-detail-change-status-form .form-control { margin-bottom: 0; width: 100%; }
+.task-change-status-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.35rem;
+}
 .task-detail-section {
   background: #f9fafb;
   border-radius: 8px;

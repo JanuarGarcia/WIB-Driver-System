@@ -137,7 +137,18 @@ function TaskPhotoImage({ photoId, photoName }) {
   );
 }
 
-const TASK_STATUS_OPTIONS = ['unassigned', 'assigned', 'acknowledged', 'started', 'inprogress', 'successful', 'failed', 'declined', 'cancelled', 'canceled', 'delivered', 'completed'];
+/** Matches legacy WIB Rider admin order + labels; values are what we send to PUT /tasks/:id/status */
+const TASK_CHANGE_STATUS_OPTIONS = [
+  { value: 'unassigned', label: 'Unassigned - Makikita ni rider na pinasa - Use Re-assign Agent' },
+  { value: 'assigned', label: 'Assigned' },
+  { value: 'acknowledged', label: 'Acknowledged' },
+  { value: 'started', label: 'Started' },
+  { value: 'inprogress', label: 'Inprogress' },
+  { value: 'successful', label: 'Successful' },
+  { value: 'failed', label: 'Failed' },
+  { value: 'declined', label: 'Declined' },
+  { value: 'cancelled', label: 'Cancelled' },
+];
 
 export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTaskDeleted, onShowDirections }) {
   const [data, setData] = useState(null);
@@ -253,13 +264,33 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
       .finally(() => setActionLoading(false));
   };
 
+  const openChangeStatus = () => {
+    setAssignOpen(false);
+    setEditOpen(false);
+    setChangeStatusValue('');
+    setChangeStatusReason('');
+    setChangeStatusOpen(true);
+    setTab('details');
+  };
+
   const handleChangeStatus = (e) => {
     e.preventDefault();
     const status = (changeStatusValue || '').trim();
     if (!status) return;
     setActionLoading(true);
     api(`tasks/${taskId}/status`, { method: 'PUT', body: JSON.stringify({ status, reason: (changeStatusReason || '').trim() || undefined }) })
-      .then(() => { setChangeStatusOpen(false); setChangeStatusValue(''); setChangeStatusReason(''); setData((prev) => prev && prev.task ? { ...prev, task: { ...prev.task, status } } : prev); })
+      .then(() => {
+        setChangeStatusOpen(false);
+        setChangeStatusValue('');
+        setChangeStatusReason('');
+        return api(`tasks/${taskId}`)
+          .then((res) => {
+            if (res && typeof res === 'object' && !res.error) setData(res);
+          })
+          .catch(() => {
+            setData((prev) => (prev && prev.task ? { ...prev, task: { ...prev.task, status } } : prev));
+          });
+      })
       .catch((err) => alert(err?.error || err?.message || 'Update failed'))
       .finally(() => setActionLoading(false));
   };
@@ -405,7 +436,10 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
   const advanceLinesModal = order ? getAdvanceOrderLines(order, task?.date_created) : null;
 
   return (
-    <div className={`modal-backdrop task-details-backdrop ${editOpen ? 'task-details-backdrop-edit-open' : ''}`} onClick={() => !loading && !editOpen && handleClose()}>
+    <div
+      className={`modal-backdrop task-details-backdrop ${editOpen ? 'task-details-backdrop-edit-open' : ''}`}
+      onClick={() => !loading && !editOpen && !changeStatusOpen && !assignOpen && handleClose()}
+    >
       <div className="modal-box modal-box-lg task-details-modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
           <h3>Task ID : {task?.task_id ?? taskId ?? '…'}</h3>
@@ -719,33 +753,45 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
                   </div>
                 )}
                 {changeStatusOpen && (
-                  <div className="task-detail-change-status-wrap task-detail-inner-form" style={{ borderTop: '1px solid var(--border-soft)', paddingTop: '1rem', marginTop: '1rem' }}>
+                  <div className="task-detail-change-status-wrap task-detail-inner-form">
                     <form onSubmit={handleChangeStatus} className="task-detail-change-status-form">
-                      <label className="modal-label" htmlFor="task-change-status-select">Change status</label>
-                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', alignItems: 'flex-start' }}>
-                        <select
-                          id="task-change-status-select"
-                          className="form-control"
-                          value={changeStatusValue}
-                          onChange={(e) => setChangeStatusValue(e.target.value)}
-                          required
-                          style={{ minWidth: '140px' }}
+                      <label className="modal-label" htmlFor="task-change-status-select">Status</label>
+                      <select
+                        id="task-change-status-select"
+                        className="form-control task-change-status-select"
+                        value={changeStatusValue}
+                        onChange={(e) => setChangeStatusValue(e.target.value)}
+                        required
+                        disabled={actionLoading}
+                        aria-label="Task status"
+                      >
+                        <option value="">Please select status</option>
+                        {TASK_CHANGE_STATUS_OPTIONS.map(({ value, label }) => (
+                          <option key={value} value={value}>{label}</option>
+                        ))}
+                      </select>
+                      <label className="modal-label task-change-status-reason-label" htmlFor="task-change-status-reason">Reason (optional)</label>
+                      <input
+                        id="task-change-status-reason"
+                        type="text"
+                        className="form-control"
+                        placeholder="Reason (optional)"
+                        value={changeStatusReason}
+                        onChange={(e) => setChangeStatusReason(e.target.value)}
+                        disabled={actionLoading}
+                      />
+                      <div className="task-change-status-actions">
+                        <button type="submit" className="btn btn-primary" disabled={actionLoading}>
+                          {actionLoading ? 'Updating…' : 'Update'}
+                        </button>
+                        <button
+                          type="button"
+                          className="btn"
+                          onClick={() => { setChangeStatusOpen(false); setChangeStatusValue(''); setChangeStatusReason(''); }}
+                          disabled={actionLoading}
                         >
-                          <option value="">Select status</option>
-                          {TASK_STATUS_OPTIONS.map((s) => (
-                            <option key={s} value={s}>{s}</option>
-                          ))}
-                        </select>
-                        <input
-                          type="text"
-                          className="form-control"
-                          placeholder="Reason (optional)"
-                          value={changeStatusReason}
-                          onChange={(e) => setChangeStatusReason(e.target.value)}
-                          style={{ minWidth: '160px', flex: 1 }}
-                        />
-                        <button type="submit" className="btn btn-primary" disabled={actionLoading}>Update</button>
-                        <button type="button" className="btn" onClick={() => { setChangeStatusOpen(false); setChangeStatusValue(''); setChangeStatusReason(''); }} disabled={actionLoading}>Cancel</button>
+                          Cancel
+                        </button>
                       </div>
                     </form>
                   </div>
@@ -817,7 +863,7 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
                   <button type="button" className="btn" onClick={openEdit} disabled={actionLoading}>Edit</button>
                 )}
                 {!changeStatusOpen && !editOpen && !assignOpen && (
-                  <button type="button" className="btn" onClick={() => setChangeStatusOpen(true)} disabled={actionLoading}>Change status</button>
+                  <button type="button" className="btn" onClick={openChangeStatus} disabled={actionLoading}>Change status</button>
                 )}
                 {onShowDirections && (
                   <button
