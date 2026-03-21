@@ -167,6 +167,7 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
   const [changeStatusReason, setChangeStatusReason] = useState('');
   const [editOpen, setEditOpen] = useState(false);
   const [editForm, setEditForm] = useState({ task_description: '', delivery_address: '', customer_name: '', contact_number: '', delivery_date: '', email_address: '' });
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
 
   useEffect(() => {
     if (!taskId) {
@@ -174,12 +175,14 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
       setOrderHistory([]);
       setError(null);
       setTab('details');
+      setDeleteConfirmOpen(false);
       return;
     }
     setData(null);
     setOrderHistory([]);
     setError(null);
     setTab('details');
+    setDeleteConfirmOpen(false);
     setLoading(true);
     api(`tasks/${taskId}`)
       .then((res) => {
@@ -200,6 +203,15 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
       })
       .finally(() => setLoading(false));
   }, [taskId]);
+
+  useEffect(() => {
+    if (!deleteConfirmOpen) return;
+    const onKey = (e) => {
+      if (e.key === 'Escape' && !actionLoading) setDeleteConfirmOpen(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [deleteConfirmOpen, actionLoading]);
 
   useEffect(() => {
     if (!taskId || !data?.task) return;
@@ -255,11 +267,26 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
       .finally(() => setActionLoading(false));
   };
 
-  const handleDelete = () => {
-    if (!window.confirm('Delete this task? This cannot be undone.')) return;
+  const openDeleteConfirm = () => {
+    setAssignOpen(false);
+    setChangeStatusOpen(false);
+    setEditOpen(false);
+    setDeleteConfirmOpen(true);
+  };
+
+  const cancelDeleteConfirm = () => {
+    if (actionLoading) return;
+    setDeleteConfirmOpen(false);
+  };
+
+  const confirmDeleteTask = () => {
     setActionLoading(true);
     api(`tasks/${taskId}`, { method: 'DELETE' })
-      .then(() => { onTaskDeleted?.(); handleClose(); })
+      .then(() => {
+        setDeleteConfirmOpen(false);
+        onTaskDeleted?.();
+        handleClose();
+      })
       .catch((err) => alert(err?.error || err?.message || 'Delete failed'))
       .finally(() => setActionLoading(false));
   };
@@ -438,7 +465,7 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
   return (
     <div
       className={`modal-backdrop task-details-backdrop ${editOpen ? 'task-details-backdrop-edit-open' : ''}`}
-      onClick={() => !loading && !editOpen && !changeStatusOpen && !assignOpen && handleClose()}
+      onClick={() => !loading && !editOpen && !changeStatusOpen && !assignOpen && !deleteConfirmOpen && handleClose()}
     >
       <div className="modal-box modal-box-lg task-details-modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
@@ -878,12 +905,53 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
                 {directionsUrl && (
                   <a href={directionsUrl} target="_blank" rel="noopener noreferrer" className="btn">Open in Google Maps</a>
                 )}
-                <button type="button" className="btn" onClick={handleDelete} disabled={actionLoading}>Delete task</button>
+                <button type="button" className="btn" onClick={openDeleteConfirm} disabled={actionLoading}>Delete task</button>
                 <button type="button" className="btn" onClick={handleClose}>Close</button>
               </div>
             </>
         )}
       </div>
+      {deleteConfirmOpen && (
+        <div
+          className="task-delete-confirm-overlay"
+          role="presentation"
+          onClick={cancelDeleteConfirm}
+        >
+          <div
+            className="modal-box task-detail-delete-confirm-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="task-delete-confirm-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="modal-header task-detail-delete-confirm-header">
+              <h3 id="task-delete-confirm-title">Delete task?</h3>
+              <button
+                type="button"
+                className="task-detail-edit-modal-close"
+                onClick={cancelDeleteConfirm}
+                disabled={actionLoading}
+                aria-label="Close"
+              >
+                ×
+              </button>
+            </div>
+            <div className="modal-body task-detail-delete-confirm-body">
+              <p className="task-detail-delete-confirm-text">
+                Are you sure you want to delete task <strong>#{task?.task_id ?? taskId}</strong>? This cannot be undone.
+              </p>
+              <div className="modal-footer-actions task-detail-delete-confirm-actions">
+                <button type="button" className="btn" onClick={cancelDeleteConfirm} disabled={actionLoading}>
+                  Cancel
+                </button>
+                <button type="button" className="btn btn-danger" onClick={confirmDeleteTask} disabled={actionLoading}>
+                  {actionLoading ? 'Deleting…' : 'Delete task'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
       {editOpen && (
         <div className="modal-box modal-box-lg task-detail-edit-modal" onClick={(e) => e.stopPropagation()}>
           <div className="modal-header">
