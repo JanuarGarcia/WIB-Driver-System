@@ -1125,16 +1125,61 @@ router.get('/merchants/:id/address', async (req, res) => {
   return res.status(404).json({ error: 'Merchant not found' });
 });
 
+const ORDER_HISTORY_SELECT_COLS =
+  'id, order_id, status, remarks, date_created, ip_address, task_id, reason, driver_id, remarks2, notes, update_by_type, update_by_id, update_by_name';
+
+/**
+ * Activity timeline: rows for this task_id plus order-level rows (same order_id, task_id NULL/0).
+ * Deduplicates by id, sorts oldest-first like the classic driver app.
+ */
+async function fetchMergedTaskOrderHistory(pool, taskId, orderId) {
+  try {
+    const [taskRows] = await pool.query(
+      `SELECT ${ORDER_HISTORY_SELECT_COLS} FROM mt_order_history WHERE task_id = ?`,
+      [taskId]
+    );
+    const byId = new Map();
+    for (const row of taskRows || []) {
+      if (row && row.id != null) byId.set(Number(row.id), row);
+    }
+    const oid = orderId != null && String(orderId).trim() !== '' && String(orderId).trim() !== '0' ? orderId : null;
+    if (oid != null) {
+      const [orderOnlyRows] = await pool.query(
+        `SELECT ${ORDER_HISTORY_SELECT_COLS} FROM mt_order_history WHERE order_id = ? AND (task_id IS NULL OR task_id = 0)`,
+        [oid]
+      );
+      for (const row of orderOnlyRows || []) {
+        if (row && row.id != null) byId.set(Number(row.id), row);
+      }
+    }
+    const merged = Array.from(byId.values());
+    merged.sort((a, b) => {
+      const ta = a.date_created ? new Date(a.date_created).getTime() : 0;
+      const tb = b.date_created ? new Date(b.date_created).getTime() : 0;
+      if (ta !== tb) return ta - tb;
+      return Number(a.id) - Number(b.id);
+    });
+    return merged;
+  } catch (e) {
+    if (e.code === 'ER_NO_SUCH_TABLE' || e.code === 'ER_BAD_FIELD_ERROR') {
+      return [];
+    }
+    throw e;
+  }
+}
+
 // ---- Task order history (for activity timeline; client may call when details omit it) ----
 router.get('/tasks/:id/order-history', async (req, res) => {
   const id = parseInt(req.params.id, 10);
   if (!Number.isFinite(id)) return res.status(400).json({ error: 'Invalid task id' });
   try {
-    const [historyRows] = await pool.query(
-      'SELECT id, order_id, status, remarks, date_created, ip_address, task_id, reason, driver_id, remarks2, notes, update_by_type, update_by_id, update_by_name FROM mt_order_history WHERE task_id = ? ORDER BY date_created DESC',
-      [id]
-    );
-    return res.json(Array.isArray(historyRows) ? historyRows : []);
+    let orderId = null;
+    try {
+      const [[t]] = await pool.query('SELECT order_id FROM mt_driver_task WHERE task_id = ? LIMIT 1', [id]);
+      orderId = t?.order_id ?? null;
+    } catch (_) {}
+    const merged = await fetchMergedTaskOrderHistory(pool, id, orderId);
+    return res.json(merged);
   } catch (e) {
     if (e.code === 'ER_NO_SUCH_TABLE' || e.code === 'ER_BAD_FIELD_ERROR') {
       return res.json([]);
@@ -1237,13 +1282,9 @@ router.get('/tasks/:id', async (req, res) => {
     } catch (_) {}
   }
 
-  // Activity Timeline: mt_order_history rows for this task
+  // Activity Timeline: task rows + order-only history (initial_order, preparing, etc.), oldest first
   try {
-    const [historyRows] = await pool.query(
-      'SELECT id, order_id, status, remarks, date_created, ip_address, task_id, reason, driver_id, remarks2, notes, update_by_type, update_by_id, update_by_name FROM mt_order_history WHERE task_id = ? ORDER BY date_created DESC',
-      [id]
-    );
-    result.order_history = historyRows || [];
+    result.order_history = await fetchMergedTaskOrderHistory(pool, id, task.order_id);
   } catch (e) {
     if (e.code === 'ER_NO_SUCH_TABLE' || e.code === 'ER_BAD_FIELD_ERROR') {
       result.order_history = [];
@@ -1255,7 +1296,7 @@ router.get('/tasks/:id', async (req, res) => {
   // Proof of delivery: mt_driver_task_photo for this task
   try {
     const [photoRows] = await pool.query(
-      'SELECT id, task_id, photo_name, date_created, ip_address FROM mt_driver_task_photo WHERE task_id = ? ORDER BY date_created DESC',
+      'SELECT id, task_id, photo_name, date_created, ip_address FROM mt_driver_task_photo WHERE task_id = ? ORDER BY date_created ASC',
       [id]
     );
     result.task_photos = photoRows || [];

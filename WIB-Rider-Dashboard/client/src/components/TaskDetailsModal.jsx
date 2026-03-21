@@ -350,12 +350,28 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
       date_created: row.date_created,
       ip_address: row.ip_address,
     }));
+  /* Oldest first (initial_order → … → latest), same as classic driver timeline */
   const combined = [...historyEntries, ...photoEntries].sort((a, b) => {
     const da = a.date_created ? new Date(a.date_created).getTime() : 0;
     const db = b.date_created ? new Date(b.date_created).getTime() : 0;
-    return db - da;
+    if (da !== db) return da - db;
+    const ida = typeof a.id === 'string' && a.id.startsWith('photo-') ? a.id : Number(a.id);
+    const idb = typeof b.id === 'string' && b.id.startsWith('photo-') ? b.id : Number(b.id);
+    if (typeof ida === 'number' && typeof idb === 'number' && !Number.isNaN(ida) && !Number.isNaN(idb)) {
+      return ida - idb;
+    }
+    return String(a.id).localeCompare(String(b.id));
   });
-  const timeline = combined.length > 0 ? combined : legacyTimeline.map((e) => ({ ...e, type: 'legacy' }));
+  const timeline =
+    combined.length > 0
+      ? combined
+      : legacyTimeline
+          .map((e) => ({ ...e, type: 'legacy' }))
+          .sort((a, b) => {
+            const da = a.date_created ? new Date(a.date_created).getTime() : 0;
+            const db = b.date_created ? new Date(b.date_created).getTime() : 0;
+            return da - db;
+          });
   const customerName = displaySanitizedOrDash(task?.customer_name);
   const merchantName = (() => {
     const fromMerchant = merchant && (merchant.restaurant_name || '').trim();
