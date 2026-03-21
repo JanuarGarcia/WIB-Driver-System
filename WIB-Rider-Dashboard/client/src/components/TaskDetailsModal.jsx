@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { api, formatDate, statusDisplayClass } from '../api';
+import { api, formatDate, formatActivityTimelineDateTime, statusDisplayClass } from '../api';
 import { sanitizeLocationDisplayName, pickLocalizedMenuString } from '../utils/displayText';
 import { getAdvanceOrderLines } from '../utils/advanceOrder';
 
@@ -539,25 +539,33 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
                           <div key={entry.id ?? entry.stats_id ?? i} className={`activity-timeline-item ${entry.type === 'photo' ? 'activity-timeline-item-photo' : 'activity-timeline-item-history'}`}>
                             {entry.type === 'photo' ? (
                               <>
-                                <span className="tag status-green">Proof of delivery</span>
-                                <span className="activity-timeline-time">{formatDate(entry?.date_created)}</span>
+                                <div className="activity-timeline-top">
+                                  <div className="activity-timeline-main">
+                                    <span className="tag status-green">Proof of delivery</span>
+                                  </div>
+                                  <span className="activity-timeline-time activity-timeline-time--right">{formatActivityTimelineDateTime(entry?.date_created)}</span>
+                                </div>
                                 {(entry.photo_name || entry.photo_id) && (
                                   <TaskPhotoImage photoId={entry.photo_id} photoName={entry.photo_name} />
                                 )}
                               </>
                             ) : (
                               <>
-                                <span className={`tag ${statusDisplayClass(entry?.status ?? entry?.description)}`}>{entry?.status ?? entry?.description ?? '—'}</span>
-                                <span className="activity-timeline-time">{formatDate(entry?.date_created)}</span>
-                                {(entry?.update_by_name || entry?.update_by_type) && (
-                                  <span className="activity-timeline-by">by {entry.update_by_name || entry.update_by_type || '—'}</span>
-                                )}
-                                {(entry?.remarks || entry?.reason) && (
-                                  <div className="activity-timeline-remarks">{displaySanitized(entry.remarks || entry.reason) || entry.remarks || entry.reason}</div>
-                                )}
-                                {entry?.notes && (
-                                  <div className="activity-timeline-notes">{displaySanitized(entry.notes) || entry.notes}</div>
-                                )}
+                                <div className="activity-timeline-top">
+                                  <div className="activity-timeline-main">
+                                    <span className={`tag ${statusDisplayClass(entry?.status ?? entry?.description)}`}>{entry?.status ?? entry?.description ?? '—'}</span>
+                                    {(entry?.update_by_name || entry?.update_by_type) && (
+                                      <span className="activity-timeline-by">by {entry.update_by_name || entry.update_by_type || '—'}</span>
+                                    )}
+                                    {(entry?.remarks || entry?.reason) && (
+                                      <div className="activity-timeline-remarks">{displaySanitized(entry.remarks || entry.reason) || entry.remarks || entry.reason}</div>
+                                    )}
+                                    {entry?.notes && (
+                                      <div className="activity-timeline-notes">{displaySanitized(entry.notes) || entry.notes}</div>
+                                    )}
+                                  </div>
+                                  <span className="activity-timeline-time activity-timeline-time--right">{formatActivityTimelineDateTime(entry?.date_created)}</span>
+                                </div>
                               </>
                             )}
                           </div>

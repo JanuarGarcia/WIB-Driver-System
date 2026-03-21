@@ -38,6 +38,16 @@ export function formatDate(d) {
   return isNaN(dt.getTime()) ? String(d) : dt.toLocaleString();
 }
 
+/** Activity timeline: "March 21, 2026, 2:14 PM" (no seconds). */
+export function formatActivityTimelineDateTime(d) {
+  if (!d) return '—';
+  const dt = new Date(d);
+  if (isNaN(dt.getTime())) return String(d);
+  const datePart = dt.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+  const timePart = dt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+  return `${datePart}, ${timePart}`;
+}
+
 /** Status class for tags - matches WIB Driver app order/colors */
 export function statusClass(s) {
   if (!s) return 'status-default';
