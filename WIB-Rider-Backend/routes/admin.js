@@ -991,8 +991,7 @@ router.get('/driver-queue', async (req, res) => {
               d.location_lng,
               d.user_type,
               d.user_id,
-              d.device_platform,
-              d.device_type
+              d.device_platform
        FROM mt_driver_queue q
        INNER JOIN mt_driver d ON d.driver_id = q.driver_id
        LEFT JOIN mt_driver_team t ON d.team_id = t.team_id
