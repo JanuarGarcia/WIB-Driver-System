@@ -454,8 +454,9 @@ export default function AgentPanel({ onOpenTaskDetails }) {
                 title="Back to agents"
                 onClick={closeQueueView}
               >
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <path d="M15 18l-6-6 6-6" />
+                <svg className="agent-header-leading-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M3 12h13.5" />
+                  <path d="M8.5 6.5L3 12l5.5 5.5" />
                 </svg>
               </button>
               <span className="panel-header-title-wrap">Driver Queue</span>
@@ -471,8 +472,11 @@ export default function AgentPanel({ onOpenTaskDetails }) {
                 onClick={openQueueView}
                 title="Driver queue"
               >
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" />
+                <svg className="agent-header-leading-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <circle cx="6" cy="6" r="2.25" fill="currentColor" stroke="none" />
+                  <circle cx="6" cy="12" r="2.25" fill="currentColor" stroke="none" opacity="0.85" />
+                  <circle cx="6" cy="18" r="2.25" fill="currentColor" stroke="none" opacity="0.65" />
+                  <path d="M11 6h9M11 12h9M11 18h6" />
                 </svg>
               </button>
             </>

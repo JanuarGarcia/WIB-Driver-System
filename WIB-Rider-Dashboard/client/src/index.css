@@ -2649,6 +2649,37 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.panel.agent-panel .panel-header.agent-header .agent-header-leading .panel-header-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  margin: 0;
+  background: transparent;
+  border: none;
+  border-radius: 10px;
+  color: #fff;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  appearance: none;
+  transition: background 0.18s ease, transform 0.12s ease, opacity 0.15s ease;
+  flex-shrink: 0;
+}
+.panel.agent-panel .panel-header.agent-header .agent-header-leading .panel-header-icon-btn:hover {
+  background: rgba(255, 255, 255, 0.18);
+}
+.panel.agent-panel .panel-header.agent-header .agent-header-leading .panel-header-icon-btn:active {
+  transform: scale(0.96);
+  background: rgba(255, 255, 255, 0.22);
+}
+.panel.agent-panel .panel-header.agent-header .agent-header-leading .agent-header-leading-icon {
+  width: 22px;
+  height: 22px;
+  display: block;
+  flex-shrink: 0;
+}
 .panel.agent-panel .panel-header.agent-header .agent-panel-back-btn {
   margin-right: 0.05rem;
 }
@@ -6794,7 +6825,16 @@ tr:hover { background: var(--bg-hover) !important; }
     min-height: 44px;
   }
   .panel.agent-panel .panel-header.agent-header .agent-header-icons { gap: 0.4rem; }
-  .panel.agent-panel .panel-header.agent-header .panel-header-icon-btn { min-width: 44px; min-height: 44px; border-radius: 10px; }
+  .panel.agent-panel .panel-header.agent-header .panel-header-icon-btn,
+  .panel.agent-panel .panel-header.agent-header .agent-header-leading .panel-header-icon-btn {
+    min-width: 44px;
+    min-height: 44px;
+    border-radius: 10px;
+  }
+  .panel.agent-panel .panel-header.agent-header .agent-header-leading .agent-header-leading-icon {
+    width: 24px;
+    height: 24px;
+  }
   .panel.agent-panel .panel-stats--agents .panel-stats-number { font-size: 1rem; }
   .panel.agent-panel .panel-stats--agents .panel-stats-label { font-size: 0.65rem; }
   .agent-card-name { font-size: 0.9rem; }
