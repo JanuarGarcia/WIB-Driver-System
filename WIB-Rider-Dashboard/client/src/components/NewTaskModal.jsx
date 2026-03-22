@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { api } from '../api';
 import MapView from './MapView';
 
-const COUNTRY_CODES = [
+export const COUNTRY_CODES = [
   { code: 'PH', dial: '+63', name: 'Philippines', flag: '🇵🇭' },
   { code: 'US', dial: '+1', name: 'United States', flag: '🇺🇸' },
   { code: 'GB', dial: '+44', name: 'United Kingdom', flag: '🇬🇧' },
@@ -30,7 +30,7 @@ const COUNTRY_CODES = [
 
 const flagImageUrl = (code) => `https://flagcdn.com/w40/${(code || '').toLowerCase()}.png`;
 
-function CountryCodeDropdown({ value, onChange, ariaLabel }) {
+export function CountryCodeDropdown({ value, onChange, ariaLabel }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
   const selected = COUNTRY_CODES.find((c) => c.dial === value) || COUNTRY_CODES[0];

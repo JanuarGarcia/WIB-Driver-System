@@ -2,6 +2,38 @@ import { useState, useEffect, useRef } from 'react';
 import { api, formatDate, formatActivityTimelineDateTime, statusDisplayClass } from '../api';
 import { sanitizeLocationDisplayName, pickLocalizedMenuString } from '../utils/displayText';
 import { getAdvanceOrderLines } from '../utils/advanceOrder';
+import MapView from './MapView';
+import { CountryCodeDropdown, COUNTRY_CODES } from './NewTaskModal';
+
+/** Split stored contact (e.g. +63917…) into dial code + national number for edit UI. */
+function splitContactCountry(full) {
+  const s = String(full || '').trim();
+  if (!s) return { dial: '+63', national: '' };
+  const sorted = [...COUNTRY_CODES].sort((a, b) => b.dial.length - a.dial.length);
+  for (const c of sorted) {
+    if (s.startsWith(c.dial)) {
+      return { dial: c.dial, national: s.slice(c.dial.length).replace(/\D/g, '') };
+    }
+  }
+  return { dial: '+63', national: s.replace(/\D/g, '') };
+}
+
+function formatDatetimeLocalForInput(d) {
+  if (d == null || d === '') return '';
+  if (typeof d === 'string') {
+    const t = d.trim();
+    if (t.length >= 16) return t.slice(0, 16);
+    if (t.length >= 10) return `${t.slice(0, 10)}T00:00`;
+  }
+  try {
+    const dt = new Date(d);
+    if (!Number.isNaN(dt.getTime())) {
+      const iso = dt.toISOString();
+      return iso.slice(0, 16);
+    }
+  } catch (_) {}
+  return '';
+}
 
 /** Strip bogus \\ / escapes for read-only UI; hide literal "undefined"/"null" strings from API. */
 function displaySanitized(raw) {
@@ -162,11 +194,23 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
   const [drivers, setDrivers] = useState([]);
   const [assignTeamId, setAssignTeamId] = useState('');
   const [assignDriverId, setAssignDriverId] = useState('');
+  /** 1 = team only, 2 = assign agent (after team chosen). */
+  const [assignModalStep, setAssignModalStep] = useState(1);
   const [changeStatusOpen, setChangeStatusOpen] = useState(false);
   const [changeStatusValue, setChangeStatusValue] = useState('');
   const [changeStatusReason, setChangeStatusReason] = useState('');
   const [editOpen, setEditOpen] = useState(false);
   const [editForm, setEditForm] = useState({ task_description: '', delivery_address: '', customer_name: '', contact_number: '', delivery_date: '', email_address: '' });
+  const [editContactCountryCode, setEditContactCountryCode] = useState('+63');
+  const [editTeams, setEditTeams] = useState([]);
+  const [editDrivers, setEditDrivers] = useState([]);
+  const [editTeamId, setEditTeamId] = useState('');
+  const [editDriverId, setEditDriverId] = useState('');
+  const [editMapProvider, setEditMapProvider] = useState('mapbox');
+  const [editMapboxToken, setEditMapboxToken] = useState('');
+  const [editGoogleApiKey, setEditGoogleApiKey] = useState('');
+  const [editGoogleMapStyle, setEditGoogleMapStyle] = useState('');
+  const prevEditTeamRef = useRef('');
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
 
   useEffect(() => {
@@ -213,7 +257,7 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
   }, [taskId]);
 
   useEffect(() => {
-    if (!deleteConfirmOpen && !assignOpen && !changeStatusOpen) return;
+    if (!deleteConfirmOpen && !assignOpen && !changeStatusOpen && !editOpen) return;
     const onKey = (e) => {
       if (e.key !== 'Escape' || actionLoading) return;
       if (deleteConfirmOpen) setDeleteConfirmOpen(false);
@@ -227,10 +271,39 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
         setChangeStatusValue('');
         setChangeStatusReason('');
       }
+      if (editOpen) setEditOpen(false);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [deleteConfirmOpen, assignOpen, changeStatusOpen, actionLoading]);
+  }, [deleteConfirmOpen, assignOpen, changeStatusOpen, editOpen, actionLoading]);
+
+  useEffect(() => {
+    if (!editOpen) return;
+    api('teams').then((t) => setEditTeams(Array.isArray(t) ? t : (t?.teams || []))).catch(() => setEditTeams([]));
+    api('drivers').then((d) => setEditDrivers(Array.isArray(d) ? d : (d?.drivers || []))).catch(() => setEditDrivers([]));
+    api('settings')
+      .then((s) => {
+        const provider = (s.map_provider || '').toString().trim().toLowerCase();
+        setEditMapProvider(provider === 'google' ? 'google' : 'mapbox');
+        setEditGoogleApiKey(s.google_api_key || '');
+        setEditMapboxToken((s.mapbox_access_token || '').toString().trim());
+        setEditGoogleMapStyle(s.google_map_style != null ? String(s.google_map_style) : '');
+      })
+      .catch(() => {
+        setEditMapboxToken('');
+        setEditGoogleApiKey('');
+      });
+  }, [editOpen]);
+
+  useEffect(() => {
+    if (!editOpen) {
+      prevEditTeamRef.current = '';
+      return;
+    }
+    const prev = prevEditTeamRef.current;
+    prevEditTeamRef.current = editTeamId;
+    if (prev !== '' && prev !== editTeamId) setEditDriverId('');
+  }, [editOpen, editTeamId]);
 
   useEffect(() => {
     if (!taskId || !data?.task) return;
@@ -252,6 +325,9 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
     setChangeStatusValue('');
     setChangeStatusReason('');
     setEditOpen(false);
+    setEditTeamId('');
+    setEditDriverId('');
+    setEditContactCountryCode('+63');
     onClose?.();
   };
 
@@ -264,6 +340,7 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
         : '';
     setAssignTeamId(prefTeam);
     setAssignDriverId('');
+    setAssignModalStep(1);
     setAssignOpen(true);
     setChangeStatusOpen(false);
     setEditOpen(false);
@@ -280,6 +357,10 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
     if (!assignOpen) return;
     api('teams').then((t) => setTeams(Array.isArray(t) ? t : (t?.teams || []))).catch(() => setTeams([]));
     api('drivers').then((d) => setDrivers(Array.isArray(d) ? d : (d?.drivers || []))).catch(() => setDrivers([]));
+  }, [assignOpen]);
+
+  useEffect(() => {
+    if (!assignOpen) setAssignModalStep(1);
   }, [assignOpen]);
 
   const prevAssignTeamRef = useRef('');
@@ -396,28 +477,70 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
 
   const openEdit = () => {
     const t = data?.task ?? data;
-    if (t) {
-      setChangeStatusOpen(false);
-      setChangeStatusValue('');
-      setChangeStatusReason('');
-      setEditForm({
-        task_description: displaySanitized(t.task_description) || (t.task_description ?? ''),
-        delivery_address: displaySanitized(t.delivery_address) || (t.delivery_address ?? ''),
-        customer_name: displaySanitized(t.customer_name) || (t.customer_name ?? ''),
-        contact_number: t.contact_number ?? '',
-        delivery_date: t.delivery_date ? (typeof t.delivery_date === 'string' && t.delivery_date.length >= 10 ? t.delivery_date.slice(0, 10) : t.delivery_date) : '',
-        email_address: t.email_address ?? '',
-      });
-      setEditOpen(true);
-    }
+    const order = data?.order;
+    if (!t) return;
+    const split = splitContactCountry(t.contact_number);
+    setEditContactCountryCode(split.dial);
+    setEditForm({
+      task_description: displaySanitized(t.task_description) || (t.task_description ?? ''),
+      delivery_address: displaySanitized(t.delivery_address) || (t.delivery_address ?? ''),
+      customer_name: displaySanitized(t.customer_name) || (t.customer_name ?? ''),
+      contact_number: split.national,
+      delivery_date: formatDatetimeLocalForInput(t.delivery_date ?? order?.delivery_date),
+      email_address: t.email_address ?? '',
+    });
+    const prefTeam =
+      t.team_id != null && String(t.team_id).trim() !== '' && String(t.team_id).trim() !== '0'
+        ? String(t.team_id)
+        : '';
+    setEditTeamId(prefTeam);
+    setEditDriverId(
+      t.driver_id != null && String(t.driver_id).trim() !== '' && String(t.driver_id).trim() !== '0'
+        ? String(t.driver_id)
+        : ''
+    );
+    setChangeStatusOpen(false);
+    setChangeStatusValue('');
+    setChangeStatusReason('');
+    setAssignOpen(false);
+    setEditOpen(true);
   };
 
   const handleSaveEdit = (e) => {
     e.preventDefault();
+    const t = data?.task ?? data;
+    if (!t) return;
+    const origDriver = t.driver_id != null ? Number(t.driver_id) : 0;
+    const origTeam = t.team_id != null ? Number(t.team_id) : 0;
+    const newDriver = editDriverId ? parseInt(editDriverId, 10) : 0;
+    const newTeam = editTeamId ? parseInt(editTeamId, 10) : 0;
+    const assignChanged =
+      newDriver > 0 &&
+      newTeam > 0 &&
+      (newDriver !== origDriver || newTeam !== origTeam);
+
+    const body = {
+      task_description: editForm.task_description,
+      delivery_address: editForm.delivery_address,
+      customer_name: editForm.customer_name,
+      contact_number: `${editContactCountryCode || ''}${String(editForm.contact_number || '').trim()}`,
+      delivery_date: editForm.delivery_date || undefined,
+      email_address: editForm.email_address || undefined,
+    };
+
     setActionLoading(true);
-    api(`tasks/${taskId}`, { method: 'PUT', body: JSON.stringify(editForm) })
+    api(`tasks/${taskId}`, { method: 'PUT', body: JSON.stringify(body) })
       .then(() => {
-        setData((prev) => prev && prev.task ? { ...prev, task: { ...prev.task, ...editForm } } : prev);
+        if (assignChanged) {
+          return api(`tasks/${taskId}/assign`, {
+            method: 'PUT',
+            body: JSON.stringify({ driver_id: newDriver, team_id: newTeam }),
+          });
+        }
+      })
+      .then(() => api(`tasks/${taskId}`))
+      .then((res) => {
+        if (res && typeof res === 'object' && !res.error) setData(res);
         setEditOpen(false);
       })
       .catch((err) => alert(err?.error || err?.message || 'Update failed'))
@@ -439,6 +562,15 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
   const order = data?.order ?? null;
   const orderDetails = Array.isArray(data?.order_details) ? data.order_details : [];
   const merchant = data?.merchant ?? null;
+  const editTaskTypeLabel = (order?.trans_type ?? task?.trans_type ?? '').toString().trim() || '—';
+  const editModalIsPickup = editTaskTypeLabel.toLowerCase().includes('pickup');
+  const editPickupMerchantLabel = displaySanitized(merchant?.restaurant_name || task?.restaurant_name || '') || '—';
+  const editPickupAddrReadonly =
+    displaySanitized(
+      task?.pickup_address ||
+        task?.merchant_address ||
+        [merchant?.street, merchant?.city, merchant?.state].filter(Boolean).join(', ')
+    ) || '—';
   const legacyTimeline = Array.isArray(data?.order_status_timeline) ? data.order_status_timeline : [];
   const taskPhotos = Array.isArray(data?.task_photos) ? data.task_photos : [];
   const historyEntries = (orderHistory || [])
@@ -897,52 +1029,87 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
               </button>
             </div>
             <div className="modal-body">
-              <form onSubmit={doAssign} className="task-detail-assign-form">
-                <label className="modal-label" htmlFor="task-assign-team">Select Team</label>
-                <select
-                  id="task-assign-team"
-                  className="form-control"
-                  value={assignTeamId}
-                  onChange={(e) => setAssignTeamId(e.target.value)}
-                  disabled={actionLoading}
-                  aria-label="Select team"
-                >
-                  <option value="">All teams</option>
-                  {(teams || []).map((t) => (
-                    <option key={t.team_id ?? t.id} value={String(t.team_id ?? t.id)}>
-                      {t.team_name ?? t.name ?? `Team ${t.team_id ?? t.id}`}
-                    </option>
-                  ))}
-                </select>
-
-                <label className="modal-label" htmlFor="task-assign-driver">Assign Agent</label>
-                <select
-                  id="task-assign-driver"
-                  className="form-control"
-                  value={assignDriverId}
-                  onChange={(e) => setAssignDriverId(e.target.value)}
-                  disabled={actionLoading}
-                  required
-                  aria-label="Assign agent"
-                >
-                  <option value="">Please select agent</option>
-                  {(drivers || [])
-                    .filter((d) => !assignTeamId || String(d.team_id ?? d.team) === String(assignTeamId))
-                    .map((d) => (
-                      <option key={d.driver_id ?? d.id} value={String(d.driver_id ?? d.id)}>
-                        {d.full_name || [d.first_name, d.last_name].filter(Boolean).join(' ') || d.username || d.email || `Driver ${d.driver_id ?? d.id}`}
-                      </option>
-                    ))}
-                </select>
-
-                <div className="task-detail-assign-actions">
-                  <button type="submit" className="btn btn-primary" disabled={actionLoading || !assignDriverId}>
-                    {actionLoading ? 'Submitting…' : 'Submit'}
-                  </button>
-                  <button type="button" className="btn" onClick={cancelAssignModal} disabled={actionLoading}>
-                    Cancel
-                  </button>
-                </div>
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  if (assignModalStep === 1) {
+                    setAssignModalStep(2);
+                    return;
+                  }
+                  doAssign(e);
+                }}
+                className="task-detail-assign-form"
+              >
+                {assignModalStep === 1 && (
+                  <>
+                    <label className="modal-label" htmlFor="task-assign-team">Select Team</label>
+                    <select
+                      id="task-assign-team"
+                      className="form-control"
+                      value={assignTeamId}
+                      onChange={(e) => setAssignTeamId(e.target.value)}
+                      disabled={actionLoading}
+                      aria-label="Select team"
+                    >
+                      <option value="">All teams</option>
+                      {(teams || []).map((t) => (
+                        <option key={t.team_id ?? t.id} value={String(t.team_id ?? t.id)}>
+                          {t.team_name ?? t.name ?? `Team ${t.team_id ?? t.id}`}
+                        </option>
+                      ))}
+                    </select>
+                    <div className="task-detail-assign-actions">
+                      <button type="submit" className="btn btn-primary" disabled={actionLoading}>
+                        Continue
+                      </button>
+                      <button type="button" className="btn" onClick={cancelAssignModal} disabled={actionLoading}>
+                        Cancel
+                      </button>
+                    </div>
+                  </>
+                )}
+                {assignModalStep === 2 && (
+                  <>
+                    <label className="modal-label" htmlFor="task-assign-driver">Assign Agent</label>
+                    <select
+                      id="task-assign-driver"
+                      className="form-control"
+                      value={assignDriverId}
+                      onChange={(e) => setAssignDriverId(e.target.value)}
+                      disabled={actionLoading}
+                      required
+                      aria-label="Assign agent"
+                    >
+                      <option value="">Please select agent</option>
+                      {(drivers || [])
+                        .filter((d) => !assignTeamId || String(d.team_id ?? d.team) === String(assignTeamId))
+                        .map((d) => (
+                          <option key={d.driver_id ?? d.id} value={String(d.driver_id ?? d.id)}>
+                            {d.full_name || [d.first_name, d.last_name].filter(Boolean).join(' ') || d.username || d.email || `Driver ${d.driver_id ?? d.id}`}
+                          </option>
+                        ))}
+                    </select>
+                    <div className="task-detail-assign-actions">
+                      <button type="submit" className="btn btn-primary" disabled={actionLoading || !assignDriverId}>
+                        {actionLoading ? 'Submitting…' : 'Submit'}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn"
+                        onClick={() => {
+                          setAssignModalStep(1);
+                          setAssignDriverId('');
+                        }}
+                        disabled={actionLoading}
+                      >
+                        Back
+                      </button>
+                      <button type="button" className="btn" onClick={cancelAssignModal} disabled={actionLoading}>
+                        Cancel
+                      </button>
+                    </div>
+                  </>
+                )}
               </form>
             </div>
           </div>
@@ -1054,33 +1221,245 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
           </div>
         </div>
       )}
-      {editOpen && (
-        <div className="modal-box modal-box-lg task-detail-edit-modal" onClick={(e) => e.stopPropagation()}>
-          <div className="modal-header">
-            <h3>Edit task</h3>
-            <button type="button" className="task-detail-edit-modal-close" onClick={() => setEditOpen(false)} aria-label="Close">×</button>
-          </div>
-          <div className="modal-body">
-            <form onSubmit={handleSaveEdit} className="task-detail-edit-form">
-              <div className="task-detail-edit-fields">
-                <label className="modal-label" htmlFor="edit-task-description">Task description</label>
-                <textarea id="edit-task-description" className="form-control" rows={2} value={editForm.task_description} onChange={(e) => setEditForm((f) => ({ ...f, task_description: e.target.value }))} />
-                <label className="modal-label" htmlFor="edit-delivery-address">Delivery address</label>
-                <input id="edit-delivery-address" type="text" className="form-control" value={editForm.delivery_address} onChange={(e) => setEditForm((f) => ({ ...f, delivery_address: e.target.value }))} />
-                <label className="modal-label" htmlFor="edit-customer-name">Customer name</label>
-                <input id="edit-customer-name" type="text" className="form-control" value={editForm.customer_name} onChange={(e) => setEditForm((f) => ({ ...f, customer_name: e.target.value }))} />
-                <label className="modal-label" htmlFor="edit-contact-number">Contact number</label>
-                <input id="edit-contact-number" type="text" className="form-control" value={editForm.contact_number} onChange={(e) => setEditForm((f) => ({ ...f, contact_number: e.target.value }))} />
-                <label className="modal-label" htmlFor="edit-email">Email</label>
-                <input id="edit-email" type="email" className="form-control" value={editForm.email_address} onChange={(e) => setEditForm((f) => ({ ...f, email_address: e.target.value }))} />
-                <label className="modal-label" htmlFor="edit-delivery-date">Delivery date</label>
-                <input id="edit-delivery-date" type="date" className="form-control" value={editForm.delivery_date} onChange={(e) => setEditForm((f) => ({ ...f, delivery_date: e.target.value }))} />
-              </div>
-              <div className="modal-footer-actions">
-                <button type="submit" className="btn btn-primary" disabled={actionLoading}>Save</button>
-                <button type="button" className="btn" onClick={() => setEditOpen(false)} disabled={actionLoading}>Cancel</button>
-              </div>
-            </form>
+      {editOpen && task && (
+        <div
+          className="task-detail-edit-modal new-task-modal"
+          onClick={(e) => e.stopPropagation()}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="task-edit-modal-title"
+        >
+          <header className="new-task-modal-header">
+            <h1 id="task-edit-modal-title" className="new-task-modal-title">
+              Edit task
+              {task?.task_id != null ? (
+                <span className="task-detail-edit-task-id"> · Task ID {task.task_id}</span>
+              ) : null}
+            </h1>
+            <button type="button" className="new-task-modal-close" onClick={() => setEditOpen(false)} aria-label="Close" disabled={actionLoading}>
+              ×
+            </button>
+          </header>
+          <div className="new-task-modal-body">
+            <div className="new-task-form-col">
+              <form className="new-task-form" onSubmit={handleSaveEdit}>
+                <div className="new-task-field">
+                  <label className="new-task-label" htmlFor="edit-task-description">Task description</label>
+                  <textarea
+                    id="edit-task-description"
+                    className="new-task-input new-task-textarea"
+                    rows={3}
+                    value={editForm.task_description}
+                    onChange={(e) => setEditForm((f) => ({ ...f, task_description: e.target.value }))}
+                    placeholder="Enter task details…"
+                  />
+                </div>
+                <div className="new-task-field">
+                  <span className="new-task-label">Task type</span>
+                  <p className="new-task-type-hint task-detail-edit-readonly-type">{editTaskTypeLabel}</p>
+                </div>
+                <div className="new-task-row">
+                  <div className="new-task-field">
+                    <label className="new-task-label" htmlFor="edit-contact-number">Contact number</label>
+                    <div className="new-task-contact-wrap">
+                      <CountryCodeDropdown
+                        value={editContactCountryCode}
+                        onChange={(dial) => setEditContactCountryCode(dial)}
+                        ariaLabel="Country code"
+                      />
+                      <input
+                        id="edit-contact-number"
+                        type="text"
+                        className="new-task-contact-input"
+                        value={editForm.contact_number}
+                        onChange={(e) => setEditForm((f) => ({ ...f, contact_number: e.target.value }))}
+                        placeholder="Phone number"
+                      />
+                    </div>
+                  </div>
+                  <div className="new-task-field">
+                    <label className="new-task-label" htmlFor="edit-email">Email address</label>
+                    <input
+                      id="edit-email"
+                      type="email"
+                      className="new-task-input"
+                      value={editForm.email_address}
+                      onChange={(e) => setEditForm((f) => ({ ...f, email_address: e.target.value }))}
+                      placeholder="Email address"
+                    />
+                  </div>
+                </div>
+                <div className="new-task-row">
+                  <div className="new-task-field">
+                    <label className="new-task-label" htmlFor="edit-customer-name">Name</label>
+                    <input
+                      id="edit-customer-name"
+                      type="text"
+                      className="new-task-input"
+                      value={editForm.customer_name}
+                      onChange={(e) => setEditForm((f) => ({ ...f, customer_name: e.target.value }))}
+                      placeholder="Customer name"
+                    />
+                  </div>
+                  <div className="new-task-field">
+                    <label className="new-task-label" htmlFor="edit-delivery-date">
+                      {editModalIsPickup ? 'Pickup before' : 'Delivery before'}
+                    </label>
+                    <input
+                      id="edit-delivery-date"
+                      type="datetime-local"
+                      className="new-task-input"
+                      value={editForm.delivery_date}
+                      onChange={(e) => setEditForm((f) => ({ ...f, delivery_date: e.target.value }))}
+                    />
+                  </div>
+                </div>
+                <div className="new-task-field">
+                  <label className="new-task-label" htmlFor="edit-delivery-address">
+                    {editModalIsPickup ? 'Pickup address' : 'Delivery address'}
+                  </label>
+                  <input
+                    id="edit-delivery-address"
+                    type="text"
+                    className="new-task-input"
+                    value={editForm.delivery_address}
+                    onChange={(e) => setEditForm((f) => ({ ...f, delivery_address: e.target.value }))}
+                    placeholder="Street address"
+                  />
+                </div>
+                <h3 className="new-task-section-title">Pickup details</h3>
+                <div className="new-task-field">
+                  <label className="new-task-label">Merchant</label>
+                  <input type="text" className="new-task-input" readOnly value={editPickupMerchantLabel} tabIndex={-1} aria-readonly="true" />
+                </div>
+                <div className="new-task-field">
+                  <label className="new-task-label">Pickup / merchant address</label>
+                  <textarea className="new-task-input new-task-textarea" readOnly rows={2} value={editPickupAddrReadonly} tabIndex={-1} aria-readonly="true" />
+                </div>
+                <div className="new-task-field">
+                  <label className="new-task-label" htmlFor="edit-select-team">Select Team</label>
+                  <select
+                    id="edit-select-team"
+                    className="new-task-input new-task-select"
+                    value={editTeamId}
+                    onChange={(e) => setEditTeamId(e.target.value)}
+                    disabled={actionLoading}
+                    aria-label="Select team"
+                  >
+                    <option value="">Select a team</option>
+                    {(editTeams || []).map((tm) => (
+                      <option key={tm.team_id ?? tm.id} value={String(tm.team_id ?? tm.id)}>
+                        {tm.team_name ?? tm.name ?? `Team ${tm.team_id ?? tm.id}`}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                {!!editTeamId && (
+                  <div className="new-task-field">
+                    <label className="new-task-label" htmlFor="edit-assign-agent">Assign Agent</label>
+                    <select
+                      id="edit-assign-agent"
+                      className="new-task-input new-task-select"
+                      value={editDriverId}
+                      onChange={(e) => setEditDriverId(e.target.value)}
+                      disabled={actionLoading}
+                      aria-label="Assign agent"
+                    >
+                      <option value="">Select driver</option>
+                      {(editDrivers || [])
+                        .filter((d) => String(d.team_id ?? d.team) === String(editTeamId))
+                        .map((d) => (
+                          <option key={d.driver_id ?? d.id} value={String(d.driver_id ?? d.id)}>
+                            {d.full_name || [d.first_name, d.last_name].filter(Boolean).join(' ') || d.username || d.email || `Driver ${d.driver_id ?? d.id}`}
+                          </option>
+                        ))}
+                    </select>
+                  </div>
+                )}
+                <div className="new-task-actions">
+                  <button type="submit" className="new-task-btn new-task-btn-submit" disabled={actionLoading}>
+                    {actionLoading ? 'Saving…' : 'Save'}
+                  </button>
+                  <button type="button" className="new-task-btn new-task-btn-cancel" onClick={() => setEditOpen(false)} disabled={actionLoading}>
+                    Cancel
+                  </button>
+                </div>
+              </form>
+            </div>
+            <div className="new-task-map-col">
+              {!editModalIsPickup && (
+                <>
+                  <div className="new-task-map-wrap new-task-map-customer">
+                    <p className="new-task-map-label">Customer location</p>
+                    <div className="new-task-map-inner">
+                      <MapView
+                        key={`edit-task-customer-${taskId}`}
+                        locations={[]}
+                        merchants={[]}
+                        mapProvider={editMapProvider}
+                        apiKey={editGoogleApiKey}
+                        mapboxToken={editMapboxToken}
+                        center={[12.8797, 121.774]}
+                        zoom={4}
+                        googleMapStyle={editGoogleMapStyle}
+                      />
+                    </div>
+                  </div>
+                  <div className="new-task-map-wrap new-task-map-merchant">
+                    <p className="new-task-map-label">Merchant / Restaurant location</p>
+                    <div className="new-task-map-inner">
+                      <MapView
+                        key={`edit-task-merchant-${taskId}`}
+                        locations={[]}
+                        merchants={[]}
+                        mapProvider={editMapProvider}
+                        apiKey={editGoogleApiKey}
+                        mapboxToken={editMapboxToken}
+                        center={[12.8797, 121.774]}
+                        zoom={4}
+                        googleMapStyle={editGoogleMapStyle}
+                      />
+                    </div>
+                  </div>
+                </>
+              )}
+              {editModalIsPickup && (
+                <>
+                  <div className="new-task-map-wrap new-task-map-customer">
+                    <p className="new-task-map-label">Pickup location</p>
+                    <div className="new-task-map-inner">
+                      <MapView
+                        key={`edit-task-pickup-${taskId}`}
+                        locations={[]}
+                        merchants={[]}
+                        mapProvider={editMapProvider}
+                        apiKey={editGoogleApiKey}
+                        mapboxToken={editMapboxToken}
+                        center={[12.8797, 121.774]}
+                        zoom={4}
+                        googleMapStyle={editGoogleMapStyle}
+                      />
+                    </div>
+                  </div>
+                  <div className="new-task-map-wrap new-task-map-merchant">
+                    <p className="new-task-map-label">Drop location</p>
+                    <div className="new-task-map-inner">
+                      <MapView
+                        key={`edit-task-drop-${taskId}`}
+                        locations={[]}
+                        merchants={[]}
+                        mapProvider={editMapProvider}
+                        apiKey={editGoogleApiKey}
+                        mapboxToken={editMapboxToken}
+                        center={[12.8797, 121.774]}
+                        zoom={4}
+                        googleMapStyle={editGoogleMapStyle}
+                      />
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
           </div>
         </div>
       )}
