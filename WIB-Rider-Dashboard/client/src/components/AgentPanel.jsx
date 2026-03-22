@@ -830,7 +830,12 @@ export default function AgentPanel({ onOpenTaskDetails }) {
             </div>
           )}
           {!queueLoading && !queueError && queueList.length === 0 && (
-            <div className="driver-queue-state driver-queue-state--empty">No drivers currently in queue</div>
+            <div className="driver-queue-state driver-queue-state--empty">
+              <p className="driver-queue-empty-title">No drivers in the queue</p>
+              <p className="driver-queue-empty-sub">
+                When a rider joins the queue from the app, they’ll appear here in line (first in, first out).
+              </p>
+            </div>
           )}
           {!queueError && queueList.length > 0 && (
             <ul className="driver-queue-list">

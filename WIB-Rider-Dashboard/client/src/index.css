@@ -2727,6 +2727,21 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
   margin: 0 0 0.75rem;
   color: var(--text-primary);
 }
+.driver-queue-empty-title {
+  margin: 0 0 0.5rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.driver-queue-empty-sub {
+  margin: 0;
+  font-size: 0.8rem;
+  line-height: 1.45;
+  color: var(--text-muted);
+  max-width: 18rem;
+  margin-left: auto;
+  margin-right: auto;
+}
 .driver-queue-list {
   list-style: none;
   margin: 0;
