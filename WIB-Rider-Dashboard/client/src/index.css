@@ -4825,17 +4825,15 @@ tr:hover { background: var(--bg-hover) !important; }
 .modal-tabs button:hover { color: #374151; }
 .modal-tabs button.active { color: var(--color-primary); font-weight: 400; border-bottom-color: var(--color-primary); }
 
-/* Task details – edit modal on the right */
+/* Task details – when editing, hide read-only task panel; only edit modal is visible */
 .task-details-backdrop.task-details-backdrop-edit-open {
   justify-content: center;
+  align-items: center;
   padding-left: 1rem;
   padding-right: 1rem;
-  gap: 1rem;
-  align-items: center;
-  flex-wrap: nowrap;
 }
 .task-details-backdrop.task-details-backdrop-edit-open > .task-details-modal {
-  flex-shrink: 0;
+  display: none !important;
 }
 .task-detail-edit-modal {
   flex-shrink: 0;

@@ -657,7 +657,11 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
       className={`modal-backdrop task-details-backdrop ${editOpen ? 'task-details-backdrop-edit-open' : ''}`}
       onClick={() => !loading && !editOpen && !changeStatusOpen && !assignOpen && !deleteConfirmOpen && handleClose()}
     >
-      <div className="modal-box modal-box-lg task-details-modal" onClick={(e) => e.stopPropagation()}>
+      <div
+        className="modal-box modal-box-lg task-details-modal"
+        onClick={(e) => e.stopPropagation()}
+        aria-hidden={editOpen ? true : undefined}
+      >
         <div className="modal-header">
           <h3>Task ID : {task?.task_id ?? taskId ?? '…'}</h3>
         </div>
