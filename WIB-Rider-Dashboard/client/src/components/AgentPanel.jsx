@@ -101,6 +101,25 @@ function normStatus(status) {
   return (status || '').toLowerCase().replace(/\s+/g, '').replace(/_/g, '');
 }
 
+const QUEUE_POLL_MS = 8000;
+
+/** Human-readable waiting duration since joined_at (dispatch scan). */
+function formatQueueWaiting(joinedAt) {
+  if (!joinedAt) return '—';
+  const t = new Date(joinedAt).getTime();
+  if (Number.isNaN(t)) return '—';
+  const sec = Math.max(0, Math.floor((Date.now() - t) / 1000));
+  if (sec < 60) return 'Just joined';
+  if (sec < 3600) return `${Math.floor(sec / 60)} min`;
+  if (sec < 86400) {
+    const h = Math.floor(sec / 3600);
+    const m = Math.floor((sec % 3600) / 60);
+    return m > 0 ? `${h} hr ${m} min` : `${h} hr`;
+  }
+  const d = Math.floor(sec / 86400);
+  return `${d} day${d === 1 ? '' : 's'}`;
+}
+
 export default function AgentPanel({ onOpenTaskDetails }) {
   const navigate = useNavigate();
   const { selectedTeamId } = useTeamFilter();
@@ -115,6 +134,12 @@ export default function AgentPanel({ onOpenTaskDetails }) {
   const [allTasksView, setAllTasksView] = useState(false);
   const [assignedTasks, setAssignedTasks] = useState([]);
   const [tasksLoading, setTasksLoading] = useState(false);
+  /** Right panel: agents (default) or driver queue (same panel shell). */
+  const [panelMode, setPanelMode] = useState('agents');
+  const [queueList, setQueueList] = useState([]);
+  const [queueLoading, setQueueLoading] = useState(false);
+  const [queueError, setQueueError] = useState(null);
+  const [queueRemovingId, setQueueRemovingId] = useState(null);
   const searchInputRef = useRef(null);
   const filterRef = useRef(null);
 
@@ -138,6 +163,43 @@ export default function AgentPanel({ onOpenTaskDetails }) {
   useEffect(() => {
     if (allTasksView) fetchAssignedTasks();
   }, [allTasksView, fetchAssignedTasks]);
+
+  const loadQueue = useCallback(async (opts = {}) => {
+    const silent = opts.silent === true;
+    if (!silent) {
+      setQueueLoading(true);
+      setQueueError(null);
+    }
+    try {
+      const res = await api('driver-queue');
+      setQueueList(Array.isArray(res?.queue) ? res.queue : []);
+      setQueueError(null);
+    } catch (err) {
+      if (!silent) {
+        setQueueError(err?.error || err?.message || 'Failed to load queue');
+        setQueueList([]);
+      }
+    } finally {
+      if (!silent) setQueueLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (panelMode !== 'queue') return undefined;
+    const id = setInterval(() => {
+      loadQueue({ silent: true });
+    }, QUEUE_POLL_MS);
+    return () => clearInterval(id);
+  }, [panelMode, loadQueue]);
+
+  useEffect(() => {
+    if (panelMode !== 'queue') return undefined;
+    const onKey = (e) => {
+      if (e.key === 'Escape') setPanelMode('agents');
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [panelMode]);
 
   const loadAgents = useCallback(async (opts = {}) => {
     const silent = opts.silent === true;
@@ -234,6 +296,37 @@ export default function AgentPanel({ onOpenTaskDetails }) {
 
   const handleRefresh = () => {
     loadAgents();
+  };
+
+  const handleHeaderRefresh = () => {
+    if (panelMode === 'queue') loadQueue();
+    else handleRefresh();
+  };
+
+  const openQueueView = () => {
+    setPanelMode('queue');
+    setSearchOpen(false);
+    setFilterDropdownOpen(false);
+    loadQueue();
+  };
+
+  const closeQueueView = () => {
+    setPanelMode('agents');
+    setQueueError(null);
+  };
+
+  const handleRemoveFromQueue = async (driverId) => {
+    if (driverId == null) return;
+    if (!window.confirm('Remove this driver from the queue?')) return;
+    setQueueRemovingId(driverId);
+    try {
+      await api(`driver-queue/${driverId}/remove`, { method: 'PUT', body: '{}' });
+      await loadQueue({ silent: true });
+    } catch (err) {
+      alert(err?.error || err?.message || 'Could not remove from queue');
+    } finally {
+      setQueueRemovingId(null);
+    }
   };
 
   useEffect(() => {
@@ -343,23 +436,63 @@ export default function AgentPanel({ onOpenTaskDetails }) {
     navigate('/broadcast-logs');
   };
 
+  const totalQueued = queueList.length;
+  const nextInLine = totalQueued > 0 ? queueList[0] : null;
+
   return (
-    <div className={`panel agent-panel ${allTasksView ? 'agent-panel--all-tasks' : ''}`}>
+    <div
+      className={`panel agent-panel ${allTasksView ? 'agent-panel--all-tasks' : ''} ${panelMode === 'queue' ? 'agent-panel--queue-view' : ''}`}
+    >
       <div className="panel-header agent-header">
-        <span className="panel-header-title-wrap">Agent</span>
+        <div className="agent-header-leading">
+          {panelMode === 'queue' ? (
+            <>
+              <button
+                type="button"
+                className="panel-header-icon-btn agent-panel-back-btn"
+                aria-label="Back to agents"
+                title="Back to agents"
+                onClick={closeQueueView}
+              >
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M15 18l-6-6 6-6" />
+                </svg>
+              </button>
+              <span className="panel-header-title-wrap">Driver Queue</span>
+            </>
+          ) : (
+            <>
+              <span className="panel-header-title-wrap">Agent</span>
+              <button
+                type="button"
+                className="panel-header-icon-btn agent-panel-queue-toggle"
+                aria-label="Open driver queue"
+                aria-pressed={false}
+                onClick={openQueueView}
+                title="Driver queue"
+              >
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" />
+                </svg>
+              </button>
+            </>
+          )}
+        </div>
         <div className="panel-header-actions agent-header-icons">
           <button
             type="button"
             className="panel-header-icon-btn agent-header-refresh"
-            aria-label="Refresh"
-            onClick={handleRefresh}
-            title="Refresh agents"
+            aria-label={panelMode === 'queue' ? 'Refresh queue' : 'Refresh agents'}
+            onClick={handleHeaderRefresh}
+            title={panelMode === 'queue' ? 'Refresh queue' : 'Refresh agents'}
           >
             <svg width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M23 4v6h-6M1 20v-6h6" />
               <path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15" />
             </svg>
           </button>
+          {panelMode === 'agents' && (
+          <>
           <div className="agent-header-filter-wrap" ref={filterRef}>
             <button
               type="button"
@@ -418,8 +551,12 @@ export default function AgentPanel({ onOpenTaskDetails }) {
               </div>
             )}
           </div>
+          </>
+          )}
         </div>
       </div>
+      {panelMode === 'agents' && (
+      <div className="agent-panel-mode-pane agent-panel-mode-pane--agents" key="agents-mode">
       <div className={`panel-all-task-wrap ${allTasksView ? 'panel-all-task-wrap--active' : ''}`}>
         <label className="btn-all-task btn-all-task-toggle">
           <input
@@ -661,6 +798,100 @@ export default function AgentPanel({ onOpenTaskDetails }) {
           </ul>
         )}
       </div>
+      </div>
+      )}
+
+      {panelMode === 'queue' && (
+      <div className="agent-panel-mode-pane agent-panel-mode-pane--queue" key="queue-mode">
+        <div className="driver-queue-summary" aria-live="polite">
+          <div className="driver-queue-summary-item">
+            <span className="driver-queue-summary-value">{totalQueued}</span>
+            <span className="driver-queue-summary-label">Total queued</span>
+          </div>
+          <div className="driver-queue-summary-item driver-queue-summary-item--next">
+            <span className="driver-queue-summary-value driver-queue-summary-value--name" title={nextInLine ? (nextInLine.full_name || '') : undefined}>
+              {nextInLine ? (nextInLine.full_name || `Driver #${nextInLine.driver_id}`) : '—'}
+            </span>
+            <span className="driver-queue-summary-label">Next in line</span>
+          </div>
+        </div>
+        <div
+          className={`panel-body driver-queue-body ${!queueLoading && !queueError && totalQueued === 0 ? 'empty' : ''}`}
+        >
+          {queueLoading && queueList.length === 0 && !queueError && (
+            <div className="driver-queue-state">Loading…</div>
+          )}
+          {queueError && (
+            <div className="driver-queue-state driver-queue-state--error">
+              <p className="driver-queue-error-text">{queueError}</p>
+              <button type="button" className="btn btn-sm btn-primary" onClick={() => loadQueue()}>
+                Retry
+              </button>
+            </div>
+          )}
+          {!queueLoading && !queueError && queueList.length === 0 && (
+            <div className="driver-queue-state driver-queue-state--empty">No drivers currently in queue</div>
+          )}
+          {!queueError && queueList.length > 0 && (
+            <ul className="driver-queue-list">
+              {queueList.map((row) => {
+                const name = row.full_name || `Driver #${row.driver_id}`;
+                const isNext = row.is_next === true || row.position === 1;
+                const online = row.online_status === 'online';
+                const onDuty = Number(row.on_duty) === 1 || row.on_duty === true;
+                const joined = row.joined_at_iso || row.joined_at;
+                return (
+                  <li key={row.driver_id} className={`driver-queue-row ${isNext ? 'driver-queue-row--next' : ''}`}>
+                    <div className="driver-queue-row-pos" aria-label={`Position ${row.position}`}>
+                      {row.position}
+                    </div>
+                    <div className="driver-queue-row-main">
+                      <div className="driver-queue-row-top">
+                        <span className="driver-queue-row-name">{name}</span>
+                        {isNext && <span className="driver-queue-pill">Next in line</span>}
+                      </div>
+                      <div className="driver-queue-row-sub">
+                        <span className="driver-queue-row-team">{row.team_name || '—'}</span>
+                        <span className="driver-queue-row-sep" aria-hidden="true">·</span>
+                        <span className="driver-queue-row-wait">Waiting {formatQueueWaiting(joined)}</span>
+                      </div>
+                      <div className="driver-queue-row-badges">
+                        <span className={`driver-queue-mini-badge ${online ? 'driver-queue-mini-badge--online' : 'driver-queue-mini-badge--offline'}`}>
+                          {online ? 'Online' : 'Offline'}
+                        </span>
+                        <span className={`driver-queue-mini-badge ${onDuty ? 'driver-queue-mini-badge--duty-on' : 'driver-queue-mini-badge--duty-off'}`}>
+                          {onDuty ? 'On duty' : 'Off duty'}
+                        </span>
+                        <span className="driver-queue-row-tasks">{row.total_task ?? 0} task{(row.total_task ?? 0) === 1 ? '' : 's'}</span>
+                      </div>
+                      {joined && (
+                        <div className="driver-queue-row-joined">
+                          Joined{' '}
+                          {new Date(joined).toLocaleString(undefined, {
+                            month: 'short',
+                            day: 'numeric',
+                            hour: 'numeric',
+                            minute: '2-digit',
+                          })}
+                        </div>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      className="btn btn-sm driver-queue-remove"
+                      disabled={queueRemovingId === row.driver_id}
+                      onClick={() => handleRemoveFromQueue(row.driver_id)}
+                    >
+                      Remove
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
+      </div>
+      )}
 
       {selectedDriver && (
         <DriverDetailsModal

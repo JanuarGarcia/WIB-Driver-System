@@ -113,6 +113,24 @@ app.get('/api/*', async (req, res) => {
   }
 });
 
+// Proxy: PUT /api/driver-queue/:driverId/remove
+app.put('/api/driver-queue/:driverId/remove', express.json(), async (req, res) => {
+  setNoCache(res);
+  const driverId = req.params.driverId;
+  const url = `${BACKEND_URL}/admin/api/driver-queue/${encodeURIComponent(driverId)}/remove`;
+  try {
+    const response = await axios.put(url, req.body || {}, {
+      headers: backendHeaders(req),
+      timeout: 15000,
+    });
+    res.json(response.data);
+  } catch (err) {
+    const status = err.response?.status || 500;
+    const data = err.response?.data || { error: err.message };
+    res.status(status).json(data);
+  }
+});
+
 // Proxy: PUT /api/tasks/:id/assign
 app.put('/api/tasks/:id/assign', express.json(), async (req, res) => {
   setNoCache(res);

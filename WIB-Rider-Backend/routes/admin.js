@@ -960,6 +960,118 @@ router.post('/driver/agent-dashboard', express.json(), async (req, res) => {
   }
 });
 
+// ---- Driver queue (mt_driver_queue: active rows only, FIFO by joined_at) ----
+router.get('/driver-queue', async (req, res) => {
+  try {
+    const map = await getSettingsMap();
+    const trackingType = map.driver_tracking_option === '2' ? '2' : '1';
+    const dateOnly = new Date().toISOString().slice(0, 10);
+    const nowSec = Math.floor(Date.now() / 1000);
+
+    const [rows] = await pool.query(
+      `SELECT q.id AS queue_entry_id,
+              q.driver_id,
+              q.joined_at,
+              q.status AS queue_row_status,
+              d.username,
+              d.first_name,
+              d.last_name,
+              CONCAT(COALESCE(d.first_name,''), ' ', COALESCE(d.last_name,'')) AS full_name,
+              d.phone,
+              d.on_duty,
+              d.team_id,
+              t.team_name,
+              d.email,
+              COALESCE(d.transport_description, d.licence_plate, '') AS vehicle,
+              COALESCE(NULLIF(TRIM(d.status), ''), 'active') AS status,
+              COALESCE(d.last_login, d.date_modified) AS status_updated_at,
+              d.last_login,
+              d.last_online,
+              d.location_lat,
+              d.location_lng,
+              d.user_type,
+              d.user_id,
+              d.device_platform,
+              d.device_type
+       FROM mt_driver_queue q
+       INNER JOIN mt_driver d ON d.driver_id = q.driver_id
+       LEFT JOIN mt_driver_team t ON d.team_id = t.team_id
+       WHERE q.left_at IS NULL
+       ORDER BY q.joined_at ASC`
+    );
+
+    const driverIds = (rows || []).map((r) => r.driver_id).filter(Boolean);
+    const taskCountByDriver = {};
+    if (driverIds.length > 0) {
+      try {
+        const placeholders = driverIds.map(() => '?').join(',');
+        const [taskRows] = await pool.query(
+          `SELECT driver_id, COUNT(*) AS cnt FROM mt_driver_task WHERE driver_id IN (${placeholders}) AND (delivery_date = ? OR DATE(delivery_date) = ?) GROUP BY driver_id`,
+          [...driverIds, dateOnly, dateOnly]
+        );
+        for (const tr of taskRows || []) taskCountByDriver[tr.driver_id] = tr.cnt;
+      } catch (_) {}
+    }
+
+    const queue = (rows || []).map((r, index) => {
+      const rowForMap = {
+        ...r,
+        last_online:
+          r.last_online != null
+            ? r.last_online
+            : r.last_login
+              ? Math.floor(new Date(r.last_login).getTime() / 1000)
+              : null,
+      };
+      const mapped = mapDriverRowToAgentDriver(rowForMap, dateOnly, trackingType, taskCountByDriver, nowSec);
+      return {
+        position: index + 1,
+        queue_entry_id: r.queue_entry_id,
+        driver_id: r.driver_id,
+        joined_at: r.joined_at,
+        joined_at_iso: r.joined_at ? new Date(r.joined_at).toISOString() : null,
+        full_name: mapped.full_name,
+        team_name: mapped.team_name,
+        team_id: mapped.team_id,
+        online_status: mapped.online_status,
+        connection_status: mapped.connection_status,
+        on_duty: mapped.on_duty,
+        total_task: mapped.total_task,
+        is_next: index === 0,
+      };
+    });
+
+    return res.json({
+      queue,
+      total_queued: queue.length,
+      next_in_line: queue[0] || null,
+    });
+  } catch (e) {
+    if (e.code === 'ER_NO_SUCH_TABLE' || e.code === 'ER_BAD_FIELD_ERROR') {
+      return res.status(503).json({ error: 'Driver queue is not available (mt_driver_queue).' });
+    }
+    return res.status(500).json({ error: e.message || 'Failed to load driver queue' });
+  }
+});
+
+router.put('/driver-queue/:driverId/remove', express.json(), async (req, res) => {
+  const driverId = parseInt(req.params.driverId, 10);
+  if (!Number.isFinite(driverId)) return res.status(400).json({ error: 'Invalid driver id' });
+  try {
+    const [result] = await pool.query(
+      `UPDATE mt_driver_queue SET left_at = NOW(), status = ? WHERE driver_id = ? AND left_at IS NULL`,
+      ['left', driverId]
+    );
+    if (result.affectedRows === 0) return res.status(404).json({ error: 'Driver is not in the queue' });
+    return res.json({ ok: true });
+  } catch (e) {
+    if (e.code === 'ER_NO_SUCH_TABLE' || e.code === 'ER_BAD_FIELD_ERROR') {
+      return res.status(503).json({ error: 'Driver queue is not available.' });
+    }
+    return res.status(500).json({ error: e.message || 'Failed to remove driver from queue' });
+  }
+});
+
 // ---- Driver stats (Active / Offline / Total) ----
 router.get('/stats/drivers', async (req, res) => {
   try {
