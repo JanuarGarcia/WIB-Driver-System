@@ -422,7 +422,7 @@ export default function TaskPanel({ onOpenTaskDetails, listRevision = 0 }) {
   return (
     <div className="panel tasks-panel">
       <div className="panel-header tasks-panel-header">
-        <span className="tasks-panel-header-title">Tasks</span>
+        <span className="panel-header-title-wrap tasks-panel-header-title">Tasks</span>
         <div className="tasks-panel-date-wrap" ref={calendarRef}>
           <button
             type="button"

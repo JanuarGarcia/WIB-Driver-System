@@ -2103,7 +2103,7 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
   background: var(--color-primary);
   color: #fff;
   border-bottom: none;
-  padding: 0.8rem 0.65rem;
+  padding: 0.75rem 0.85rem;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -2118,7 +2118,13 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
 .panel.tasks-panel .tasks-panel-header .tasks-panel-header-actions {
   overflow: visible;
 }
-.tasks-panel-header-title { font-weight: 400; font-size: 1.125rem; white-space: nowrap; flex-shrink: 0; }
+.panel.tasks-panel .tasks-panel-header .panel-header-title-wrap.tasks-panel-header-title {
+  font-weight: 400;
+  font-size: 1.125rem;
+  color: #fff;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
 .panel.tasks-panel .tasks-panel-header-date {
   color: rgba(255,255,255,.95);
   font-weight: 400;
@@ -2669,10 +2675,11 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
 .tasks-panel-sort-indicator {
   display: flex;
   align-items: center;
-  min-height: 2.25rem;
+  min-height: 2.5rem;
+  box-sizing: border-box;
   background: rgba(79, 99, 45, 0.08);
   border-bottom: 1px solid var(--border-soft);
-  padding: 0.4rem 0.75rem;
+  padding: 0.45rem 0.85rem;
   flex-shrink: 0;
 }
 .panel.tasks-panel .tasks-panel-sort-indicator {
@@ -2752,22 +2759,40 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
   background: var(--color-primary);
   color: #fff;
 }
-.panel.tasks-panel .panel-stats {
+/* Tasks & Agent: matched stats strip (side panels mirror each other) */
+.panel.tasks-panel .panel-stats.panel-stats--tasks,
+.panel.agent-panel .panel-stats.panel-stats--agents {
   flex-shrink: 0;
   background: var(--bg-card);
   border-bottom: 1px solid var(--border-soft);
   flex-wrap: wrap;
-  gap: 0.5rem;
-  padding: 0.5rem 0.75rem;
+  align-items: stretch;
+  gap: 0.55rem;
+  padding: 0.6rem 0.85rem;
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.03);
 }
-.panel.tasks-panel .panel-stats .panel-stats-item {
+.panel.tasks-panel .panel-stats.panel-stats--tasks .panel-stats-item,
+.panel.agent-panel .panel-stats.panel-stats--agents .panel-stats-item {
   flex: 1 1 4.5rem;
   min-width: 4.5rem;
-  padding: 0.6rem 0.4rem;
-  gap: 0.25rem;
+  padding: 0.55rem 0.45rem;
+  gap: 0.35rem;
 }
-.panel.tasks-panel .panel-stats .panel-stats-number { font-size: 1.5rem; }
-.panel.tasks-panel .panel-stats .panel-stats-label { font-size: 0.65rem; }
+.panel.tasks-panel .panel-stats.panel-stats--tasks .panel-stats-number,
+.panel.agent-panel .panel-stats.panel-stats--agents .panel-stats-number {
+  font-size: 1.625rem;
+  line-height: 1.15;
+}
+.panel.tasks-panel .panel-stats.panel-stats--tasks .panel-stats-label,
+.panel.agent-panel .panel-stats.panel-stats--agents .panel-stats-label {
+  font-size: 0.65rem;
+  letter-spacing: 0.075em;
+}
+.panel.tasks-panel .panel-stats.panel-stats--tasks .panel-stats-icon svg,
+.panel.agent-panel .panel-stats.panel-stats--agents .panel-stats-icon svg {
+  width: 20px;
+  height: 20px;
+}
 .panel.tasks-panel .panel-filters { background: #ebebe8; border-bottom: 1px solid var(--border-soft); }
 
 /* Stats bar (Unassigned | Assigned | Started | In progress | Completed / Active | Offline | Total) – professional */
@@ -2896,7 +2921,7 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
   background: var(--color-primary);
   color: #fff;
   border-bottom: none;
-  padding: 0.8rem 1rem;
+  padding: 0.75rem 0.85rem;
   overflow: visible;
   display: flex;
   align-items: center;
@@ -3179,12 +3204,6 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
 }
 .panel.agent-panel .panel-filters { background: var(--bg-card); border-bottom: 1px solid var(--border-soft); }
 .panel.agent-panel .panel-stats { background: var(--bg-card); }
-/* Active | Offline | Total: wrap on narrow layouts so counts stay readable */
-.panel.agent-panel .panel-stats.panel-stats--agents {
-  flex-wrap: wrap;
-  align-items: center;
-}
-
 .panel.agent-panel {
   display: flex;
   flex-direction: column;
@@ -3235,8 +3254,9 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
   display: flex;
   justify-content: flex-end;
   align-items: center;
-  min-height: 2.25rem;
-  padding: 0.4rem 0.75rem;
+  min-height: 2.5rem;
+  box-sizing: border-box;
+  padding: 0.45rem 0.85rem;
   background: rgba(79, 99, 45, 0.08);
   border-bottom: 1px solid var(--border-soft);
   flex-shrink: 0;
@@ -3465,8 +3485,11 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
   min-height: 0;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
-  padding: 0.6rem 1rem;
+  padding: 0.55rem 0.85rem;
   background: #ebebe8;
+}
+.panel.agent-panel:not(.agent-panel--all-tasks) .panel-body:not(.driver-queue-body) {
+  padding: 0.55rem 0.85rem;
 }
 
 /* Task list: card-style items with clear hierarchy */
@@ -7006,10 +7029,14 @@ tr:hover { background: var(--bg-hover) !important; }
   .dashboard-layout .tasks-panel { max-height: 280px; border-right: none; border-bottom: 1px solid var(--border-soft); }
   .dashboard-layout .agent-panel { max-height: 320px; min-height: 200px; border-left: none; border-bottom: 1px solid var(--border-soft); }
   .dashboard-layout .dashboard-map-wrap { min-height: 400px; }
-  .panel.agent-panel .panel-header.agent-header { padding: 0.6rem 0.75rem; }
-  .panel.agent-panel .panel-stats--agents { flex-wrap: wrap; gap: 0.35rem; padding: 0.5rem 0.75rem; }
-  .panel.agent-panel .panel-stats--agents .panel-stats-item { flex: 1 1 auto; min-width: 0; }
-  .panel.agent-panel .panel-body { padding: 0.4rem 0.6rem; }
+  .panel.agent-panel .panel-header.agent-header,
+  .panel.tasks-panel .tasks-panel-header { padding: 0.6rem 0.75rem; }
+  .panel.agent-panel .panel-stats--agents,
+  .panel.tasks-panel .panel-stats--tasks { flex-wrap: wrap; gap: 0.35rem; padding: 0.5rem 0.75rem; }
+  .panel.agent-panel .panel-stats--agents .panel-stats-item,
+  .panel.tasks-panel .panel-stats--tasks .panel-stats-item { flex: 1 1 auto; min-width: 0; }
+  .panel.agent-panel:not(.agent-panel--all-tasks) .panel-body:not(.driver-queue-body),
+  .panel.tasks-panel .panel-body { padding: 0.4rem 0.6rem; }
   .agent-card-inner { padding: 0.5rem 0; }
   .agent-detail-card { padding: 0.75rem 0.85rem; }
 }
@@ -7290,7 +7317,7 @@ tr:hover { background: var(--bg-hover) !important; }
   }
   .dashboard-layout .tasks-panel { max-height: none; }
   .dashboard-layout .agent-panel { max-height: none; min-height: 0; }
-  .dashboard-layout .panel.tasks-panel .tasks-panel-header { padding: 0.8rem 0.75rem; }
+  .dashboard-layout .panel.tasks-panel .tasks-panel-header { padding: 0.6rem 0.75rem; }
   .dashboard-layout .panel.tasks-panel .panel-body { padding: 0.65rem 0.75rem; }
   .dashboard-layout .task-card-v2 { padding: 0.9rem 0.85rem; border-radius: 10px; }
   .task-card-v2 { padding: 0.75rem 0.9rem; }
@@ -7310,8 +7337,10 @@ tr:hover { background: var(--bg-hover) !important; }
     width: 24px;
     height: 24px;
   }
-  .panel.agent-panel .panel-stats--agents .panel-stats-number { font-size: 1rem; }
-  .panel.agent-panel .panel-stats--agents .panel-stats-label { font-size: 0.65rem; }
+  .panel.agent-panel .panel-stats--agents .panel-stats-number,
+  .panel.tasks-panel .panel-stats--tasks .panel-stats-number { font-size: 1rem; }
+  .panel.agent-panel .panel-stats--agents .panel-stats-label,
+  .panel.tasks-panel .panel-stats--tasks .panel-stats-label { font-size: 0.65rem; }
   .agent-card-name { font-size: 0.9rem; }
   .agent-card-details { padding: 0.5rem 0.75rem; font-size: 0.75rem; min-height: 44px; border-radius: 8px; }
   .agent-detail-modal-card { max-width: 95%; margin: 0.5rem; }
