@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { api } from '../api';
+import MapMerchantFilter from '../components/MapMerchantFilter';
 
 function SearchableMerchantSelect({ merchants, excludedIds, onSelect, 'aria-label': ariaLabel }) {
   const [query, setQuery] = useState('');
@@ -1169,6 +1170,15 @@ export default function Settings() {
                 <div className="settings-field">
                   <div role="button" className={`settings-toggle ${includeOfflineDriversOnMap ? 'on' : ''}`} tabIndex={0} aria-label="Toggle" onClick={() => setIncludeOfflineDriversOnMap((v) => !v)}> </div>
                   <span className="settings-toggle-label">{includeOfflineDriversOnMap ? 'ON' : 'OFF'}</span>
+                </div>
+              </div>
+              <div className="settings-form-row">
+                <label>Dashboard map — merchant filter</label>
+                <div className="settings-field">
+                  <MapMerchantFilter options={merchants} className="map-merchant-filter--settings" />
+                  <p className="settings-helper">
+                    Limits which merchant pins and matching on-duty riders appear on the main Dashboard map. Saved in this browser session only (not the Save button below).
+                  </p>
                 </div>
               </div>
               <div className="settings-form-row">

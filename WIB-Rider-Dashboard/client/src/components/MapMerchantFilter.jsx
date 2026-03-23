@@ -1,10 +1,10 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 
-const STORAGE_KEY = 'wib-map-merchant-filter-ids';
+export const MAP_MERCHANT_FILTER_STORAGE_KEY = 'wib-map-merchant-filter-ids';
 
 export function loadMapMerchantFilterFromSession() {
   try {
-    const raw = sessionStorage.getItem(STORAGE_KEY);
+    const raw = sessionStorage.getItem(MAP_MERCHANT_FILTER_STORAGE_KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     return Array.isArray(parsed) ? parsed.map((x) => String(x)).filter(Boolean) : [];
@@ -13,11 +13,35 @@ export function loadMapMerchantFilterFromSession() {
   }
 }
 
+const FILTER_CHANGED = 'wib-map-merchant-filter-changed';
+
 export function saveMapMerchantFilterToSession(ids) {
+  const normalized = Array.isArray(ids) ? ids.map((x) => String(x)).filter(Boolean) : [];
   try {
-    if (!ids || ids.length === 0) sessionStorage.removeItem(STORAGE_KEY);
-    else sessionStorage.setItem(STORAGE_KEY, JSON.stringify(ids.map((x) => String(x))));
+    if (normalized.length === 0) sessionStorage.removeItem(MAP_MERCHANT_FILTER_STORAGE_KEY);
+    else sessionStorage.setItem(MAP_MERCHANT_FILTER_STORAGE_KEY, JSON.stringify(normalized));
   } catch (_) {}
+  try {
+    window.dispatchEvent(new CustomEvent(FILTER_CHANGED, { detail: { ids: normalized } }));
+  } catch (_) {}
+}
+
+/** Subscribe to dashboard map merchant filter (session + cross-tab). */
+export function useMapMerchantFilterSelection() {
+  const [ids, setIds] = useState(loadMapMerchantFilterFromSession);
+  useEffect(() => {
+    const sync = () => setIds(loadMapMerchantFilterFromSession());
+    window.addEventListener(FILTER_CHANGED, sync);
+    const onStorage = (e) => {
+      if (e.key === MAP_MERCHANT_FILTER_STORAGE_KEY) sync();
+    };
+    window.addEventListener('storage', onStorage);
+    return () => {
+      window.removeEventListener(FILTER_CHANGED, sync);
+      window.removeEventListener('storage', onStorage);
+    };
+  }, []);
+  return ids;
 }
 
 function merchantRowId(m) {
@@ -30,13 +54,27 @@ function merchantLabel(m) {
 }
 
 /**
- * Map toolbar: chips + searchable add (same interaction model as Settings order-status merchants).
- * @param {{ options: Array<{ merchant_id?: number, id?: number, restaurant_name?: string }>, selectedIds: string[], onChange: (ids: string[]) => void }} props
+ * Chips + searchable multi-select. Persists to sessionStorage; dashboard map reads via `useMapMerchantFilterSelection`.
+ * @param {{ options: Array<{ merchant_id?: number, id?: number, restaurant_name?: string }>, className?: string }} props
  */
-export default function MapMerchantFilter({ options = [], selectedIds = [], onChange }) {
+export default function MapMerchantFilter({ options = [], className = '' }) {
+  const [selectedIds, setSelectedIds] = useState(loadMapMerchantFilterFromSession);
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
   const containerRef = useRef(null);
+
+  useEffect(() => {
+    const sync = () => setSelectedIds(loadMapMerchantFilterFromSession());
+    const onStorage = (e) => {
+      if (e.key === MAP_MERCHANT_FILTER_STORAGE_KEY) sync();
+    };
+    window.addEventListener(FILTER_CHANGED, sync);
+    window.addEventListener('storage', onStorage);
+    return () => {
+      window.removeEventListener(FILTER_CHANGED, sync);
+      window.removeEventListener('storage', onStorage);
+    };
+  }, []);
 
   const selectedSet = useMemo(() => new Set((selectedIds || []).map((x) => String(x))), [selectedIds]);
 
@@ -78,30 +116,30 @@ export default function MapMerchantFilter({ options = [], selectedIds = [], onCh
       const s = String(id).trim();
       if (!s || selectedSet.has(s)) return;
       const next = [...selectedIds, s];
-      onChange(next);
+      setSelectedIds(next);
       saveMapMerchantFilterToSession(next);
       setQuery('');
       setOpen(false);
     },
-    [selectedIds, selectedSet, onChange]
+    [selectedIds, selectedSet]
   );
 
   const removeId = useCallback(
     (id) => {
       const s = String(id);
       const next = selectedIds.filter((x) => String(x) !== s);
-      onChange(next);
+      setSelectedIds(next);
       saveMapMerchantFilterToSession(next);
     },
-    [selectedIds, onChange]
+    [selectedIds]
   );
 
   const clearAll = useCallback(() => {
-    onChange([]);
+    setSelectedIds([]);
     saveMapMerchantFilterToSession([]);
     setQuery('');
     setOpen(false);
-  }, [onChange]);
+  }, []);
 
   const labelById = useMemo(() => {
     const map = new Map();
@@ -112,8 +150,10 @@ export default function MapMerchantFilter({ options = [], selectedIds = [], onCh
     return map;
   }, [sortedOptions]);
 
+  const rootClass = ['map-merchant-filter', className].filter(Boolean).join(' ');
+
   return (
-    <div className="map-merchant-filter" ref={containerRef}>
+    <div className={rootClass} ref={containerRef}>
       <div className="map-merchant-filter-head">
         <span className="map-merchant-filter-label">Merchant filter</span>
         {selectedIds.length > 0 ? (
@@ -185,7 +225,7 @@ export default function MapMerchantFilter({ options = [], selectedIds = [], onCh
         )}
       </div>
       {selectedIds.length === 0 ? (
-        <p className="map-merchant-filter-hint">Leave empty to show all merchants and riders on the map.</p>
+        <p className="map-merchant-filter-hint">Leave empty to show all merchants and riders on the dashboard map.</p>
       ) : null}
     </div>
   );

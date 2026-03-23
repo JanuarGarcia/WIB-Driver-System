@@ -6,7 +6,7 @@ import TaskDetailsModal from '../components/TaskDetailsModal';
 import MapView from '../components/MapView';
 import MapErrorBoundary from '../components/MapErrorBoundary';
 import AgentPanel from '../components/AgentPanel';
-import MapMerchantFilter, { loadMapMerchantFilterFromSession } from '../components/MapMerchantFilter';
+import { useMapMerchantFilterSelection } from '../components/MapMerchantFilter';
 import { api } from '../api';
 import { useTeamFilter } from '../context/TeamFilterContext';
 
@@ -21,9 +21,7 @@ export default function Dashboard() {
   const [mobileSection, setMobileSection] = useState('tasks'); // 'tasks' | 'map' | 'agents' for small screens
   const [locations, setLocations] = useState([]);
   const [merchants, setMerchants] = useState([]);
-  /** Full merchant list for filter dropdown (names/ids); map pins use `merchants` from locations API. */
-  const [merchantsForFilter, setMerchantsForFilter] = useState([]);
-  const [selectedMapMerchantIds, setSelectedMapMerchantIds] = useState(loadMapMerchantFilterFromSession);
+  const selectedMapMerchantIds = useMapMerchantFilterSelection();
   const [mapProvider, setMapProvider] = useState('mapbox');
   const [googleApiKey, setGoogleApiKey] = useState('');
   const [mapboxToken, setMapboxToken] = useState('');
@@ -52,16 +50,6 @@ export default function Dashboard() {
     api('merchants/locations')
       .then(setMerchants)
       .catch(() => setMerchants([]));
-  }, []);
-
-  useEffect(() => {
-    api('merchants')
-      .then((list) => setMerchantsForFilter(Array.isArray(list) ? list : []))
-      .catch(() => setMerchantsForFilter([]));
-  }, []);
-
-  const onMapMerchantFilterChange = useCallback((ids) => {
-    setSelectedMapMerchantIds(ids);
   }, []);
 
   const filteredMerchantsForMap = useMemo(() => {
@@ -273,11 +261,6 @@ export default function Dashboard() {
         )}
       <div className="dashboard-layout-panel dashboard-layout-map">
       <div className="dashboard-map-wrap">
-        <MapMerchantFilter
-          options={merchantsForFilter.length > 0 ? merchantsForFilter : merchants}
-          selectedIds={selectedMapMerchantIds}
-          onChange={onMapMerchantFilterChange}
-        />
         <div id="map" className="dashboard-map-inner">
           <MapErrorBoundary
             fallback={({ reset }) => (
