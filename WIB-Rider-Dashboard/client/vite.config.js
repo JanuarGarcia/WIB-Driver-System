@@ -12,6 +12,7 @@ export default defineConfig({
         rewrite: (path) => path.replace(/^\/api/, '/admin/api'),
       },
       '/uploads': { target: 'http://localhost:3000', changeOrigin: true },
+      '/upload': { target: 'http://localhost:3000', changeOrigin: true },
     },
   },
 });

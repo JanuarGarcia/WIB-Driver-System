@@ -127,33 +127,45 @@ function formatOrderTipRow(order) {
   return { label, summaryLabel, display };
 }
 
-/** Normalize photo filename: strip duplicate extension (e.g. .jpg.jpg -> .jpg). */
+/** Normalize photo filename: strip wrapping <>, basename token, duplicate extension (.jpg.jpg -> .jpg). */
 function normalizePhotoName(photoName) {
   if (!photoName || typeof photoName !== 'string') return '';
-  const s = photoName.trim();
-  let name = s;
-  const doubleExt = /\.(jpg|jpeg|png|gif|webp)\.(jpg|jpeg|png|gif|webp)$/i.exec(s);
-  if (doubleExt) name = s.slice(0, -(doubleExt[1].length + 1));
+  let s = photoName.trim().replace(/\\/g, '/');
+  s = s.replace(/^<+/, '').replace(/>+$/, '').trim();
+  const base = s.includes('/') ? s.split('/').pop() || s : s;
+  let name = base;
+  const doubleExt = /\.(jpg|jpeg|png|gif|webp)\.(jpg|jpeg|png|gif|webp)$/i.exec(name);
+  if (doubleExt) name = name.slice(0, -(doubleExt[1].length + 1));
   return name;
 }
 
-/** Build task photo URL. Tries task_photos subfolder first; use tryRootOnError to also try /uploads/{name} when the first 404s. */
-function taskPhotoUrl(photoName, useRoot = false) {
+/** Build task photo URL. Order: task_photos, /upload/task (mt_driver_task_photo), then uploads root. */
+function taskPhotoUrl(photoName, variant = 'task_photos') {
   if (!photoName || typeof photoName !== 'string') return '';
   const s = photoName.trim();
   if (s.startsWith('http') || s.startsWith('/')) return s;
   const name = normalizePhotoName(s);
   if (!name) return '';
-  if (useRoot) return `/uploads/${encodeURIComponent(name)}`;
+  if (variant === 'root') return `/uploads/${encodeURIComponent(name)}`;
+  if (variant === 'upload_task') return `/upload/task/${encodeURIComponent(name)}`;
   return `/uploads/task_photos/${encodeURIComponent(name)}`;
 }
 
-/** Renders proof-of-delivery image. Uses /api/task-photos/:id/image when photoId is set (image from DB); otherwise tries uploads paths. */
+/** Renders proof-of-delivery image. Uses /api/task-photos/:id/image when photoId is set (image from DB); otherwise tries disk paths. */
 function TaskPhotoImage({ photoId, photoName }) {
-  const [useRoot, setUseRoot] = useState(false);
+  const [variantIdx, setVariantIdx] = useState(0);
+  const [skipApiBlob, setSkipApiBlob] = useState(false);
   const apiImageUrl = photoId ? `/api/task-photos/${encodeURIComponent(photoId)}/image` : null;
-  const uploadsUrl = taskPhotoUrl(photoName, useRoot);
-  const url = apiImageUrl || uploadsUrl;
+  const variants = ['task_photos', 'upload_task', 'root'];
+  const uploadsUrl = photoName ? taskPhotoUrl(photoName, variants[Math.min(variantIdx, variants.length - 1)]) : '';
+  const url = (!skipApiBlob && apiImageUrl) || uploadsUrl;
+  const bumpVariant = () => {
+    if (apiImageUrl && !skipApiBlob) {
+      setSkipApiBlob(true);
+      return;
+    }
+    setVariantIdx((i) => (i < variants.length - 1 ? i + 1 : i));
+  };
   return (
     <div className="activity-timeline-photo-wrap">
       <a href={url} target="_blank" rel="noopener noreferrer" className="activity-timeline-photo-link">
@@ -162,10 +174,55 @@ function TaskPhotoImage({ photoId, photoName }) {
           alt="Proof of delivery"
           className="activity-timeline-photo"
           loading="lazy"
-          onError={() => { if (!useRoot && !apiImageUrl) setUseRoot(true); }}
+          onError={bumpVariant}
         />
       </a>
     </div>
+  );
+}
+
+/** Prefer server-built proof URL; on 404 fall back to DB blob / legacy paths. */
+function ProofTimelineThumb({ url, photoId, photoName }) {
+  const [preferFallback, setPreferFallback] = useState(false);
+  if (preferFallback && (photoId != null || photoName)) {
+    return <TaskPhotoImage photoId={photoId} photoName={photoName} />;
+  }
+  if (!url) {
+    if (photoId != null || photoName) return <TaskPhotoImage photoId={photoId} photoName={photoName} />;
+    return null;
+  }
+  return (
+    <div className="activity-timeline-proof-cell">
+      <a href={url} target="_blank" rel="noopener noreferrer" className="activity-timeline-proof-link">
+        <img
+          src={url}
+          alt="Proof of delivery"
+          className="activity-timeline-proof-img"
+          loading="lazy"
+          onError={() => setPreferFallback(true)}
+        />
+      </a>
+    </div>
+  );
+}
+
+function normalizeTimelineStatus(s) {
+  return String(s || '')
+    .toLowerCase()
+    .replace(/[\s_]/g, '');
+}
+
+/** History / legacy row that should show proof_images when there is no dedicated photo timeline item. */
+function isProofVerificationHistoryEntry(entry) {
+  if (!entry || (entry.type !== 'history' && entry.type !== 'legacy')) return false;
+  const st = normalizeTimelineStatus(entry.status ?? entry.description);
+  if (['successful', 'completed', 'delivered'].includes(st)) return true;
+  const blob = `${entry.remarks || ''} ${entry.reason || ''} ${entry.notes || ''}`.toLowerCase();
+  return (
+    blob.includes('proof') ||
+    blob.includes('picture') ||
+    blob.includes('verification') ||
+    blob.includes('photo')
   );
 }
 
@@ -212,11 +269,14 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
   const [editGoogleMapStyle, setEditGoogleMapStyle] = useState('');
   const prevEditTeamRef = useRef('');
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  /** proof_images when loaded only via /tasks/:id/order-history (task payload had no order_history). */
+  const [orderHistoryProofImages, setOrderHistoryProofImages] = useState([]);
 
   useEffect(() => {
     if (!taskId) {
       setData(null);
       setOrderHistory([]);
+      setOrderHistoryProofImages([]);
       setError(null);
       setTab('details');
       setDeleteConfirmOpen(false);
@@ -228,6 +288,7 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
     }
     setData(null);
     setOrderHistory([]);
+    setOrderHistoryProofImages([]);
     setError(null);
     setTab('details');
     setDeleteConfirmOpen(false);
@@ -240,6 +301,7 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
       .then((res) => {
         if (res && typeof res === 'object' && !res.error) {
           setData(res);
+          setOrderHistoryProofImages([]);
           const fromTask = Array.isArray(res.order_history) ? res.order_history : Array.isArray(res.mt_order_history) ? res.mt_order_history : [];
           if (fromTask.length > 0) {
             setOrderHistory(fromTask);
@@ -310,8 +372,24 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
     const fromTask = Array.isArray(data.order_history) ? data.order_history : Array.isArray(data.mt_order_history) ? data.mt_order_history : [];
     if (fromTask.length > 0) return;
     api(`tasks/${taskId}/order-history`)
-      .then((list) => setOrderHistory(Array.isArray(list) ? list : Array.isArray(list?.data) ? list.data : list?.order_history || []))
-      .catch(() => setOrderHistory([]));
+      .then((list) => {
+        if (Array.isArray(list)) {
+          setOrderHistory(list);
+          setOrderHistoryProofImages([]);
+          return;
+        }
+        if (list && typeof list === 'object') {
+          setOrderHistory(Array.isArray(list.order_history) ? list.order_history : Array.isArray(list.data) ? list.data : []);
+          setOrderHistoryProofImages(Array.isArray(list.proof_images) ? list.proof_images : []);
+        } else {
+          setOrderHistory([]);
+          setOrderHistoryProofImages([]);
+        }
+      })
+      .catch(() => {
+        setOrderHistory([]);
+        setOrderHistoryProofImages([]);
+      });
   }, [taskId, data?.task, data?.order_history, data?.mt_order_history]);
 
   if (!taskId) return null;
@@ -578,6 +656,9 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
     ) || '—';
   const legacyTimeline = Array.isArray(data?.order_status_timeline) ? data.order_status_timeline : [];
   const taskPhotos = Array.isArray(data?.task_photos) ? data.task_photos : [];
+  const proofImagesFromTask = Array.isArray(data?.proof_images) ? data.proof_images : [];
+  const proofImages =
+    proofImagesFromTask.length > 0 ? proofImagesFromTask : orderHistoryProofImages;
   const historyEntries = (orderHistory || [])
     .filter(Boolean)
     .map((row) => ({
@@ -593,16 +674,31 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
       driver_id: row.driver_id,
       notes: row.notes,
     }));
-  const photoEntries = taskPhotos
-    .filter(Boolean)
-    .map((row) => ({
+  const photoEntries = (() => {
+    if (!taskPhotos.length && !proofImages.length) return [];
+    const urlsFromRows = taskPhotos.map((row) => row.proof_url).filter(Boolean);
+    const urls = proofImages.length > 0 ? proofImages : urlsFromRows;
+    const date_created =
+      taskPhotos.length > 0 ? taskPhotos[taskPhotos.length - 1].date_created : null;
+    if (urls.length > 0) {
+      return [
+        {
+          type: 'photo',
+          id: 'proof-delivery-bundle',
+          date_created,
+          urls,
+          photo_rows: taskPhotos,
+        },
+      ];
+    }
+    return taskPhotos.filter(Boolean).map((row) => ({
       type: 'photo',
       id: `photo-${row.id}`,
-      photo_id: row.id,
-      photo_name: row.photo_name,
       date_created: row.date_created,
-      ip_address: row.ip_address,
+      urls: [],
+      photo_rows: [row],
     }));
+  })();
   /* Oldest first (initial_order → … → latest), same as classic driver timeline */
   const combined = [...historyEntries, ...photoEntries].sort((a, b) => {
     const da = a.date_created ? new Date(a.date_created).getTime() : 0;
@@ -656,6 +752,13 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
     ? `${formatDate(order.delivery_date)} ${String(order.delivery_time).slice(0, 5)}`
     : formatDate(task?.delivery_date);
   const advanceLinesModal = order ? getAdvanceOrderLines(order, task?.date_created) : null;
+
+  const filteredTimeline = timeline.filter(Boolean);
+  const hasProofPhotoTimelineItem = filteredTimeline.some((e) => e.type === 'photo');
+  const proofHistoryAttachEntry =
+    proofImages.length > 0 && !hasProofPhotoTimelineItem
+      ? [...filteredTimeline].reverse().find((e) => isProofVerificationHistoryEntry(e))
+      : null;
 
   return (
     <div
@@ -795,7 +898,7 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
                   <div className="task-details-content">
                     <div className="task-detail-section">
                       <div className="activity-timeline">
-                        {timeline.length ? timeline.filter(Boolean).map((entry, i) => (
+                        {timeline.length ? filteredTimeline.map((entry, i) => (
                           <div key={entry.id ?? entry.stats_id ?? i} className={`activity-timeline-item ${entry.type === 'photo' ? 'activity-timeline-item-photo' : 'activity-timeline-item-history'}`}>
                             {entry.type === 'photo' ? (
                               <>
@@ -805,8 +908,23 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
                                   </div>
                                   <span className="activity-timeline-time activity-timeline-time--right">{formatActivityTimelineDateTime(entry?.date_created)}</span>
                                 </div>
-                                {(entry.photo_name || entry.photo_id) && (
-                                  <TaskPhotoImage photoId={entry.photo_id} photoName={entry.photo_name} />
+                                {entry.urls?.length > 0 ? (
+                                  <div
+                                    className={`activity-timeline-proof-grid ${entry.urls.length === 1 ? 'activity-timeline-proof-grid--single' : ''}`}
+                                  >
+                                    {entry.urls.map((url, idx) => (
+                                      <ProofTimelineThumb
+                                        key={`${url}-${idx}`}
+                                        url={url}
+                                        photoId={entry.photo_rows?.[idx]?.id}
+                                        photoName={entry.photo_rows?.[idx]?.photo_name}
+                                      />
+                                    ))}
+                                  </div>
+                                ) : (
+                                  entry.photo_rows?.map((row) => (
+                                    <TaskPhotoImage key={row.id} photoId={row.id} photoName={row.photo_name} />
+                                  ))
                                 )}
                               </>
                             ) : (
@@ -826,6 +944,20 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
                                   </div>
                                   <span className="activity-timeline-time activity-timeline-time--right">{formatActivityTimelineDateTime(entry?.date_created)}</span>
                                 </div>
+                                {proofHistoryAttachEntry === entry && proofImages.length > 0 && (
+                                  <div
+                                    className={`activity-timeline-proof-grid activity-timeline-proof-grid--embedded ${proofImages.length === 1 ? 'activity-timeline-proof-grid--single' : ''}`}
+                                  >
+                                    {proofImages.map((url, idx) => (
+                                      <ProofTimelineThumb
+                                        key={`embed-${url}-${idx}`}
+                                        url={url}
+                                        photoId={taskPhotos[idx]?.id}
+                                        photoName={taskPhotos[idx]?.photo_name}
+                                      />
+                                    ))}
+                                  </div>
+                                )}
                               </>
                             )}
                           </div>

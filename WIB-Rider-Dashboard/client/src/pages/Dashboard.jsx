@@ -15,6 +15,7 @@ import {
   todayDateStrLocal,
   tasksWithMapCoordinates,
 } from '../utils/mapTasks';
+import { buildActivePanelDriverIdSet } from '../utils/agentPanelRiders';
 
 export default function Dashboard() {
   const location = useLocation();
@@ -43,6 +44,8 @@ export default function Dashboard() {
   const [mapboxRouteGeojson, setMapboxRouteGeojson] = useState(null); // GeoJSON LineString feature
   const [tasksMapDateStr, setTasksMapDateStr] = useState(() => readDashboardTasksMapDateFromStorage() || todayDateStrLocal());
   const [rawMapTasks, setRawMapTasks] = useState([]);
+  /** null = not loaded yet; map shows no rider pins until set. Matches Agent panel "Active" tab roster. */
+  const [activePanelDriverIdSet, setActivePanelDriverIdSet] = useState(null);
 
   const driversLocationsUrl = selectedTeamId
     ? `drivers/locations?team_id=${encodeURIComponent(selectedTeamId)}`
@@ -60,21 +63,70 @@ export default function Dashboard() {
       .catch(() => setMerchants([]));
   }, []);
 
+  const refreshActivePanelDriverIds = useCallback(async () => {
+    const params = new URLSearchParams();
+    params.set('date', new Date().toISOString().slice(0, 10));
+    if (selectedTeamId != null && selectedTeamId !== '') {
+      params.set('team_id', String(selectedTeamId));
+    }
+    try {
+      const res = await api(`driver/agent-dashboard?${params}`);
+      const d = res?.details || {};
+      let idSet = buildActivePanelDriverIdSet(d, selectedTeamId);
+      if (idSet === null) {
+        const rows = await api('drivers');
+        let drivers = Array.isArray(rows) ? rows : [];
+        if (selectedTeamId != null && selectedTeamId !== '') {
+          drivers = drivers.filter((r) => String(r.team_id ?? '') === String(selectedTeamId));
+        }
+        const normalized = drivers.map((r) => ({
+          ...r,
+          id: r.id ?? r.driver_id,
+          driver_id: r.driver_id ?? r.id,
+          online_status: 'lost_connection',
+          connection_status: 'Connection Lost',
+          last_seen: r.status_updated_at ? new Date(r.status_updated_at).toLocaleString() : '—',
+          total_task: r.total_task ?? 0,
+        }));
+        idSet = buildActivePanelDriverIdSet({ active: [], offline: [], total: normalized }, selectedTeamId);
+        if (idSet === null) idSet = new Set();
+      }
+      setActivePanelDriverIdSet(idSet);
+    } catch {
+      setActivePanelDriverIdSet(new Set());
+    }
+  }, [selectedTeamId]);
+
+  useEffect(() => {
+    refreshActivePanelDriverIds();
+  }, [refreshActivePanelDriverIds]);
+
+  useEffect(() => {
+    if (taskListRevision < 1) return;
+    refreshActivePanelDriverIds();
+  }, [taskListRevision, refreshActivePanelDriverIds]);
+
   const filteredMerchantsForMap = useMemo(() => {
     if (!selectedMapMerchantIds.length) return merchants;
     const allowed = new Set(selectedMapMerchantIds.map(String));
     return (merchants || []).filter((m) => allowed.has(String(m.merchant_id ?? m.id ?? '')));
   }, [merchants, selectedMapMerchantIds]);
 
+  const locationsForMapActiveRiders = useMemo(() => {
+    const locs = locations || [];
+    if (activePanelDriverIdSet === null) return [];
+    return locs.filter((loc) => activePanelDriverIdSet.has(String(loc.driver_id ?? '')));
+  }, [locations, activePanelDriverIdSet]);
+
   const filteredLocationsForMap = useMemo(() => {
-    if (!selectedMapMerchantIds.length) return locations;
+    if (!selectedMapMerchantIds.length) return locationsForMapActiveRiders;
     const allowed = new Set(selectedMapMerchantIds.map(String));
-    return (locations || []).filter((loc) => {
+    return locationsForMapActiveRiders.filter((loc) => {
       const mid = loc.active_merchant_id;
       if (mid == null || mid === '') return false;
       return allowed.has(String(mid));
     });
-  }, [locations, selectedMapMerchantIds]);
+  }, [locationsForMapActiveRiders, selectedMapMerchantIds]);
 
   const mapTasksWithCoords = useMemo(() => tasksWithMapCoordinates(rawMapTasks), [rawMapTasks]);
 
@@ -108,7 +160,8 @@ export default function Dashboard() {
     api(`tasks?date=${encodeURIComponent(tasksMapDateStr)}`)
       .then((list) => setRawMapTasks(Array.isArray(list) ? list : []))
       .catch(() => setRawMapTasks([]));
-  }, [driversLocationsUrl, tasksMapDateStr]);
+    refreshActivePanelDriverIds();
+  }, [driversLocationsUrl, tasksMapDateStr, refreshActivePanelDriverIds]);
 
   const refreshMapSettings = () => {
     api('settings')
@@ -309,6 +362,7 @@ export default function Dashboard() {
               locations={filteredLocationsForMap}
               merchants={filteredMerchantsForMap}
               taskMarkers={filteredMapTasks}
+              showLegend
               mapProvider={mapProvider}
               apiKey={googleApiKey}
               mapboxToken={mapboxToken}

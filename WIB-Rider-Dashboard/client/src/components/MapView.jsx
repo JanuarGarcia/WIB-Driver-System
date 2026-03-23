@@ -6,8 +6,50 @@ if (typeof window !== 'undefined') window.L = L;
 import Map, { Marker as MapboxMarker, Source, Layer } from 'react-map-gl/mapbox';
 import 'mapbox-gl/dist/mapbox-gl.css';
 import { LoadScript, GoogleMap, Marker as GoogleMarker, DirectionsService, DirectionsRenderer } from '@react-google-maps/api';
-import { sanitizeMerchantDisplayName, sanitizeLocationDisplayName } from '../utils/displayText';
+import { sanitizeMerchantDisplayName } from '../utils/displayText';
 import { statusLabel } from '../api';
+import {
+  riderLeafletPopupHtml,
+  merchantLeafletPopupHtmlStyled,
+  taskLeafletPopupHtmlStyled,
+  riderMarkerTitle,
+} from '../utils/mapPopup';
+
+function HtmlPopupBody({ html }) {
+  return <div className="map-popup-html-root" dangerouslySetInnerHTML={{ __html: html }} />;
+}
+
+/** Dashboard-only: pin type key for admins (matches Tasks / Agent styling). */
+function MapLegend() {
+  return (
+    <div className="map-legend" aria-label="Map legend">
+      <div className="map-legend-title">Map legend</div>
+      <ul className="map-legend-list">
+        <li className="map-legend-item">
+          <span className="map-legend-swatch map-legend-swatch--rider" aria-hidden />
+          <span className="map-legend-text">
+            <strong>Active rider</strong>
+            <span className="map-legend-desc">On duty, live in app</span>
+          </span>
+        </li>
+        <li className="map-legend-item">
+          <span className="map-legend-swatch map-legend-swatch--merchant" aria-hidden />
+          <span className="map-legend-text">
+            <strong>Merchant</strong>
+            <span className="map-legend-desc">Pickup / store</span>
+          </span>
+        </li>
+        <li className="map-legend-item">
+          <span className="map-legend-swatch map-legend-swatch--task" aria-hidden />
+          <span className="map-legend-text">
+            <strong>Open task</strong>
+            <span className="map-legend-desc">Delivery drop-off</span>
+          </span>
+        </li>
+      </ul>
+    </div>
+  );
+}
 
 /** Orange delivery pin for Google Maps (distinct from default red pin + rider/merchant styling). */
 const GOOGLE_TASK_PIN_ICON = (() => {
@@ -29,40 +71,10 @@ function merchantMapTitle(restaurantName) {
   return s || 'Merchant';
 }
 
-/** Escape text for Leaflet HTML popups (merchant name only). */
-function escapeHtmlText(s) {
-  return String(s)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
-}
-
-function merchantLeafletPopupHtml(restaurantName) {
-  const label = sanitizeMerchantDisplayName(restaurantName);
-  if (!label) return '<strong>Merchant</strong>';
-  return `<strong>Merchant</strong><br />${escapeHtmlText(label)}`;
-}
-
 function taskMapTitle(t) {
   if (t.order_id != null) return `Task #${t.order_id}`;
   if (t.task_id != null) return `Task ID ${t.task_id}`;
   return 'Task (delivery)';
-}
-
-function taskLeafletPopupHtml(t) {
-  const parts = [`<strong>Task</strong> (delivery)`];
-  if (t.order_id != null) parts.push(escapeHtmlText(`Order #${t.order_id}`));
-  if (t.task_id != null) parts.push(escapeHtmlText(`Task ID ${t.task_id}`));
-  if (t.status) parts.push(escapeHtmlText(statusLabel(t.status)));
-  const rn = sanitizeMerchantDisplayName(t.restaurant_name || '');
-  if (rn) parts.push(escapeHtmlText(rn));
-  const addr = sanitizeLocationDisplayName(String(t.delivery_address || ''));
-  if (addr) {
-    const short = addr.length > 140 ? `${addr.slice(0, 137)}…` : addr;
-    parts.push(escapeHtmlText(short));
-  }
-  return parts.join('<br />');
 }
 
 function merchantLogoUrl(logo) {
@@ -195,32 +207,30 @@ function LeafletMapView({ locations, merchants, taskMarkers = [], center, zoom }
         <LeafletFitBounds locations={riderMarkers} merchants={merchantMarkers} taskMarkers={taskMapMarkers} disabled={fitBoundsDisabled} />
         {riderMarkers.map((loc, idx) => (
           <Marker key={`rider-${loc.driver_id ?? idx}`} position={[Number(loc.lat), Number(loc.lng)]} icon={riderPinIcon}>
-            <Popup><strong>Rider</strong>{loc.full_name && <><br />{loc.full_name}</>}{loc.on_duty != null && <><br />{loc.on_duty ? 'On duty' : 'Off duty'}</>}</Popup>
+            <Popup className="map-popup-leaflet" minWidth={260}>
+              <HtmlPopupBody html={riderLeafletPopupHtml(loc)} />
+            </Popup>
           </Marker>
         ))}
         {merchantMarkers.map((m, idx) => {
           const logo = m.logo_url ?? m.logo ?? m.image_url;
           const logoImgUrl = merchantLogoUrl(logo);
-          const merchantTitle = sanitizeMerchantDisplayName(m.restaurant_name);
           return (
             <Marker
               key={`merchant-${m.merchant_id ?? idx}`}
               position={[Number(m.lat), Number(m.lng)]}
               icon={leafletPinIcon('merchant', logoImgUrl)}
             >
-              <Popup><strong>Merchant</strong>{merchantTitle ? <><br />{merchantTitle}</> : null}</Popup>
+              <Popup className="map-popup-leaflet" minWidth={240}>
+                <HtmlPopupBody html={merchantLeafletPopupHtmlStyled(m.restaurant_name)} />
+              </Popup>
             </Marker>
           );
         })}
         {taskMapMarkers.map((t, idx) => (
           <Marker key={`task-${t.task_id ?? idx}`} position={[Number(t.lat), Number(t.lng)]} icon={taskPinIcon}>
-            <Popup>
-              <strong>Task</strong> (delivery)
-              {t.order_id != null && <><br />Order #{t.order_id}</>}
-              {t.task_id != null && <><br />Task ID {t.task_id}</>}
-              {t.status && <><br />{statusLabel(t.status)}</>}
-              {sanitizeMerchantDisplayName(t.restaurant_name || '') && <><br />{sanitizeMerchantDisplayName(t.restaurant_name || '')}</>}
-              {sanitizeLocationDisplayName(String(t.delivery_address || '')) && <><br />{sanitizeLocationDisplayName(String(t.delivery_address || ''))}</>}
+            <Popup className="map-popup-leaflet" minWidth={260}>
+              <HtmlPopupBody html={taskLeafletPopupHtmlStyled(t, statusLabel)} />
             </Popup>
           </Marker>
         ))}
@@ -254,20 +264,19 @@ function LeafletMapboxMarkersLayer({ riderMarkers, merchantMarkers, taskMapMarke
     group.clearLayers();
     (riderMarkers || []).forEach((loc, idx) => {
       const marker = L.marker([Number(loc.lat), Number(loc.lng)], { icon: riderPinIcon });
-      const popupContent = `<strong>Rider</strong>${loc.full_name ? `<br />${escapeHtmlText(loc.full_name)}` : ''}${loc.on_duty != null ? `<br />${loc.on_duty ? 'On duty' : 'Off duty'}` : ''}`;
-      marker.bindPopup(popupContent);
+      marker.bindPopup(riderLeafletPopupHtml(loc));
       group.addLayer(marker);
     });
     (merchantMarkers || []).forEach((m, idx) => {
       const logo = m.logo_url ?? m.logo ?? m.image_url;
       const logoImgUrl = merchantLogoUrl(logo);
       const marker = L.marker([Number(m.lat), Number(m.lng)], { icon: leafletPinIcon('merchant', logoImgUrl) });
-      marker.bindPopup(merchantLeafletPopupHtml(m.restaurant_name));
+      marker.bindPopup(merchantLeafletPopupHtmlStyled(m.restaurant_name));
       group.addLayer(marker);
     });
     (taskMapMarkers || []).forEach((t, idx) => {
       const marker = L.marker([Number(t.lat), Number(t.lng)], { icon: taskPinIcon });
-      marker.bindPopup(taskLeafletPopupHtml(t));
+      marker.bindPopup(taskLeafletPopupHtmlStyled(t, statusLabel));
       group.addLayer(marker);
     });
   }, [riderMarkers, merchantMarkers, taskMapMarkers]);
@@ -288,7 +297,7 @@ function LeafletMapboxTileError({ onTileError }) {
   return null;
 }
 
-function LeafletMapboxView({ mapboxToken, locations, merchants, taskMarkers = [], center, zoom, routeGeojson }) {
+function LeafletMapboxView({ mapboxToken, locations, merchants, taskMarkers = [], center, zoom, routeGeojson, showLegend = false }) {
   const { riderMarkers, merchantMarkers, taskMapMarkers } = useDashboardMapMarkers(locations, merchants, taskMarkers);
   const mapCenter = center != null && Array.isArray(center) && center.length >= 2 ? center : BAGUIO_CENTER;
   const mapZoom = zoom != null ? zoom : 13;
@@ -323,6 +332,7 @@ function LeafletMapboxView({ mapboxToken, locations, merchants, taskMarkers = []
         <LeafletFitBounds locations={riderMarkers} merchants={merchantMarkers} taskMarkers={taskMapMarkers} disabled={fitBoundsDisabled} />
         <LeafletMapboxMarkersLayer riderMarkers={riderMarkers} merchantMarkers={merchantMarkers} taskMapMarkers={taskMapMarkers} />
       </MapContainer>
+      {showLegend ? <MapLegend /> : null}
     </div>
   );
 }
@@ -371,7 +381,7 @@ function MapboxMapView({ mapboxToken, locations, merchants, taskMarkers = [], ce
         )}
         {riderMarkers.map((loc, idx) => (
           <MapboxMarker key={`rider-${loc.driver_id ?? idx}`} longitude={Number(loc.lng)} latitude={Number(loc.lat)} anchor="bottom">
-            <PinMarker type="rider" title={loc.full_name || 'Rider'} />
+            <PinMarker type="rider" title={riderMarkerTitle(loc)} />
           </MapboxMarker>
         ))}
         {merchantMarkers.map((m, idx) => (
@@ -480,7 +490,11 @@ function GoogleMapView({ apiKey, locations, merchants, taskMarkers = [], center:
             />
           )}
           {riderMarkers.map((loc, idx) => (
-            <GoogleMarker key={`rider-${loc.driver_id ?? idx}`} position={{ lat: Number(loc.lat), lng: Number(loc.lng) }} title={loc.full_name || 'Rider'} />
+            <GoogleMarker
+              key={`rider-${loc.driver_id ?? idx}`}
+              position={{ lat: Number(loc.lat), lng: Number(loc.lng) }}
+              title={riderMarkerTitle(loc)}
+            />
           ))}
           {merchantMarkers.map((m, idx) => (
             <GoogleMarker key={`merchant-${m.merchant_id ?? idx}`} position={{ lat: Number(m.lat), lng: Number(m.lng) }} title={merchantMapTitle(m.restaurant_name)} />
@@ -512,6 +526,7 @@ export default function MapView({
   directionsRequest,
   mapboxRouteGeojson,
   onGoogleDirections,
+  showLegend = false,
 }) {
   const token = String(mapboxToken || '').trim();
   const useMapbox = mapProvider === 'mapbox' && token.length > 0;
@@ -543,6 +558,7 @@ export default function MapView({
         center={center}
         zoom={zoom}
         routeGeojson={mapboxRouteGeojson}
+        showLegend={showLegend}
       />
     );
   }

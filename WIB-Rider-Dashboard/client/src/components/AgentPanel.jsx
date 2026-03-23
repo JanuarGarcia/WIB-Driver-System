@@ -5,6 +5,7 @@ import DriverDetailsModal from './DriverDetailsModal';
 import { useTeamFilter } from '../context/TeamFilterContext';
 import { sanitizeLocationDisplayName } from '../utils/displayText';
 import { getAdvanceOrderLines } from '../utils/advanceOrder';
+import { isLiveConnection, isOnDuty, isAgentPanelOnline } from '../utils/agentPanelRiders';
 
 const TABS = ['active', 'offline', 'total'];
 const AGENT_REFRESH_INTERVAL_MS = 5000;
@@ -368,31 +369,6 @@ export default function AgentPanel({ onOpenTaskDetails, listRevision = 0 }) {
   });
 
   const totalCount = activeDrivers.length;
-
-  /** Live app connection — not the same as "on duty" (on duty + lost connection = still offline here). */
-  function isLiveConnection(d) {
-    const c = String(d?.online_status || d?.connection_status || '').toLowerCase().trim();
-    if (!c) return false;
-    if (c === 'lost_connection' || c.includes('lost')) return false;
-    return c === 'online' || c === 'connected';
-  }
-
-  /** Only numeric `1` is on duty (avoids JS truthy bugs: e.g. string "0" is truthy). */
-  function isOnDuty(d) {
-    const v = d?.on_duty;
-    if (v === true) return true;
-    if (v === false || v == null) return false;
-    const n = Number(v);
-    return n === 1;
-  }
-
-  /**
-   * "Active" (online) in Agent panel = active account + on duty + live connection.
-   * Matches legacy behavior: on duty but connection lost counts as offline.
-   */
-  function isAgentPanelOnline(d) {
-    return isLiveConnection(d) && isOnDuty(d);
-  }
 
   const onlineCount = activeDrivers.filter(isAgentPanelOnline).length;
 

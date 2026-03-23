@@ -11,6 +11,52 @@ const { success, error } = require('../lib/response');
 const { sendPushToDriver, sendPushToAllDrivers } = require('../services/fcm');
 
 const ADMIN_SECRET = process.env.ADMIN_SECRET || '';
+/** Same as driver routes: absolute URLs for assets (set in .env for production). */
+const PUBLIC_BASE_URL = (process.env.BASE_URL || '').replace(/\/$/, '');
+
+/**
+ * Clean mt_driver_task_photo.photo_name for disk URLs: basename, trim, strip wrapping <> from bad inserts,
+ * collapse .jpg.jpg-style duplicates (must match likely on-disk filename).
+ */
+function sanitizeTaskProofFileName(photoName) {
+  let s = String(photoName || '').trim().replace(/\\/g, '/');
+  if (!s) return '';
+  s = s.replace(/^<+/, '').replace(/>+$/, '').trim();
+  s = path.basename(s);
+  const doubleExt = /\.(jpg|jpeg|png|gif|webp)\.(jpg|jpeg|png|gif|webp)$/i.exec(s);
+  if (doubleExt) s = s.slice(0, -(doubleExt[1].length + 1));
+  if (!s || s === '.' || s === '..') return '';
+  return s;
+}
+
+/** Public URL for on-disk proof files: BASE_URL + /upload/task/ + photo_name */
+function buildTaskProofImageUrl(photoName) {
+  const safe = sanitizeTaskProofFileName(photoName);
+  if (!safe) return null;
+  const rel = `/upload/task/${encodeURIComponent(safe)}`;
+  return PUBLIC_BASE_URL ? `${PUBLIC_BASE_URL}${rel}` : rel;
+}
+
+async function fetchTaskProofPhotosWithUrls(pool, taskId) {
+  try {
+    const [photoRows] = await pool.query(
+      'SELECT id, task_id, photo_name, date_created, ip_address FROM mt_driver_task_photo WHERE task_id = ? ORDER BY date_created ASC',
+      [taskId]
+    );
+    const rows = photoRows || [];
+    const task_photos = rows.map((row) => ({
+      ...row,
+      proof_url: buildTaskProofImageUrl(row.photo_name),
+    }));
+    const proof_images = task_photos.map((r) => r.proof_url).filter(Boolean);
+    return { task_photos, proof_images };
+  } catch (e) {
+    if (e.code === 'ER_NO_SUCH_TABLE' || e.code === 'ER_BAD_FIELD_ERROR') {
+      return { task_photos: [], proof_images: [] };
+    }
+    throw e;
+  }
+}
 
 // Upload dirs for admin (certificate, profile photo, FCM JSON)
 const uploadsBase = path.join(__dirname, '..', 'uploads');
@@ -1410,20 +1456,10 @@ router.get('/tasks/:id', async (req, res) => {
     }
   }
 
-  // Proof of delivery: mt_driver_task_photo for this task
-  try {
-    const [photoRows] = await pool.query(
-      'SELECT id, task_id, photo_name, date_created, ip_address FROM mt_driver_task_photo WHERE task_id = ? ORDER BY date_created ASC',
-      [id]
-    );
-    result.task_photos = photoRows || [];
-  } catch (e) {
-    if (e.code === 'ER_NO_SUCH_TABLE' || e.code === 'ER_BAD_FIELD_ERROR') {
-      result.task_photos = [];
-    } else {
-      throw e;
-    }
-  }
+  // Proof of delivery: mt_driver_task_photo for this task (+ proof_urls for timeline)
+  const { task_photos, proof_images } = await fetchTaskProofPhotosWithUrls(pool, id);
+  result.task_photos = task_photos;
+  result.proof_images = proof_images;
 
   return res.json(result);
 });
