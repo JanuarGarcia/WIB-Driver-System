@@ -1,6 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
+const fs = require('fs');
 const path = require('path');
 const driverRoutes = require('./routes/driver');
 const adminRoutes = require('./routes/admin');
@@ -11,11 +12,17 @@ app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Static uploads for profile photos
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
-// Proof-of-delivery files (mt_driver_task_photo.photo_name); also check task_photos for legacy paths
-const uploadsTaskDir = path.join(__dirname, 'uploads', 'task');
-const uploadsTaskPhotosDir = path.join(__dirname, 'uploads', 'task_photos');
+const uploadsRoot = path.join(__dirname, 'uploads');
+// Proof-of-delivery: files referenced by mt_driver_task_photo.photo_name (old rider app + dashboard).
+// Newer rows often use uploads/task/; legacy filenames may live in uploads/task_photos/.
+const uploadsTaskDir = path.join(uploadsRoot, 'task');
+const uploadsTaskPhotosDir = path.join(uploadsRoot, 'task_photos');
+[uploadsRoot, uploadsTaskDir, uploadsTaskPhotosDir].forEach((dir) => {
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+});
+
+// Static uploads for profile photos, certs, etc.
+app.use('/uploads', express.static(uploadsRoot));
 app.use('/upload/task', express.static(uploadsTaskDir));
 app.use('/upload/task', express.static(uploadsTaskPhotosDir));
 
