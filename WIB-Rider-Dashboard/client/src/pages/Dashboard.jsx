@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { useLocation, useNavigate } from 'react-router-dom';
 import TaskPanel from '../components/TaskPanel';
@@ -6,6 +6,7 @@ import TaskDetailsModal from '../components/TaskDetailsModal';
 import MapView from '../components/MapView';
 import MapErrorBoundary from '../components/MapErrorBoundary';
 import AgentPanel from '../components/AgentPanel';
+import MapMerchantFilter, { loadMapMerchantFilterFromSession } from '../components/MapMerchantFilter';
 import { api } from '../api';
 import { useTeamFilter } from '../context/TeamFilterContext';
 
@@ -20,6 +21,9 @@ export default function Dashboard() {
   const [mobileSection, setMobileSection] = useState('tasks'); // 'tasks' | 'map' | 'agents' for small screens
   const [locations, setLocations] = useState([]);
   const [merchants, setMerchants] = useState([]);
+  /** Full merchant list for filter dropdown (names/ids); map pins use `merchants` from locations API. */
+  const [merchantsForFilter, setMerchantsForFilter] = useState([]);
+  const [selectedMapMerchantIds, setSelectedMapMerchantIds] = useState(loadMapMerchantFilterFromSession);
   const [mapProvider, setMapProvider] = useState('mapbox');
   const [googleApiKey, setGoogleApiKey] = useState('');
   const [mapboxToken, setMapboxToken] = useState('');
@@ -49,6 +53,35 @@ export default function Dashboard() {
       .then(setMerchants)
       .catch(() => setMerchants([]));
   }, []);
+
+  useEffect(() => {
+    api('merchants')
+      .then((list) => setMerchantsForFilter(Array.isArray(list) ? list : []))
+      .catch(() => setMerchantsForFilter([]));
+  }, []);
+
+  const onMapMerchantFilterChange = useCallback((ids) => {
+    setSelectedMapMerchantIds(ids);
+  }, []);
+
+  const filteredMerchantsForMap = useMemo(() => {
+    if (!selectedMapMerchantIds.length) return merchants;
+    const allowed = new Set(selectedMapMerchantIds.map(String));
+    return (merchants || []).filter((m) => allowed.has(String(m.merchant_id ?? m.id ?? '')));
+  }, [merchants, selectedMapMerchantIds]);
+
+  const filteredLocationsForMap = useMemo(() => {
+    if (!selectedMapMerchantIds.length) return locations;
+    const allowed = new Set(selectedMapMerchantIds.map(String));
+    return (locations || []).filter((loc) => {
+      const mid = loc.active_merchant_id;
+      if (mid == null || mid === '') return false;
+      return allowed.has(String(mid));
+    });
+  }, [locations, selectedMapMerchantIds]);
+
+  const mapShowsNoMarkers =
+    filteredLocationsForMap.length === 0 && filteredMerchantsForMap.length === 0;
 
   const refreshMapSettings = () => {
     api('settings')
@@ -240,6 +273,11 @@ export default function Dashboard() {
         )}
       <div className="dashboard-layout-panel dashboard-layout-map">
       <div className="dashboard-map-wrap">
+        <MapMerchantFilter
+          options={merchantsForFilter.length > 0 ? merchantsForFilter : merchants}
+          selectedIds={selectedMapMerchantIds}
+          onChange={onMapMerchantFilterChange}
+        />
         <div id="map" className="dashboard-map-inner">
           <MapErrorBoundary
             fallback={({ reset }) => (
@@ -251,13 +289,13 @@ export default function Dashboard() {
             )}
           >
             <MapView
-              locations={locations}
-              merchants={merchants}
+              locations={filteredLocationsForMap}
+              merchants={filteredMerchantsForMap}
               mapProvider={mapProvider}
               apiKey={googleApiKey}
               mapboxToken={mapboxToken}
-              center={locations.length === 0 && merchants.length === 0 ? defaultMapCenter : undefined}
-              zoom={locations.length === 0 && merchants.length === 0 ? defaultMapZoom : undefined}
+              center={mapShowsNoMarkers ? defaultMapCenter : undefined}
+              zoom={mapShowsNoMarkers ? defaultMapZoom : undefined}
               googleMapStyle={googleMapStyle}
               directionsRequest={directionsReq}
               mapboxRouteGeojson={mapboxRouteGeojson}

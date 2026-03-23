@@ -1110,7 +1110,12 @@ router.get('/drivers/locations', async (req, res) => {
   try {
     const [rows] = await pool.query(
       `SELECT d.driver_id, d.team_id, d.location_lat AS lat, d.location_lng AS lng, d.date_modified AS updated_at,
-        CONCAT(COALESCE(d.first_name,''), ' ', COALESCE(d.last_name,'')) AS full_name, d.on_duty
+        CONCAT(COALESCE(d.first_name,''), ' ', COALESCE(d.last_name,'')) AS full_name, d.on_duty,
+        (SELECT o.merchant_id FROM mt_driver_task t
+         LEFT JOIN mt_order o ON o.order_id = t.order_id
+         WHERE t.driver_id = d.driver_id
+         AND LOWER(REPLACE(REPLACE(TRIM(COALESCE(t.status,'')), ' ', ''), '_', '')) IN ('assigned', 'acknowledged', 'started', 'inprogress')
+         ORDER BY t.task_id DESC LIMIT 1) AS active_merchant_id
        FROM mt_driver d
        WHERE d.location_lat IS NOT NULL AND d.location_lng IS NOT NULL${recencyClause}${byTeam}
        ORDER BY d.driver_id`,
@@ -1127,6 +1132,7 @@ router.get('/drivers/locations', async (req, res) => {
           lat: r.lat,
           lng: r.lng,
           updated_at: r.updated_at,
+          active_merchant_id: r.active_merchant_id != null ? r.active_merchant_id : null,
         };
       }
     }
