@@ -63,6 +63,9 @@
   --tasks-header-seg-active-text: #243016;
   --tasks-header-seg-active-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
   --tasks-header-seg-divider: rgba(255, 255, 255, 0.24);
+  /* Map: task delivery pin (distinct from rider = brand green, merchant = secondary green) */
+  --map-pin-task-fill: #ea580c;
+  --map-pin-task-inner: #ffffff;
 }
 
 /* Dark theme – same structure, adjusted for contrast and polish */
@@ -128,6 +131,8 @@
   --tasks-header-seg-active-text: #161c0f;
   --tasks-header-seg-active-shadow: 0 1px 3px rgba(0, 0, 0, 0.18);
   --tasks-header-seg-divider: rgba(255, 255, 255, 0.28);
+  --map-pin-task-fill: #fb923c;
+  --map-pin-task-inner: #fff7ed;
 }
 
 /* Dark mode: ensure all text inputs have visible text, placeholder, and caret */
@@ -4890,6 +4895,7 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
   align-items: center;
 }
 .map-pin-head {
+  position: relative;
   width: 36px;
   height: 36px;
   border-radius: 50% 50% 50% 0;
@@ -4913,6 +4919,24 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
 .map-pin-rider .map-pin-point { border-top-color: var(--color-primary); }
 .map-pin-merchant .map-pin-head { background: var(--color-secondary, #6b8c3a); }
 .map-pin-merchant .map-pin-point { border-top-color: var(--color-secondary, #6b8c3a); }
+.map-pin-task .map-pin-head {
+  background: var(--map-pin-task-fill);
+  border-radius: 32% 32% 32% 0;
+}
+.map-pin-task .map-pin-point { border-top-color: var(--map-pin-task-fill); }
+.map-pin-task-inner {
+  position: absolute;
+  width: 11px;
+  height: 11px;
+  left: 50%;
+  top: 50%;
+  margin: -5.5px 0 0 -5.5px;
+  transform: rotate(45deg);
+  background: var(--map-pin-task-inner);
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.12);
+  z-index: 1;
+}
 .map-pin-img {
   width: 100%;
   height: 100%;
@@ -4935,6 +4959,7 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
   align-items: center;
 }
 .leaflet-pin-wrap .leaflet-pin-head {
+  position: relative;
   width: 36px;
   height: 36px;
   border-radius: 50% 50% 50% 0;
@@ -4958,6 +4983,24 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
 .leaflet-pin-wrap .leaflet-pin-merchant .leaflet-pin-head { background: var(--color-secondary, #6b8c3a); }
 .leaflet-pin-wrap .leaflet-pin-merchant .leaflet-pin-point { border-top-color: var(--color-secondary, #6b8c3a); }
 .leaflet-pin-wrap .leaflet-pin-merchant.leaflet-pin-has-image .leaflet-pin-head { background: #e8e8e8; }
+.leaflet-pin-wrap .leaflet-pin-task .leaflet-pin-head {
+  background: var(--map-pin-task-fill);
+  border-radius: 32% 32% 32% 0;
+}
+.leaflet-pin-wrap .leaflet-pin-task .leaflet-pin-point { border-top-color: var(--map-pin-task-fill); }
+.leaflet-pin-wrap .leaflet-pin-task-inner {
+  position: absolute;
+  width: 11px;
+  height: 11px;
+  left: 50%;
+  top: 50%;
+  margin: -5.5px 0 0 -5.5px;
+  transform: rotate(45deg);
+  background: var(--map-pin-task-inner);
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.12);
+  z-index: 1;
+}
 /* Driver trackback page */
 .driver-trackback-page { padding-bottom: 1rem; }
 .trackback-toolbar {

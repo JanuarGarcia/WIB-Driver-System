@@ -6,7 +6,19 @@ if (typeof window !== 'undefined') window.L = L;
 import Map, { Marker as MapboxMarker, Source, Layer } from 'react-map-gl/mapbox';
 import 'mapbox-gl/dist/mapbox-gl.css';
 import { LoadScript, GoogleMap, Marker as GoogleMarker, DirectionsService, DirectionsRenderer } from '@react-google-maps/api';
-import { sanitizeMerchantDisplayName } from '../utils/displayText';
+import { sanitizeMerchantDisplayName, sanitizeLocationDisplayName } from '../utils/displayText';
+import { statusLabel } from '../api';
+
+/** Orange delivery pin for Google Maps (distinct from default red pin + rider/merchant styling). */
+const GOOGLE_TASK_PIN_ICON = (() => {
+  const svg =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="36" height="48" viewBox="0 0 36 48"><path fill="#ea580c" stroke="#ffffff" stroke-width="2" d="M18 3C10.8 3 5 8.8 5 16c0 11 13 29 13 29s13-18 13-29C31 8.8 25.2 3 18 3z"/><circle cx="18" cy="16" r="5.5" fill="#ffffff"/></svg>';
+  return {
+    url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`,
+    scaledSize: { width: 36, height: 48 },
+    anchor: { x: 18, y: 48 },
+  };
+})();
 
 const BAGUIO_CENTER = [16.4023, 120.596];
 const BAGUIO_VIEW = { longitude: 120.596, latitude: 16.4023, zoom: 13 };
@@ -32,6 +44,27 @@ function merchantLeafletPopupHtml(restaurantName) {
   return `<strong>Merchant</strong><br />${escapeHtmlText(label)}`;
 }
 
+function taskMapTitle(t) {
+  if (t.order_id != null) return `Task #${t.order_id}`;
+  if (t.task_id != null) return `Task ID ${t.task_id}`;
+  return 'Task (delivery)';
+}
+
+function taskLeafletPopupHtml(t) {
+  const parts = [`<strong>Task</strong> (delivery)`];
+  if (t.order_id != null) parts.push(escapeHtmlText(`Order #${t.order_id}`));
+  if (t.task_id != null) parts.push(escapeHtmlText(`Task ID ${t.task_id}`));
+  if (t.status) parts.push(escapeHtmlText(statusLabel(t.status)));
+  const rn = sanitizeMerchantDisplayName(t.restaurant_name || '');
+  if (rn) parts.push(escapeHtmlText(rn));
+  const addr = sanitizeLocationDisplayName(String(t.delivery_address || ''));
+  if (addr) {
+    const short = addr.length > 140 ? `${addr.slice(0, 137)}…` : addr;
+    parts.push(escapeHtmlText(short));
+  }
+  return parts.join('<br />');
+}
+
 function merchantLogoUrl(logo) {
   if (!logo || !String(logo).trim()) return null;
   const s = String(logo).trim();
@@ -46,6 +79,7 @@ function PinMarker({ type, imageUrl, title }) {
     <div className="map-pin-wrap" title={title || undefined}>
       <div className={`map-pin map-pin-${type} ${hasImage ? 'map-pin-has-image' : ''}`}>
         <div className="map-pin-head">
+          {type === 'task' ? <span className="map-pin-task-inner" aria-hidden="true" /> : null}
           {hasImage ? (
             <img src={resolvedUrl} alt="" className="map-pin-img" />
           ) : null}
@@ -60,10 +94,11 @@ function leafletPinIcon(type, logoUrl) {
   const hasImage = type === 'merchant' && logoUrl && String(logoUrl).trim().length > 0;
   const safeUrl = hasImage ? String(logoUrl).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;') : '';
   const imgHtml = hasImage ? `<img src="${safeUrl}" alt="" class="leaflet-pin-img" loading="lazy" />` : '';
+  const taskInner = type === 'task' ? '<span class="leaflet-pin-task-inner" aria-hidden="true"></span>' : '';
   return new L.DivIcon({
     className: 'leaflet-pin-wrap',
     html: `<div class="leaflet-pin leaflet-pin-${type} ${hasImage ? 'leaflet-pin-has-image' : ''}">
-      <div class="leaflet-pin-head">${imgHtml}</div>
+      <div class="leaflet-pin-head">${taskInner}${imgHtml}</div>
       <div class="leaflet-pin-point"></div>
     </div>`,
     iconSize: [40, 52],
@@ -72,8 +107,9 @@ function leafletPinIcon(type, logoUrl) {
 }
 
 const riderPinIcon = leafletPinIcon('rider', null);
+const taskPinIcon = leafletPinIcon('task', null);
 
-function useRiderAndMerchantMarkers(locations, merchants) {
+function useDashboardMapMarkers(locations, merchants, taskMarkers) {
   const riderMarkers = useMemo(
     () => (locations || []).filter((loc) => loc.lat != null && loc.lng != null),
     [locations]
@@ -82,7 +118,16 @@ function useRiderAndMerchantMarkers(locations, merchants) {
     () => (merchants || []).filter((m) => m.lat != null && m.lng != null),
     [merchants]
   );
-  return { riderMarkers, merchantMarkers };
+  const taskMapMarkers = useMemo(
+    () =>
+      (taskMarkers || []).filter((t) => {
+        const lat = Number(t.lat);
+        const lng = Number(t.lng);
+        return Number.isFinite(lat) && Number.isFinite(lng);
+      }),
+    [taskMarkers]
+  );
+  return { riderMarkers, merchantMarkers, taskMapMarkers };
 }
 
 const BAGUIO_BOUNDS_MAX_SPAN = 1.5; // degrees lat/lng — only fit bounds when markers are within this range of each other
@@ -98,15 +143,20 @@ function LeafletSetView({ center, zoom }) {
   return null;
 }
 
-function LeafletFitBounds({ locations, merchants, disabled }) {
+function LeafletFitBounds({ locations, merchants, taskMarkers, disabled }) {
   const map = useMap();
   const points = useMemo(() => {
     if (disabled) return [];
     const out = [];
     (locations || []).forEach((loc) => { if (loc.lat != null && loc.lng != null) out.push([Number(loc.lat), Number(loc.lng)]); });
     (merchants || []).forEach((m) => { if (m.lat != null && m.lng != null) out.push([Number(m.lat), Number(m.lng)]); });
+    (taskMarkers || []).forEach((t) => {
+      const la = Number(t.lat);
+      const ln = Number(t.lng);
+      if (Number.isFinite(la) && Number.isFinite(ln)) out.push([la, ln]);
+    });
     return out;
-  }, [locations, merchants, disabled]);
+  }, [locations, merchants, taskMarkers, disabled]);
   useEffect(() => {
     if (disabled || points.length < 2) return;
     try {
@@ -123,8 +173,8 @@ function LeafletFitBounds({ locations, merchants, disabled }) {
   return null;
 }
 
-function LeafletMapView({ locations, merchants, center, zoom }) {
-  const { riderMarkers, merchantMarkers } = useRiderAndMerchantMarkers(locations, merchants);
+function LeafletMapView({ locations, merchants, taskMarkers = [], center, zoom }) {
+  const { riderMarkers, merchantMarkers, taskMapMarkers } = useDashboardMapMarkers(locations, merchants, taskMarkers);
   const mapCenter = center != null ? center : BAGUIO_CENTER;
   const mapZoom = zoom != null ? zoom : 13;
   const fitBoundsDisabled = center != null && zoom != null;
@@ -142,7 +192,7 @@ function LeafletMapView({ locations, merchants, center, zoom }) {
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
-        <LeafletFitBounds locations={riderMarkers} merchants={merchantMarkers} disabled={fitBoundsDisabled} />
+        <LeafletFitBounds locations={riderMarkers} merchants={merchantMarkers} taskMarkers={taskMapMarkers} disabled={fitBoundsDisabled} />
         {riderMarkers.map((loc, idx) => (
           <Marker key={`rider-${loc.driver_id ?? idx}`} position={[Number(loc.lat), Number(loc.lng)]} icon={riderPinIcon}>
             <Popup><strong>Rider</strong>{loc.full_name && <><br />{loc.full_name}</>}{loc.on_duty != null && <><br />{loc.on_duty ? 'On duty' : 'Off duty'}</>}</Popup>
@@ -162,6 +212,18 @@ function LeafletMapView({ locations, merchants, center, zoom }) {
             </Marker>
           );
         })}
+        {taskMapMarkers.map((t, idx) => (
+          <Marker key={`task-${t.task_id ?? idx}`} position={[Number(t.lat), Number(t.lng)]} icon={taskPinIcon}>
+            <Popup>
+              <strong>Task</strong> (delivery)
+              {t.order_id != null && <><br />Order #{t.order_id}</>}
+              {t.task_id != null && <><br />Task ID {t.task_id}</>}
+              {t.status && <><br />{statusLabel(t.status)}</>}
+              {sanitizeMerchantDisplayName(t.restaurant_name || '') && <><br />{sanitizeMerchantDisplayName(t.restaurant_name || '')}</>}
+              {sanitizeLocationDisplayName(String(t.delivery_address || '')) && <><br />{sanitizeLocationDisplayName(String(t.delivery_address || ''))}</>}
+            </Popup>
+          </Marker>
+        ))}
       </MapContainer>
     </div>
   );
@@ -174,7 +236,7 @@ function mapboxTileUrl(accessToken) {
 }
 
 /** Individual pins at every zoom (no clustering) — matches legacy dashboard behavior. */
-function LeafletMapboxMarkersLayer({ riderMarkers, merchantMarkers }) {
+function LeafletMapboxMarkersLayer({ riderMarkers, merchantMarkers, taskMapMarkers }) {
   const map = useMap();
   const groupRef = useRef(null);
   useEffect(() => {
@@ -192,7 +254,7 @@ function LeafletMapboxMarkersLayer({ riderMarkers, merchantMarkers }) {
     group.clearLayers();
     (riderMarkers || []).forEach((loc, idx) => {
       const marker = L.marker([Number(loc.lat), Number(loc.lng)], { icon: riderPinIcon });
-      const popupContent = `<strong>Rider</strong>${loc.full_name ? `<br />${loc.full_name}` : ''}${loc.on_duty != null ? `<br />${loc.on_duty ? 'On duty' : 'Off duty'}` : ''}`;
+      const popupContent = `<strong>Rider</strong>${loc.full_name ? `<br />${escapeHtmlText(loc.full_name)}` : ''}${loc.on_duty != null ? `<br />${loc.on_duty ? 'On duty' : 'Off duty'}` : ''}`;
       marker.bindPopup(popupContent);
       group.addLayer(marker);
     });
@@ -203,7 +265,12 @@ function LeafletMapboxMarkersLayer({ riderMarkers, merchantMarkers }) {
       marker.bindPopup(merchantLeafletPopupHtml(m.restaurant_name));
       group.addLayer(marker);
     });
-  }, [riderMarkers, merchantMarkers]);
+    (taskMapMarkers || []).forEach((t, idx) => {
+      const marker = L.marker([Number(t.lat), Number(t.lng)], { icon: taskPinIcon });
+      marker.bindPopup(taskLeafletPopupHtml(t));
+      group.addLayer(marker);
+    });
+  }, [riderMarkers, merchantMarkers, taskMapMarkers]);
   return null;
 }
 
@@ -221,8 +288,8 @@ function LeafletMapboxTileError({ onTileError }) {
   return null;
 }
 
-function LeafletMapboxView({ mapboxToken, locations, merchants, center, zoom, routeGeojson }) {
-  const { riderMarkers, merchantMarkers } = useRiderAndMerchantMarkers(locations, merchants);
+function LeafletMapboxView({ mapboxToken, locations, merchants, taskMarkers = [], center, zoom, routeGeojson }) {
+  const { riderMarkers, merchantMarkers, taskMapMarkers } = useDashboardMapMarkers(locations, merchants, taskMarkers);
   const mapCenter = center != null && Array.isArray(center) && center.length >= 2 ? center : BAGUIO_CENTER;
   const mapZoom = zoom != null ? zoom : 13;
   const fitBoundsDisabled = center != null && zoom != null;
@@ -253,15 +320,15 @@ function LeafletMapboxView({ mapboxToken, locations, merchants, center, zoom, ro
           minZoom={0}
         />
         <LeafletMapboxTileError onTileError={() => setTileError(true)} />
-        <LeafletFitBounds locations={riderMarkers} merchants={merchantMarkers} disabled={fitBoundsDisabled} />
-        <LeafletMapboxMarkersLayer riderMarkers={riderMarkers} merchantMarkers={merchantMarkers} />
+        <LeafletFitBounds locations={riderMarkers} merchants={merchantMarkers} taskMarkers={taskMapMarkers} disabled={fitBoundsDisabled} />
+        <LeafletMapboxMarkersLayer riderMarkers={riderMarkers} merchantMarkers={merchantMarkers} taskMapMarkers={taskMapMarkers} />
       </MapContainer>
     </div>
   );
 }
 
-function MapboxMapView({ mapboxToken, locations, merchants, center, zoom }) {
-  const { riderMarkers, merchantMarkers } = useRiderAndMerchantMarkers(locations, merchants);
+function MapboxMapView({ mapboxToken, locations, merchants, taskMarkers = [], center, zoom }) {
+  const { riderMarkers, merchantMarkers, taskMapMarkers } = useDashboardMapMarkers(locations, merchants, taskMarkers);
   const [loadError, setLoadError] = useState(null);
   const [mounted, setMounted] = useState(false);
   const initialView = useMemo(() => {
@@ -316,6 +383,11 @@ function MapboxMapView({ mapboxToken, locations, merchants, center, zoom }) {
             />
           </MapboxMarker>
         ))}
+        {taskMapMarkers.map((t, idx) => (
+          <MapboxMarker key={`task-${t.task_id ?? idx}`} longitude={Number(t.lng)} latitude={Number(t.lat)} anchor="bottom">
+            <PinMarker type="task" title={taskMapTitle(t)} />
+          </MapboxMarker>
+        ))}
       </Map>
       )}
     </div>
@@ -332,9 +404,9 @@ function parseGoogleMapStyles(styleJson) {
   }
 }
 
-function GoogleMapView({ apiKey, locations, merchants, center: centerProp, zoom: zoomProp, googleMapStyle, directionsRequest, onDirections }) {
+function GoogleMapView({ apiKey, locations, merchants, taskMarkers = [], center: centerProp, zoom: zoomProp, googleMapStyle, directionsRequest, onDirections }) {
   const [loadError, setLoadError] = useState(null);
-  const { riderMarkers, merchantMarkers } = useRiderAndMerchantMarkers(locations, merchants);
+  const { riderMarkers, merchantMarkers, taskMapMarkers } = useDashboardMapMarkers(locations, merchants, taskMarkers);
   const [directionsResult, setDirectionsResult] = useState(null);
   const [directionsStatus, setDirectionsStatus] = useState(null);
   const center = useMemo(() => {
@@ -413,13 +485,34 @@ function GoogleMapView({ apiKey, locations, merchants, center: centerProp, zoom:
           {merchantMarkers.map((m, idx) => (
             <GoogleMarker key={`merchant-${m.merchant_id ?? idx}`} position={{ lat: Number(m.lat), lng: Number(m.lng) }} title={merchantMapTitle(m.restaurant_name)} />
           ))}
+          {taskMapMarkers.map((t, idx) => (
+            <GoogleMarker
+              key={`task-${t.task_id ?? idx}`}
+              position={{ lat: Number(t.lat), lng: Number(t.lng) }}
+              title={taskMapTitle(t)}
+              icon={GOOGLE_TASK_PIN_ICON}
+            />
+          ))}
         </GoogleMap>
       )}
     </LoadScript>
   );
 }
 
-export default function MapView({ locations = [], merchants = [], mapProvider = 'mapbox', apiKey = '', mapboxToken = '', center, zoom, googleMapStyle, directionsRequest, mapboxRouteGeojson, onGoogleDirections }) {
+export default function MapView({
+  locations = [],
+  merchants = [],
+  taskMarkers = [],
+  mapProvider = 'mapbox',
+  apiKey = '',
+  mapboxToken = '',
+  center,
+  zoom,
+  googleMapStyle,
+  directionsRequest,
+  mapboxRouteGeojson,
+  onGoogleDirections,
+}) {
   const token = String(mapboxToken || '').trim();
   const useMapbox = mapProvider === 'mapbox' && token.length > 0;
   const useGoogle = mapProvider === 'google' && apiKey && String(apiKey).trim().length > 0;
@@ -441,10 +534,32 @@ export default function MapView({ locations = [], merchants = [], mapProvider = 
     );
   }
   if (useMapbox) {
-    return <LeafletMapboxView mapboxToken={token} locations={locations} merchants={merchants} center={center} zoom={zoom} routeGeojson={mapboxRouteGeojson} />;
+    return (
+      <LeafletMapboxView
+        mapboxToken={token}
+        locations={locations}
+        merchants={merchants}
+        taskMarkers={taskMarkers}
+        center={center}
+        zoom={zoom}
+        routeGeojson={mapboxRouteGeojson}
+      />
+    );
   }
   if (useGoogle) {
-    return <GoogleMapView apiKey={apiKey.trim()} locations={locations} merchants={merchants} center={center} zoom={zoom} googleMapStyle={googleMapStyle} directionsRequest={directionsRequest} onDirections={onGoogleDirections} />;
+    return (
+      <GoogleMapView
+        apiKey={apiKey.trim()}
+        locations={locations}
+        merchants={merchants}
+        taskMarkers={taskMarkers}
+        center={center}
+        zoom={zoom}
+        googleMapStyle={googleMapStyle}
+        directionsRequest={directionsRequest}
+        onDirections={onGoogleDirections}
+      />
+    );
   }
   return (
     <div className="map-container map-placeholder" style={MAP_STYLE}>

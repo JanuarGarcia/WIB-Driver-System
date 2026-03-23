@@ -9,6 +9,12 @@ import AgentPanel from '../components/AgentPanel';
 import { useMapMerchantFilterSelection } from '../components/MapMerchantFilter';
 import { api } from '../api';
 import { useTeamFilter } from '../context/TeamFilterContext';
+import {
+  DASHBOARD_TASKS_MAP_DATE_EVENT,
+  readDashboardTasksMapDateFromStorage,
+  todayDateStrLocal,
+  tasksWithMapCoordinates,
+} from '../utils/mapTasks';
 
 export default function Dashboard() {
   const location = useLocation();
@@ -35,6 +41,8 @@ export default function Dashboard() {
   const [directionsError, setDirectionsError] = useState(null);
   const [directionsLoading, setDirectionsLoading] = useState(false);
   const [mapboxRouteGeojson, setMapboxRouteGeojson] = useState(null); // GeoJSON LineString feature
+  const [tasksMapDateStr, setTasksMapDateStr] = useState(() => readDashboardTasksMapDateFromStorage() || todayDateStrLocal());
+  const [rawMapTasks, setRawMapTasks] = useState([]);
 
   const driversLocationsUrl = selectedTeamId
     ? `drivers/locations?team_id=${encodeURIComponent(selectedTeamId)}`
@@ -68,8 +76,39 @@ export default function Dashboard() {
     });
   }, [locations, selectedMapMerchantIds]);
 
+  const mapTasksWithCoords = useMemo(() => tasksWithMapCoordinates(rawMapTasks), [rawMapTasks]);
+
+  const filteredMapTasks = useMemo(() => {
+    if (!selectedMapMerchantIds.length) return mapTasksWithCoords;
+    const allowed = new Set(selectedMapMerchantIds.map(String));
+    return mapTasksWithCoords.filter((t) => {
+      if (t.merchant_id == null || t.merchant_id === '') return true;
+      return allowed.has(String(t.merchant_id));
+    });
+  }, [mapTasksWithCoords, selectedMapMerchantIds]);
+
+  useEffect(() => {
+    const sync = () => setTasksMapDateStr(readDashboardTasksMapDateFromStorage() || todayDateStrLocal());
+    window.addEventListener(DASHBOARD_TASKS_MAP_DATE_EVENT, sync);
+    return () => window.removeEventListener(DASHBOARD_TASKS_MAP_DATE_EVENT, sync);
+  }, []);
+
+  useEffect(() => {
+    api(`tasks?date=${encodeURIComponent(tasksMapDateStr)}`)
+      .then((list) => setRawMapTasks(Array.isArray(list) ? list : []))
+      .catch(() => setRawMapTasks([]));
+  }, [tasksMapDateStr, taskListRevision]);
+
   const mapShowsNoMarkers =
-    filteredLocationsForMap.length === 0 && filteredMerchantsForMap.length === 0;
+    filteredLocationsForMap.length === 0 && filteredMerchantsForMap.length === 0 && filteredMapTasks.length === 0;
+
+  const refreshMapData = useCallback(() => {
+    api(driversLocationsUrl).then(setLocations).catch(() => setLocations([]));
+    api('merchants/locations').then(setMerchants).catch(() => setMerchants([]));
+    api(`tasks?date=${encodeURIComponent(tasksMapDateStr)}`)
+      .then((list) => setRawMapTasks(Array.isArray(list) ? list : []))
+      .catch(() => setRawMapTasks([]));
+  }, [driversLocationsUrl, tasksMapDateStr]);
 
   const refreshMapSettings = () => {
     api('settings')
@@ -91,11 +130,6 @@ export default function Dashboard() {
       .catch(() => { setGoogleApiKey(''); setMapboxToken(''); });
   };
 
-  const refreshMapData = () => {
-    api(driversLocationsUrl).then(setLocations).catch(() => setLocations([]));
-    api('merchants/locations').then(setMerchants).catch(() => setMerchants([]));
-  };
-
   useEffect(() => {
     refreshMapSettings();
   }, []);
@@ -110,7 +144,7 @@ export default function Dashboard() {
     const onFocus = () => { refreshMapSettings(); refreshMapData(); };
     window.addEventListener('focus', onFocus);
     return () => window.removeEventListener('focus', onFocus);
-  }, [location.pathname]);
+  }, [location.pathname, refreshMapData]);
 
   useEffect(() => {
     if (location.pathname !== '/' || disableActivityTracking) return;
@@ -119,7 +153,7 @@ export default function Dashboard() {
       if (document.visibilityState === 'visible') refreshMapData();
     }, ms);
     return () => clearInterval(id);
-  }, [location.pathname, disableActivityTracking, activityRefreshIntervalSec, driversLocationsUrl]);
+  }, [location.pathname, disableActivityTracking, activityRefreshIntervalSec, driversLocationsUrl, refreshMapData]);
 
   const clearDirections = () => {
     setDirectionsReq(null);
@@ -274,6 +308,7 @@ export default function Dashboard() {
             <MapView
               locations={filteredLocationsForMap}
               merchants={filteredMerchantsForMap}
+              taskMarkers={filteredMapTasks}
               mapProvider={mapProvider}
               apiKey={googleApiKey}
               mapboxToken={mapboxToken}

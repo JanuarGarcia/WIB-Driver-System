@@ -5,6 +5,7 @@ import { api, statusClass, statusLabel } from '../api';
 import { sanitizeLocationDisplayName } from '../utils/displayText';
 import { getAdvanceOrderLines, isAdvanceOrderDisplay } from '../utils/advanceOrder';
 import { useTableAutoRefresh } from '../hooks/useTableAutoRefresh';
+import { DASHBOARD_TASKS_MAP_DATE_KEY, notifyDashboardTasksMapDateChanged } from '../utils/mapTasks';
 
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const MONTH_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -281,6 +282,13 @@ export default function TaskPanel({ onOpenTaskDetails, listRevision = 0 }) {
     return d.getDate() === cell.day && d.getMonth() + 1 === cell.month && d.getFullYear() === cell.year;
   };
   const calendarGrid = getCalendarGrid(viewYear, viewMonth);
+
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(DASHBOARD_TASKS_MAP_DATE_KEY, toDateString(selectedDateTime));
+    } catch (_) {}
+    notifyDashboardTasksMapDateChanged();
+  }, [selectedDateTime]);
 
   useEffect(() => {
     function handleClickOutside(e) {
