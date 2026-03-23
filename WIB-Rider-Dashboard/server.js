@@ -165,6 +165,87 @@ app.post('/api/tasks', express.json(), async (req, res) => {
   }
 });
 
+// Proxy: DELETE /api/tasks/:id (task details delete — was missing; otherwise SPA/HTML broke JSON parse)
+app.delete('/api/tasks/:id', async (req, res) => {
+  setNoCache(res);
+  res.set('X-Dashboard-Proxy', '1');
+  const id = req.params.id;
+  const url = `${BACKEND_URL}/admin/api/tasks/${encodeURIComponent(id)}`;
+  try {
+    const response = await axios.delete(url, {
+      headers: backendHeaders(req),
+      timeout: 15000,
+    });
+    if (response.data !== undefined && response.data !== '') {
+      res.status(response.status || 200).json(response.data);
+    } else {
+      res.status(response.status || 200).json({ ok: true });
+    }
+  } catch (err) {
+    const status = err.response?.status || 500;
+    let data = err.response?.data;
+    if (data != null && typeof data === 'string' && data.trimStart().startsWith('<')) {
+      data = { error: 'Backend returned an error page. Check server logs and BACKEND_URL.' };
+    }
+    if (data == null || typeof data !== 'object') data = { error: err.message || 'Delete failed' };
+    res.status(status).json(data);
+  }
+});
+
+// Proxy: DELETE /api/drivers/:id
+app.delete('/api/drivers/:id', async (req, res) => {
+  setNoCache(res);
+  res.set('X-Dashboard-Proxy', '1');
+  const id = req.params.id;
+  const url = `${BACKEND_URL}/admin/api/drivers/${encodeURIComponent(id)}`;
+  try {
+    const response = await axios.delete(url, {
+      headers: backendHeaders(req),
+      timeout: 15000,
+    });
+    if (response.data !== undefined && response.data !== '') {
+      res.status(response.status || 200).json(response.data);
+    } else {
+      res.status(response.status || 200).json({ ok: true });
+    }
+  } catch (err) {
+    const status = err.response?.status || 500;
+    let data = err.response?.data;
+    if (data != null && typeof data === 'string' && data.trimStart().startsWith('<')) {
+      data = { error: 'Backend returned an error page.' };
+    }
+    if (data == null || typeof data !== 'object') data = { error: err.message || 'Delete failed' };
+    res.status(status).json(data);
+  }
+});
+
+// Proxy: DELETE /api/teams/:id
+app.delete('/api/teams/:id', async (req, res) => {
+  setNoCache(res);
+  res.set('X-Dashboard-Proxy', '1');
+  const id = req.params.id;
+  const url = `${BACKEND_URL}/admin/api/teams/${encodeURIComponent(id)}`;
+  try {
+    const response = await axios.delete(url, {
+      headers: backendHeaders(req),
+      timeout: 15000,
+    });
+    if (response.data !== undefined && response.data !== '') {
+      res.status(response.status || 200).json(response.data);
+    } else {
+      res.status(response.status || 200).json({ ok: true });
+    }
+  } catch (err) {
+    const status = err.response?.status || 500;
+    let data = err.response?.data;
+    if (data != null && typeof data === 'string' && data.trimStart().startsWith('<')) {
+      data = { error: 'Backend returned an error page.' };
+    }
+    if (data == null || typeof data !== 'object') data = { error: err.message || 'Delete failed' };
+    res.status(status).json(data);
+  }
+});
+
 // Proxy: PUT /api/settings
 app.put('/api/settings', express.json(), async (req, res) => {
   setNoCache(res);

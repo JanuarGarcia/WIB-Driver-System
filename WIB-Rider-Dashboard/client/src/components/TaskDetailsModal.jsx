@@ -1186,7 +1186,7 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
       )}
       {deleteConfirmOpen && (
         <div
-          className="task-modal-nested-overlay"
+          className="task-modal-nested-overlay task-delete-overlay"
           role="presentation"
           onClick={cancelDeleteConfirm}
         >
@@ -1195,29 +1195,51 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
             role="dialog"
             aria-modal="true"
             aria-labelledby="task-delete-confirm-title"
+            aria-describedby="task-delete-confirm-desc"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="modal-header task-detail-delete-confirm-header">
-              <h3 id="task-delete-confirm-title">Delete task?</h3>
-              <button
-                type="button"
-                className="task-detail-edit-modal-close"
-                onClick={cancelDeleteConfirm}
-                disabled={actionLoading}
-                aria-label="Close"
-              >
-                ×
-              </button>
+            <button
+              type="button"
+              className="task-delete-confirm-close"
+              onClick={cancelDeleteConfirm}
+              disabled={actionLoading}
+              aria-label="Close"
+            >
+              ×
+            </button>
+            <div className="task-delete-confirm-visual" aria-hidden="true">
+              <span className="task-delete-confirm-icon-wrap">
+                <svg className="task-delete-confirm-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6h14zM10 11v6M14 11v6" />
+                </svg>
+              </span>
             </div>
             <div className="modal-body task-detail-delete-confirm-body">
-              <p className="task-detail-delete-confirm-text">
-                Are you sure you want to delete task <strong>#{task?.task_id ?? taskId}</strong>? This cannot be undone.
+              <h3 id="task-delete-confirm-title" className="task-delete-confirm-title">
+                Delete this task?
+              </h3>
+              <p id="task-delete-confirm-desc" className="task-detail-delete-confirm-text">
+                This removes the task from the system permanently. Orders or history linked to it may be affected.
               </p>
-              <div className="modal-footer-actions task-detail-delete-confirm-actions">
-                <button type="button" className="btn" onClick={cancelDeleteConfirm} disabled={actionLoading}>
+              <div className="task-delete-confirm-id-row">
+                <span className="task-delete-confirm-id-label">Task ID</span>
+                <span className="task-delete-confirm-id-value">#{task?.task_id ?? taskId}</span>
+              </div>
+              <div className="task-detail-delete-confirm-actions">
+                <button
+                  type="button"
+                  className="btn task-delete-confirm-btn-cancel"
+                  onClick={cancelDeleteConfirm}
+                  disabled={actionLoading}
+                >
                   Cancel
                 </button>
-                <button type="button" className="btn btn-danger" onClick={confirmDeleteTask} disabled={actionLoading}>
+                <button
+                  type="button"
+                  className="btn task-delete-confirm-btn-delete"
+                  onClick={confirmDeleteTask}
+                  disabled={actionLoading}
+                >
                   {actionLoading ? 'Deleting…' : 'Delete task'}
                 </button>
               </div>
