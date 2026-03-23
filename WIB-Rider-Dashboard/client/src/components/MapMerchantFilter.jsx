@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { sanitizeMerchantDisplayName } from '../utils/displayText';
 
 export const MAP_MERCHANT_FILTER_STORAGE_KEY = 'wib-map-merchant-filter-ids';
 
@@ -50,7 +51,8 @@ function merchantRowId(m) {
 
 function merchantLabel(m) {
   const id = merchantRowId(m);
-  return (m.restaurant_name || '').trim() || (id ? `Merchant ${id}` : '—');
+  const cleaned = sanitizeMerchantDisplayName(m.restaurant_name || '');
+  return cleaned || (id ? `Merchant ${id}` : '—');
 }
 
 /**

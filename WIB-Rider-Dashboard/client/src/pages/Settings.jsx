@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { api } from '../api';
 import MapMerchantFilter from '../components/MapMerchantFilter';
+import { sanitizeMerchantDisplayName } from '../utils/displayText';
 
 function SearchableMerchantSelect({ merchants, excludedIds, onSelect, 'aria-label': ariaLabel }) {
   const [query, setQuery] = useState('');
@@ -13,7 +14,8 @@ function SearchableMerchantSelect({ merchants, excludedIds, onSelect, 'aria-labe
   });
   const filtered = query.trim()
     ? available.filter((m) => {
-        const name = (m.restaurant_name || `Merchant ${m.merchant_id ?? m.id}`).toLowerCase();
+        const id = m.merchant_id ?? m.id;
+        const name = (sanitizeMerchantDisplayName(m.restaurant_name) || `Merchant ${id}`).toLowerCase();
         return name.includes(query.trim().toLowerCase());
       })
     : available;
@@ -56,7 +58,7 @@ function SearchableMerchantSelect({ merchants, excludedIds, onSelect, 'aria-labe
           ) : (
             filtered.map((m) => {
               const id = m.merchant_id ?? m.id;
-              const name = m.restaurant_name || `Merchant ${id}`;
+              const name = sanitizeMerchantDisplayName(m.restaurant_name) || `Merchant ${id}`;
               return (
                 <li
                   key={id}
@@ -346,7 +348,8 @@ export default function Settings() {
 
   const merchantName = (id) => {
     const m = merchants.find((x) => (x.merchant_id ?? x.id) === id);
-    return m ? (m.restaurant_name || `Merchant ${id}`) : `Merchant ${id}`;
+    if (!m) return `Merchant ${id}`;
+    return sanitizeMerchantDisplayName(m.restaurant_name) || `Merchant ${id}`;
   };
 
   const handleOtherSave = () => {
@@ -599,7 +602,7 @@ export default function Settings() {
                   >
                     <option value="">Select Some Options</option>
                     {merchants.filter((m) => !blockMerchantIds.includes(m.merchant_id ?? m.id)).map((m) => (
-                      <option key={m.merchant_id ?? m.id} value={m.merchant_id ?? m.id}>{m.restaurant_name || `Merchant ${m.merchant_id ?? m.id}`}</option>
+                      <option key={m.merchant_id ?? m.id} value={m.merchant_id ?? m.id}>{sanitizeMerchantDisplayName(m.restaurant_name) || `Merchant ${m.merchant_id ?? m.id}`}</option>
                     ))}
                   </select>
                   <p className="settings-helper">List of merchant that cannot access driver panel.</p>

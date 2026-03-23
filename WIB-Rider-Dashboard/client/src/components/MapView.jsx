@@ -6,10 +6,31 @@ if (typeof window !== 'undefined') window.L = L;
 import Map, { Marker as MapboxMarker, Source, Layer } from 'react-map-gl/mapbox';
 import 'mapbox-gl/dist/mapbox-gl.css';
 import { LoadScript, GoogleMap, Marker as GoogleMarker, DirectionsService, DirectionsRenderer } from '@react-google-maps/api';
+import { sanitizeMerchantDisplayName } from '../utils/displayText';
 
 const BAGUIO_CENTER = [16.4023, 120.596];
 const BAGUIO_VIEW = { longitude: 120.596, latitude: 16.4023, zoom: 13 };
 const MAP_STYLE = { width: '100%', height: '100%', minHeight: 400 };
+
+function merchantMapTitle(restaurantName) {
+  const s = sanitizeMerchantDisplayName(restaurantName);
+  return s || 'Merchant';
+}
+
+/** Escape text for Leaflet HTML popups (merchant name only). */
+function escapeHtmlText(s) {
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function merchantLeafletPopupHtml(restaurantName) {
+  const label = sanitizeMerchantDisplayName(restaurantName);
+  if (!label) return '<strong>Merchant</strong>';
+  return `<strong>Merchant</strong><br />${escapeHtmlText(label)}`;
+}
 
 function merchantLogoUrl(logo) {
   if (!logo || !String(logo).trim()) return null;
@@ -130,13 +151,14 @@ function LeafletMapView({ locations, merchants, center, zoom }) {
         {merchantMarkers.map((m, idx) => {
           const logo = m.logo_url ?? m.logo ?? m.image_url;
           const logoImgUrl = merchantLogoUrl(logo);
+          const merchantTitle = sanitizeMerchantDisplayName(m.restaurant_name);
           return (
             <Marker
               key={`merchant-${m.merchant_id ?? idx}`}
               position={[Number(m.lat), Number(m.lng)]}
               icon={leafletPinIcon('merchant', logoImgUrl)}
             >
-              <Popup><strong>Merchant</strong>{m.restaurant_name && <><br />{m.restaurant_name}</>}</Popup>
+              <Popup><strong>Merchant</strong>{merchantTitle ? <><br />{merchantTitle}</> : null}</Popup>
             </Marker>
           );
         })}
@@ -178,8 +200,7 @@ function LeafletMapboxMarkersLayer({ riderMarkers, merchantMarkers }) {
       const logo = m.logo_url ?? m.logo ?? m.image_url;
       const logoImgUrl = merchantLogoUrl(logo);
       const marker = L.marker([Number(m.lat), Number(m.lng)], { icon: leafletPinIcon('merchant', logoImgUrl) });
-      const popupContent = `<strong>Merchant</strong>${m.restaurant_name ? `<br />${m.restaurant_name}` : ''}`;
-      marker.bindPopup(popupContent);
+      marker.bindPopup(merchantLeafletPopupHtml(m.restaurant_name));
       group.addLayer(marker);
     });
   }, [riderMarkers, merchantMarkers]);
@@ -291,7 +312,7 @@ function MapboxMapView({ mapboxToken, locations, merchants, center, zoom }) {
             <PinMarker
               type="merchant"
               imageUrl={m.image_url || m.logo_url || m.logo || m.photo || m.merchant_image}
-              title={m.restaurant_name || 'Merchant'}
+              title={merchantMapTitle(m.restaurant_name)}
             />
           </MapboxMarker>
         ))}
@@ -390,7 +411,7 @@ function GoogleMapView({ apiKey, locations, merchants, center: centerProp, zoom:
             <GoogleMarker key={`rider-${loc.driver_id ?? idx}`} position={{ lat: Number(loc.lat), lng: Number(loc.lng) }} title={loc.full_name || 'Rider'} />
           ))}
           {merchantMarkers.map((m, idx) => (
-            <GoogleMarker key={`merchant-${m.merchant_id ?? idx}`} position={{ lat: Number(m.lat), lng: Number(m.lng) }} title={m.restaurant_name || 'Merchant'} />
+            <GoogleMarker key={`merchant-${m.merchant_id ?? idx}`} position={{ lat: Number(m.lat), lng: Number(m.lng) }} title={merchantMapTitle(m.restaurant_name)} />
           ))}
         </GoogleMap>
       )}

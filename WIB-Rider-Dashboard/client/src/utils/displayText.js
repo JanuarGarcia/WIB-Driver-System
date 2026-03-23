@@ -18,6 +18,16 @@ export function sanitizeLocationDisplayName(raw) {
   return s.trim();
 }
 
+/**
+ * Merchant / restaurant labels on map and settings: remove forward and back slashes
+ * (common JSON/path artifacts). Display-only.
+ */
+export function sanitizeMerchantDisplayName(raw) {
+  const base = sanitizeLocationDisplayName(raw);
+  if (!base) return '';
+  return base.replace(/[/\\]+/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
 function pickFromObject(o) {
   if (!o || typeof o !== 'object' || Array.isArray(o)) return '';
   const preferred = ['en', 'EN', 'eng', 'Eng', 'default', 'DEFAULT', 'Cstm', 'cstm', 'ADMIN', 'admin'];
