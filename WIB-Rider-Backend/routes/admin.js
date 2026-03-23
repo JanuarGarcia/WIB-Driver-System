@@ -29,8 +29,26 @@ function sanitizeTaskProofFileName(photoName) {
   return s;
 }
 
-/** Public URL for on-disk proof files: BASE_URL + /upload/task/ + photo_name */
+/** Basename as stored on legacy PHP disk (may include .jpg.jpg). */
+function taskProofDriverBasename(photoName) {
+  let s = String(photoName || '').trim().replace(/\\/g, '/');
+  if (!s) return '';
+  s = s.replace(/^<+/, '').replace(/>+$/, '').trim();
+  s = path.basename(s);
+  if (!s || s === '.' || s === '..') return '';
+  return s;
+}
+
+/** Public URL for on-disk proof: legacy /upload/driver/ or /upload/task/ + sanitized name */
 function buildTaskProofImageUrl(photoName) {
+  const raw = String(photoName || '').trim().replace(/\\/g, '/');
+  const lower = raw.toLowerCase();
+  if (lower.includes('/driver/') || lower.includes('upload/driver')) {
+    const base = taskProofDriverBasename(photoName);
+    if (!base) return null;
+    const rel = `/upload/driver/${encodeURIComponent(base)}`;
+    return PUBLIC_BASE_URL ? `${PUBLIC_BASE_URL}${rel}` : rel;
+  }
   const safe = sanitizeTaskProofFileName(photoName);
   if (!safe) return null;
   const rel = `/upload/task/${encodeURIComponent(safe)}`;

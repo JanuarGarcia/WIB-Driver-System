@@ -42,6 +42,21 @@ app.get('/uploads/*', async (req, res) => {
   }
 });
 
+// Proxy: /upload/* -> BACKEND_URL/upload/* (Express 4: use mount, not * in path)
+app.use('/upload', async (req, res, next) => {
+  if (req.method !== 'GET' && req.method !== 'HEAD') return next();
+  const subPath = (req.url || '').split('?')[0].replace(/^\//, '') || '';
+  if (!subPath) return next();
+  const url = `${BACKEND_URL}/upload/${subPath}`;
+  try {
+    const response = await axios.get(url, { responseType: 'stream', timeout: 10000 });
+    res.set(response.headers);
+    response.data.pipe(res);
+  } catch (err) {
+    res.status(err.response?.status || 502).end();
+  }
+});
+
 // Proxy: GET /api/task-photos/:id/image -> backend returns image binary (stream, not JSON)
 app.get('/api/task-photos/:id/image', async (req, res) => {
   const id = req.params.id;
@@ -314,12 +329,16 @@ const fs = require('fs');
 if (fs.existsSync(clientBuild)) {
   app.use(express.static(clientBuild));
   app.get('*', (req, res) => {
-    if (req.path.startsWith('/api')) return;
+    if (req.path.startsWith('/api') || req.path.startsWith('/upload')) {
+      return res.status(404).type('text').send('Not found');
+    }
     res.sendFile(path.join(clientBuild, 'index.html'));
   });
 } else {
   app.get('*', (req, res) => {
-    if (req.path.startsWith('/api')) return;
+    if (req.path.startsWith('/api') || req.path.startsWith('/upload')) {
+      return res.status(404).type('text').send('Not found');
+    }
     res.type('html').send(`
       <!DOCTYPE html><html><head><title>WIB Rider Dashboard</title></head><body>
       <h1>React app not built</h1>

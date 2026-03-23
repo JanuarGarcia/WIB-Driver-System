@@ -139,11 +139,25 @@ function normalizePhotoName(photoName) {
   return name;
 }
 
-/** Build task photo URL. Order: task_photos, /upload/task (mt_driver_task_photo), then uploads root. */
+/** Basename only (legacy PHP /upload/driver/ keeps double extensions like .jpg.jpg on disk). */
+function legacyDriverBasename(photoName) {
+  if (!photoName || typeof photoName !== 'string') return '';
+  let s = photoName.trim().replace(/\\/g, '/');
+  s = s.replace(/^<+/, '').replace(/>+$/, '').trim();
+  const base = s.includes('/') ? s.split('/').pop() || s : s;
+  return base || '';
+}
+
+/** Build task photo URL. Tries legacy /upload/driver/ first when cycling variants. */
 function taskPhotoUrl(photoName, variant = 'task_photos') {
   if (!photoName || typeof photoName !== 'string') return '';
   const s = photoName.trim();
   if (s.startsWith('http') || s.startsWith('/')) return s;
+  if (variant === 'upload_driver') {
+    const raw = legacyDriverBasename(s);
+    if (!raw) return '';
+    return `/upload/driver/${encodeURIComponent(raw)}`;
+  }
   const name = normalizePhotoName(s);
   if (!name) return '';
   if (variant === 'root') return `/uploads/${encodeURIComponent(name)}`;
@@ -156,7 +170,7 @@ function TaskPhotoImage({ photoId, photoName }) {
   const [variantIdx, setVariantIdx] = useState(0);
   const [skipApiBlob, setSkipApiBlob] = useState(false);
   const apiImageUrl = photoId ? `/api/task-photos/${encodeURIComponent(photoId)}/image` : null;
-  const variants = ['task_photos', 'upload_task', 'root'];
+  const variants = ['upload_driver', 'upload_task', 'task_photos', 'root'];
   const uploadsUrl = photoName ? taskPhotoUrl(photoName, variants[Math.min(variantIdx, variants.length - 1)]) : '';
   const url = (!skipApiBlob && apiImageUrl) || uploadsUrl;
   const bumpVariant = () => {
