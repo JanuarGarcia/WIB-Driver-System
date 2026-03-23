@@ -25,6 +25,14 @@ export function notifyDashboardTasksMapDateChanged() {
   } catch (_) {}
 }
 
+/** Normalize API task status for comparison (matches TaskPanel / AgentPanel). */
+export function normalizeTaskStatusKey(status) {
+  return (status || '').toLowerCase().replace(/\s+/g, '').replace(/_/g, '');
+}
+
+/** Only these statuses get an orange task pin (excludes delivered/successful/completed and other terminal states). */
+export const TASK_MAP_MARKER_STATUS_SET = new Set(['unassigned', 'inprogress', 'started', 'acknowledged']);
+
 /**
  * Tasks that can be drawn on the map (delivery coordinates).
  * @param {Array<Record<string, unknown>>|null|undefined} tasks
@@ -47,5 +55,6 @@ export function tasksWithMapCoordinates(tasks) {
         order_id: t.order_id,
       };
     })
-    .filter(Boolean);
+    .filter(Boolean)
+    .filter((row) => TASK_MAP_MARKER_STATUS_SET.has(normalizeTaskStatusKey(row.status)));
 }

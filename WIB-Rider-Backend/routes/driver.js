@@ -338,7 +338,23 @@ router.post('/ChangeTaskStatus', validateApiKey, resolveDriver, async (req, res)
   const tid = parseInt(task_id, 10);
   if (!tid) return error(res, 'task_id required');
   const status = (status_raw || 'completed').toString().toLowerCase();
-  await pool.query('UPDATE mt_driver_task SET status = ?, date_modified = NOW() WHERE task_id = ? AND driver_id = ?', [status, tid, req.driver.id]);
+  const [updateResult] = await pool.query(
+    'UPDATE mt_driver_task SET status = ?, date_modified = NOW() WHERE task_id = ? AND driver_id = ?',
+    [status, tid, req.driver.id]
+  );
+  if (!updateResult.affectedRows) {
+    return error(res, 'Task not found or not assigned to you');
+  }
+  try {
+    const [[task]] = await pool.query('SELECT order_id FROM mt_driver_task WHERE task_id = ?', [tid]);
+    const remarks = reason != null && String(reason).trim() ? String(reason).trim() : '';
+    await pool.query(
+      'INSERT INTO mt_order_history (order_id, task_id, status, remarks, date_created, update_by_type) VALUES (?, ?, ?, ?, NOW(), ?)',
+      [task?.order_id || null, tid, status, remarks, 'driver']
+    );
+  } catch (_) {
+    /* mt_order_history optional — do not fail status update */
+  }
   return success(res, null);
 });
 
