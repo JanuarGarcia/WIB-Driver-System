@@ -3,9 +3,6 @@ import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 if (typeof window !== 'undefined') window.L = L;
-import 'leaflet.markercluster';
-import 'leaflet.markercluster/dist/MarkerCluster.css';
-import 'leaflet.markercluster/dist/MarkerCluster.Default.css';
 import Map, { Marker as MapboxMarker, Source, Layer } from 'react-map-gl/mapbox';
 import 'mapbox-gl/dist/mapbox-gl.css';
 import { LoadScript, GoogleMap, Marker as GoogleMarker, DirectionsService, DirectionsRenderer } from '@react-google-maps/api';
@@ -154,11 +151,12 @@ function mapboxTileUrl(accessToken) {
   return `https://api.mapbox.com/styles/v1/mapbox/streets-v12/tiles/512/{z}/{x}/{y}?access_token=${token}`;
 }
 
-function LeafletMapboxClusterLayer({ riderMarkers, merchantMarkers }) {
+/** Individual pins at every zoom (no clustering) — matches legacy dashboard behavior. */
+function LeafletMapboxMarkersLayer({ riderMarkers, merchantMarkers }) {
   const map = useMap();
   const groupRef = useRef(null);
   useEffect(() => {
-    const group = L.markerClusterGroup();
+    const group = L.layerGroup();
     groupRef.current = group;
     map.addLayer(group);
     return () => {
@@ -235,7 +233,7 @@ function LeafletMapboxView({ mapboxToken, locations, merchants, center, zoom, ro
         />
         <LeafletMapboxTileError onTileError={() => setTileError(true)} />
         <LeafletFitBounds locations={riderMarkers} merchants={merchantMarkers} disabled={fitBoundsDisabled} />
-        <LeafletMapboxClusterLayer riderMarkers={riderMarkers} merchantMarkers={merchantMarkers} />
+        <LeafletMapboxMarkersLayer riderMarkers={riderMarkers} merchantMarkers={merchantMarkers} />
       </MapContainer>
     </div>
   );
