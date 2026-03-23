@@ -1511,7 +1511,9 @@ function bearingToCompass(bearing) {
 
 // ---- Tasks (mt_driver_task) ----
 router.get('/tasks', async (req, res) => {
-  const { date, status } = req.query;
+  const { date, status, status_in } = req.query;
+  const statusNormSql =
+    "LOWER(REPLACE(REPLACE(TRIM(COALESCE(t.status,'')), ' ', ''), '_', ''))";
   let sql = `SELECT t.*, CONCAT(COALESCE(d.first_name,''), ' ', COALESCE(d.last_name,'')) AS driver_name,
     d.location_lat AS driver_lat, d.location_lng AS driver_lng,
     COALESCE(m.restaurant_name, m2.restaurant_name) AS restaurant_name,
@@ -1530,7 +1532,16 @@ router.get('/tasks', async (req, res) => {
     sql += ' AND (t.delivery_date = ? OR DATE(t.delivery_date) = ?)';
     params.push(date, date);
   }
-  if (status) {
+  if (status_in) {
+    const keys = String(status_in)
+      .split(',')
+      .map((s) => s.trim().toLowerCase().replace(/\s+/g, '').replace(/_/g, ''))
+      .filter(Boolean);
+    if (keys.length) {
+      sql += ` AND ${statusNormSql} IN (${keys.map(() => '?').join(',')})`;
+      params.push(...keys);
+    }
+  } else if (status) {
     sql += ' AND t.status = ?';
     params.push(status);
   }

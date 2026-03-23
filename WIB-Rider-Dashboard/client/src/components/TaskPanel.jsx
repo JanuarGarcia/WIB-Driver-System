@@ -69,7 +69,17 @@ function getCalendarGrid(viewYear, viewMonth) {
   return [...all, ...trailing];
 }
 
-const TABS = ['unassigned', 'assigned', 'completed'];
+const PROBLEM_FILTER_STORAGE_KEY = 'wib-tasks-problem-filter';
+const PROBLEM_STATUS_IN = 'cancelled,canceled,declined,failed';
+
+function readStoredProblemFilter() {
+  try {
+    const v = sessionStorage.getItem(PROBLEM_FILTER_STORAGE_KEY);
+    if (v === 'cancelled' || v === 'declined' || v === 'failed') return v;
+  } catch (_) {}
+  return 'cancelled';
+}
+
 const SORT_ORDER_OPTIONS = [
   { key: 'rfp', label: 'RFP' },
   { key: 'manual', label: 'Manual' },
@@ -165,6 +175,10 @@ export default function TaskPanel({ onOpenTaskDetails, listRevision = 0 }) {
   const navigate = useNavigate();
   const [tasks, setTasks] = useState([]);
   const [counts, setCounts] = useState({ unassigned: 0, assigned: 0, completed: 0 });
+  const [problemCounts, setProblemCounts] = useState({ cancelled: 0, declined: 0, failed: 0 });
+  /** 'active' = normal pipeline (unassigned / assigned / completed); 'problem' = cancelled / declined / failed */
+  const [taskMode, setTaskMode] = useState('active');
+  const [problemTaskFilter, setProblemTaskFilter] = useState(readStoredProblemFilter);
   const [activeTab, setActiveTab] = useState('unassigned');
   const [loading, setLoading] = useState(true);
   const [selectedDateTime, setSelectedDateTime] = useState(() => new Date());
@@ -288,22 +302,48 @@ export default function TaskPanel({ onOpenTaskDetails, listRevision = 0 }) {
     return `${y}-${m}-${day}`;
   };
 
+  const persistProblemFilter = useCallback((key) => {
+    setProblemTaskFilter(key);
+    try {
+      sessionStorage.setItem(PROBLEM_FILTER_STORAGE_KEY, key);
+    } catch (_) {}
+  }, []);
+
   const fetchTasks = useCallback(() => {
     setLoading(true);
     const dateStr = toDateString(selectedDateTime);
-    const url = `tasks?date=${encodeURIComponent(dateStr)}`;
+    let url = `tasks?date=${encodeURIComponent(dateStr)}`;
+    if (taskMode === 'problem') {
+      url += `&status_in=${encodeURIComponent(PROBLEM_STATUS_IN)}`;
+    }
     api(url)
       .then((list) => {
-        setTasks(list || []);
+        const raw = list || [];
+        setTasks(raw);
         const norm = (status) => (status || '').toLowerCase().replace(/\s+/g, '').replace(/_/g, '');
-        const u = (list || []).filter(t => norm(t.status) === 'unassigned').length;
-        const a = (list || []).filter(t => ['assigned', 'acknowledged', 'started', 'inprogress'].includes(norm(t.status))).length;
-        const c = (list || []).filter(t => ['completed', 'delivered', 'successful'].includes((t.status || '').toLowerCase())).length;
-        setCounts({ unassigned: u, assigned: a, completed: c });
+        if (taskMode === 'active') {
+          const u = raw.filter((t) => norm(t.status) === 'unassigned').length;
+          const a = raw.filter((t) => ['assigned', 'acknowledged', 'started', 'inprogress'].includes(norm(t.status))).length;
+          const c = raw.filter((t) => ['completed', 'delivered', 'successful'].includes(norm(t.status))).length;
+          setCounts({ unassigned: u, assigned: a, completed: c });
+        } else {
+          setProblemCounts({
+            cancelled: raw.filter((t) => norm(t.status) === 'cancelled' || norm(t.status) === 'canceled').length,
+            declined: raw.filter((t) => norm(t.status) === 'declined').length,
+            failed: raw.filter((t) => norm(t.status) === 'failed').length,
+          });
+        }
       })
-      .catch(() => setTasks([]))
+      .catch(() => {
+        setTasks([]);
+        if (taskMode === 'active') {
+          setCounts({ unassigned: 0, assigned: 0, completed: 0 });
+        } else {
+          setProblemCounts({ cancelled: 0, declined: 0, failed: 0 });
+        }
+      })
       .finally(() => setLoading(false));
-  }, [selectedDateTime]);
+  }, [selectedDateTime, taskMode]);
 
   useEffect(() => {
     fetchTasks();
@@ -323,17 +363,29 @@ export default function TaskPanel({ onOpenTaskDetails, listRevision = 0 }) {
   useTableAutoRefresh(fetchTasks, activityRefreshIntervalMs);
 
   const normStatus = (status) => (status || '').toLowerCase().replace(/\s+/g, '').replace(/_/g, '');
-  const filteredByTab = tasks.filter(t => {
+  const filteredByTab = tasks.filter((t) => {
     const s = normStatus(t.status);
     if (activeTab === 'unassigned') return s === 'unassigned';
     if (activeTab === 'assigned') return ['assigned', 'acknowledged', 'started', 'inprogress'].includes(s);
     return ['completed', 'delivered', 'successful'].includes(s);
   });
 
+  const filteredByProblem = tasks.filter((t) => {
+    const s = normStatus(t.status);
+    if (problemTaskFilter === 'cancelled') return s === 'cancelled' || s === 'canceled';
+    if (problemTaskFilter === 'declined') return s === 'declined';
+    return s === 'failed';
+  });
+
   const scheduledTasksAll = useMemo(() => (tasks || []).filter(isAdvanceOrderDisplay), [tasks]);
   const scheduledCount = scheduledTasksAll.length;
 
-  const filteredByMode = scheduledOrdersOnly ? scheduledTasksAll : filteredByTab;
+  const filteredByMode =
+    taskMode === 'problem'
+      ? filteredByProblem
+      : scheduledOrdersOnly
+        ? scheduledTasksAll
+        : filteredByTab;
 
   const filtered = [...filteredByMode].sort((a, b) => {
     const dateA = a.date_created ? new Date(a.date_created).getTime() : 0;
@@ -355,6 +407,17 @@ export default function TaskPanel({ onOpenTaskDetails, listRevision = 0 }) {
     { key: 'assigned', label: 'Assigned', count: counts.assigned ?? 0, highlight: activeTab === 'assigned' && !scheduledOrdersOnly, icon: 'user-check' },
     { key: 'completed', label: 'Completed', count: counts.completed ?? 0, highlight: activeTab === 'completed' && !scheduledOrdersOnly, icon: 'check' },
   ];
+
+  const problemStatItems = [
+    { key: 'cancelled', label: 'Cancelled', count: problemCounts.cancelled ?? 0, highlight: problemTaskFilter === 'cancelled', icon: 'ban' },
+    { key: 'declined', label: 'Declined', count: problemCounts.declined ?? 0, highlight: problemTaskFilter === 'declined', icon: 'user-x' },
+    { key: 'failed', label: 'Failed', count: problemCounts.failed ?? 0, highlight: problemTaskFilter === 'failed', icon: 'alert' },
+  ];
+
+  const showAllInList =
+    taskMode === 'problem' ||
+    scheduledOrdersOnly ||
+    (taskMode === 'active' && activeTab === 'completed');
 
   return (
     <div className="panel tasks-panel">
@@ -483,109 +546,179 @@ export default function TaskPanel({ onOpenTaskDetails, listRevision = 0 }) {
             document.body
           )}
         </div>
-        <div className="tasks-panel-header-actions tasks-panel-sort-wrap" ref={sortRef}>
-          <button
-            type="button"
-            className={`tasks-panel-header-icon ${sortDropdownOpen ? 'active' : ''}`}
-            aria-label="Sort tasks"
-            aria-expanded={sortDropdownOpen}
-            onClick={() => setSortDropdownOpen((o) => !o)}
-          >
-            <svg width="25" height="25" viewBox="0 0 24 24" fill="currentColor"><path d="M3 18h6v-2H3v2zm0-5h12v-2H3v2zm0-7v2h18V6H3z"/></svg>
-          </button>
-          {sortDropdownOpen && (
-            <div className="tasks-panel-sort-dropdown">
-              <div className="tasks-panel-sort-section">
-                <span className="tasks-panel-sort-label">Sorting order</span>
-                {SORT_ORDER_OPTIONS.map(({ key, label }) => (
-                  <button
-                    key={key}
-                    type="button"
-                    className={`tasks-panel-sort-option ${sortOrder === key ? 'active' : ''}`}
-                    onClick={() => { setSortOrder(key); setSortDropdownOpen(false); }}
-                  >
-                    {label}
-                  </button>
-                ))}
+        <div className="tasks-panel-header-actions tasks-panel-header-controls">
+          <div className="tasks-panel-view-switch" role="tablist" aria-label="Task view">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={taskMode === 'active'}
+              className={`tasks-panel-view-switch-seg ${taskMode === 'active' ? 'is-active' : ''}`}
+              onClick={() => {
+                setTaskMode('active');
+                setScheduledOrdersOnly(false);
+              }}
+            >
+              Active
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={taskMode === 'problem'}
+              className={`tasks-panel-view-switch-seg ${taskMode === 'problem' ? 'is-active' : ''}`}
+              onClick={() => {
+                setTaskMode('problem');
+                setScheduledOrdersOnly(false);
+              }}
+            >
+              Problem
+            </button>
+          </div>
+          <div className="tasks-panel-sort-wrap" ref={sortRef}>
+            <button
+              type="button"
+              className={`tasks-panel-header-icon tasks-panel-sort-menu-trigger ${sortDropdownOpen ? 'active' : ''}`}
+              aria-label="Sort list: order and direction"
+              aria-expanded={sortDropdownOpen}
+              onClick={() => setSortDropdownOpen((o) => !o)}
+            >
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M3 18h6v-2H3v2zm0-5h12v-2H3v2zm0-7v2h18V6H3z"/></svg>
+            </button>
+            {sortDropdownOpen && (
+              <div className="tasks-panel-sort-dropdown">
+                <div className="tasks-panel-sort-section">
+                  <span className="tasks-panel-sort-label">Sorting order</span>
+                  {SORT_ORDER_OPTIONS.map(({ key, label }) => (
+                    <button
+                      key={key}
+                      type="button"
+                      className={`tasks-panel-sort-option ${sortOrder === key ? 'active' : ''}`}
+                      onClick={() => { setSortOrder(key); setSortDropdownOpen(false); }}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                <div className="tasks-panel-sort-section">
+                  <span className="tasks-panel-sort-label">Order</span>
+                  {SORT_DIRECTION_OPTIONS.map(({ key, label }) => (
+                    <button
+                      key={key}
+                      type="button"
+                      className={`tasks-panel-sort-option ${sortDirection === key ? 'active' : ''}`}
+                      onClick={() => { setSortDirection(key); setSortDropdownOpen(false); }}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
               </div>
-              <div className="tasks-panel-sort-section">
-                <span className="tasks-panel-sort-label">Order</span>
-                {SORT_DIRECTION_OPTIONS.map(({ key, label }) => (
-                  <button
-                    key={key}
-                    type="button"
-                    className={`tasks-panel-sort-option ${sortDirection === key ? 'active' : ''}`}
-                    onClick={() => { setSortDirection(key); setSortDropdownOpen(false); }}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
+            )}
+          </div>
         </div>
       </div>
-      <div className={`tasks-panel-sort-indicator${scheduledOrdersOnly ? ' tasks-panel-sort-indicator--scheduled' : ''}`}>
+      <div className={`tasks-panel-sort-indicator${scheduledOrdersOnly && taskMode === 'active' ? ' tasks-panel-sort-indicator--scheduled' : ''}`}>
         <div className="tasks-panel-sort-indicator-row">
           <span className="tasks-panel-sort-indicator-text">
-            {scheduledOrdersOnly ? (
+            {taskMode === 'problem' ? (
+              <>
+                <span className="tasks-panel-view-mode-label">Problem tasks</span>
+                <span className="tasks-panel-sort-indicator-sep" aria-hidden="true"> · </span>
+              </>
+            ) : null}
+            {taskMode === 'active' && scheduledOrdersOnly ? (
               <>
                 <span className="tasks-panel-sort-indicator-scheduled-label">Scheduled orders</span>
                 <span className="tasks-panel-sort-indicator-sep" aria-hidden="true"> · </span>
               </>
             ) : null}
-            Sorted by {SORT_ORDER_OPTIONS.find((o) => o.key === sortOrder)?.label ?? sortOrder} · {sortDirection === 'latest' ? 'Latest first' : 'Oldest first'}
+            <span>
+              Sort: {SORT_ORDER_OPTIONS.find((o) => o.key === sortOrder)?.label ?? sortOrder} · {sortDirection === 'latest' ? 'Latest first' : 'Oldest first'}
+            </span>
           </span>
-          <button
-            type="button"
-            className={`tasks-panel-scheduled-orders-btn${scheduledOrdersOnly ? ' is-active' : ''}`}
-            onClick={() => setScheduledOrdersOnly((v) => !v)}
-            aria-pressed={scheduledOrdersOnly}
-            aria-label={scheduledOrdersOnly ? 'Exit scheduled orders view, show status tab list' : `Show scheduled orders${scheduledCount ? `, ${scheduledCount} on this date` : ''}`}
-          >
-            Scheduled Orders
-            {scheduledCount > 0 ? (
-              <span className="tasks-panel-scheduled-orders-count">{scheduledCount}</span>
-            ) : null}
-          </button>
+          {taskMode === 'active' ? (
+            <button
+              type="button"
+              className={`tasks-panel-scheduled-orders-btn${scheduledOrdersOnly ? ' is-active' : ''}`}
+              onClick={() => setScheduledOrdersOnly((v) => !v)}
+              aria-pressed={scheduledOrdersOnly}
+              aria-label={scheduledOrdersOnly ? 'Exit scheduled orders view, show status tab list' : `Show scheduled orders${scheduledCount ? `, ${scheduledCount} on this date` : ''}`}
+            >
+              Scheduled Orders
+              {scheduledCount > 0 ? (
+                <span className="tasks-panel-scheduled-orders-count">{scheduledCount}</span>
+              ) : null}
+            </button>
+          ) : null}
         </div>
       </div>
-      <div className="panel-stats panel-stats--tasks">
-        {statItems.map(({ key, label, count, highlight, icon }) => (
-          <button
-            key={key}
-            type="button"
-            className={`panel-stats-item ${highlight ? 'highlight' : ''} ${activeTab === key && !scheduledOrdersOnly ? 'active' : ''}`}
-            data-stat-key={key}
-            onClick={() => {
-              setScheduledOrdersOnly(false);
-              setActiveTab(key);
-            }}
-            aria-pressed={activeTab === key && !scheduledOrdersOnly}
-            aria-label={`${label}: ${count}`}
-          >
-            <span className="panel-stats-icon" aria-hidden="true">
-              {icon === 'clock' && (
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
-              )}
-              {icon === 'user-check' && (
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="m16 11 2 2 4-4"/></svg>
-              )}
-              {icon === 'check' && (
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
-              )}
-            </span>
-            <span className="panel-stats-number">{count}</span>
-            <span className="panel-stats-label">{label}</span>
-          </button>
-        ))}
+      <div className={`panel-stats panel-stats--tasks${taskMode === 'problem' ? ' panel-stats--tasks-problem' : ''}`}>
+        {taskMode === 'active'
+          ? statItems.map(({ key, label, count, highlight, icon }) => (
+            <button
+              key={key}
+              type="button"
+              className={`panel-stats-item ${highlight ? 'highlight' : ''} ${activeTab === key && !scheduledOrdersOnly ? 'active' : ''}`}
+              data-stat-key={key}
+              onClick={() => {
+                setScheduledOrdersOnly(false);
+                setActiveTab(key);
+              }}
+              aria-pressed={activeTab === key && !scheduledOrdersOnly}
+              aria-label={`${label}: ${count}`}
+            >
+              <span className="panel-stats-icon" aria-hidden="true">
+                {icon === 'clock' && (
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+                )}
+                {icon === 'user-check' && (
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="m16 11 2 2 4-4"/></svg>
+                )}
+                {icon === 'check' && (
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+                )}
+              </span>
+              <span className="panel-stats-number">{count}</span>
+              <span className="panel-stats-label">{label}</span>
+            </button>
+          ))
+          : problemStatItems.map(({ key, label, count, highlight, icon }) => (
+            <button
+              key={key}
+              type="button"
+              className={`panel-stats-item panel-stats-item--problem ${highlight ? 'highlight' : ''} ${problemTaskFilter === key ? 'active' : ''}`}
+              data-stat-key={key}
+              onClick={() => persistProblemFilter(key)}
+              aria-pressed={problemTaskFilter === key}
+              aria-label={`${label}: ${count}`}
+            >
+              <span className="panel-stats-icon" aria-hidden="true">
+                {icon === 'ban' && (
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="m4.9 4.9 14.2 14.2"/></svg>
+                )}
+                {icon === 'user-x' && (
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="m17 8 5 5m0-5-5 5"/></svg>
+                )}
+                {icon === 'alert' && (
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
+                )}
+              </span>
+              <span className="panel-stats-number">{count}</span>
+              <span className="panel-stats-label">{label}</span>
+            </button>
+          ))}
       </div>
       <div className={`panel-body ${filtered.length === 0 ? 'empty' : ''}`}>
         {loading && 'Loading…'}
-        {!loading && filtered.length === 0 && (scheduledOrdersOnly ? 'No scheduled orders for this date' : 'No tasks')}
+        {!loading && filtered.length === 0 && (
+          scheduledOrdersOnly
+            ? 'No scheduled orders for this date'
+            : taskMode === 'problem'
+              ? `No ${problemTaskFilter} tasks for this date`
+              : 'No tasks'
+        )}
         {!loading && filtered.length > 0 && (
           <ul className="task-card-list">
-            {(scheduledOrdersOnly || activeTab === 'completed' ? filtered : filtered.slice(0, 20)).map((t) => {
+            {(showAllInList ? filtered : filtered.slice(0, 20)).map((t) => {
               const statusNorm = normStatus(t.status);
               const created = t.date_created ? new Date(t.date_created) : null;
               const minsWaiting = created ? Math.max(0, Math.floor((Date.now() - created.getTime()) / 60000)) : null;
@@ -596,6 +729,7 @@ export default function TaskPanel({ onOpenTaskDetails, listRevision = 0 }) {
               const isStarted = statusNorm === 'started';
               const isInProgress = statusNorm === 'inprogress';
               const isCompleted = ['completed', 'delivered', 'successful'].includes(statusNorm);
+              const isProblemStatus = ['cancelled', 'canceled', 'declined', 'failed'].includes(statusNorm);
               const isCritical = taskCriticalEnabled && isUnassigned && minsWaiting !== null && minsWaiting >= taskCriticalMinutes;
               const driverName = (t.driver_name || '').trim();
               const advanceLines = getAdvanceOrderLines(t, t.date_created);
@@ -669,7 +803,7 @@ export default function TaskPanel({ onOpenTaskDetails, listRevision = 0 }) {
                       <span className="task-card-v2-waiting-duration">{waitingMins}</span> waiting
                     </div>
                   )}
-                  {(isAssigned || isAcknowledged || isStarted || isInProgress || isCompleted) && (
+                  {(isAssigned || isAcknowledged || isStarted || isInProgress || isCompleted || isProblemStatus) && (
                     <div className="task-card-v2-driver task-card-v2-status">
                       <span className={`task-card-v2-status-badge ${statusClass(statusNorm)}`}>{statusLabel(statusNorm)}</span>
                       {driverName && <span className="task-card-v2-driver-name">{driverName}</span>}

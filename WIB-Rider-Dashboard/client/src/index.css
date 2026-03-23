@@ -2339,6 +2339,69 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
 }
 .tasks-panel-header-icon:hover { background: rgba(255,255,255,.15); color: #fff; }
 .tasks-panel-header-icon.active { background: rgba(255,255,255,.2); color: #fff; }
+.tasks-panel-header-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex-shrink: 0;
+}
+.tasks-panel-view-switch {
+  display: inline-flex;
+  align-items: stretch;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--bg-stripe, rgba(0, 0, 0, 0.12));
+}
+.tasks-panel-view-switch-seg {
+  padding: 0.32rem 0.62rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  border: none;
+  background: transparent;
+  color: var(--text-muted-strong);
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.15s, color 0.15s;
+  white-space: nowrap;
+}
+.tasks-panel-view-switch-seg:hover {
+  background: var(--bg-hover, rgba(0, 0, 0, 0.06));
+  color: var(--text-primary);
+}
+.tasks-panel-view-switch-seg.is-active {
+  background: var(--color-primary-tint-strong);
+  color: var(--color-primary);
+}
+[data-theme="dark"] .tasks-panel-view-switch-seg:hover {
+  color: var(--text-dark);
+}
+[data-theme="dark"] .tasks-panel-view-switch-seg.is-active {
+  background: var(--color-primary-tint-strong);
+  color: var(--color-primary);
+}
+.tasks-panel-view-mode-label {
+  font-weight: 600;
+  color: var(--color-primary);
+}
+.panel-stats--tasks-problem .panel-stats-item[data-stat-key="cancelled"] .panel-stats-icon {
+  color: var(--text-muted-strong);
+}
+.panel-stats--tasks-problem .panel-stats-item[data-stat-key="declined"] .panel-stats-icon {
+  color: var(--color-warning, #ca8a04);
+}
+.panel-stats--tasks-problem .panel-stats-item[data-stat-key="failed"] .panel-stats-icon {
+  color: var(--color-danger, #b91c1c);
+}
+.panel-stats--tasks-problem .panel-stats-item[data-stat-key="cancelled"].highlight .panel-stats-number,
+.panel-stats--tasks-problem .panel-stats-item[data-stat-key="cancelled"].active .panel-stats-number,
+.panel-stats--tasks-problem .panel-stats-item[data-stat-key="declined"].highlight .panel-stats-number,
+.panel-stats--tasks-problem .panel-stats-item[data-stat-key="declined"].active .panel-stats-number,
+.panel-stats--tasks-problem .panel-stats-item[data-stat-key="failed"].highlight .panel-stats-number,
+.panel-stats--tasks-problem .panel-stats-item[data-stat-key="failed"].active .panel-stats-number {
+  color: inherit;
+}
 .tasks-panel-sort-wrap { position: relative; }
 .tasks-panel-sort-dropdown {
   position: absolute;
