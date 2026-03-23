@@ -713,17 +713,17 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
       photo_rows: [row],
     }));
   })();
-  /* Oldest first (initial_order → … → latest), same as classic driver timeline */
+  /* Newest first (latest at top), same ordering as legacy PHP rider admin timeline */
   const combined = [...historyEntries, ...photoEntries].sort((a, b) => {
     const da = a.date_created ? new Date(a.date_created).getTime() : 0;
     const db = b.date_created ? new Date(b.date_created).getTime() : 0;
-    if (da !== db) return da - db;
+    if (da !== db) return db - da;
     const ida = typeof a.id === 'string' && a.id.startsWith('photo-') ? a.id : Number(a.id);
     const idb = typeof b.id === 'string' && b.id.startsWith('photo-') ? b.id : Number(b.id);
     if (typeof ida === 'number' && typeof idb === 'number' && !Number.isNaN(ida) && !Number.isNaN(idb)) {
-      return ida - idb;
+      return idb - ida;
     }
-    return String(a.id).localeCompare(String(b.id));
+    return String(b.id).localeCompare(String(a.id));
   });
   const timeline =
     combined.length > 0
@@ -733,7 +733,7 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
           .sort((a, b) => {
             const da = a.date_created ? new Date(a.date_created).getTime() : 0;
             const db = b.date_created ? new Date(b.date_created).getTime() : 0;
-            return da - db;
+            return db - da;
           });
   const customerName = displaySanitizedOrDash(task?.customer_name);
   const merchantName = (() => {
@@ -771,7 +771,7 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
   const hasProofPhotoTimelineItem = filteredTimeline.some((e) => e.type === 'photo');
   const proofHistoryAttachEntry =
     proofImages.length > 0 && !hasProofPhotoTimelineItem
-      ? [...filteredTimeline].reverse().find((e) => isProofVerificationHistoryEntry(e))
+      ? filteredTimeline.find((e) => isProofVerificationHistoryEntry(e))
       : null;
 
   return (

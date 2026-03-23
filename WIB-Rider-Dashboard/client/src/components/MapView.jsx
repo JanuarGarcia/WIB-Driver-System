@@ -15,15 +15,48 @@ import {
   riderMarkerTitle,
 } from '../utils/mapPopup';
 
+const MAP_LEGEND_HIDDEN_KEY = 'wib_map_legend_hidden';
+
 function HtmlPopupBody({ html }) {
   return <div className="map-popup-html-root" dangerouslySetInnerHTML={{ __html: html }} />;
 }
 
-/** Dashboard-only: pin type key for admins (matches Tasks / Agent styling). */
+/** Dashboard-only: pin type key for admins (matches map pins: circle rider vs teardrop merchant). */
 function MapLegend() {
+  const [expanded, setExpanded] = useState(() => {
+    try {
+      return localStorage.getItem(MAP_LEGEND_HIDDEN_KEY) !== '1';
+    } catch (_) {
+      return true;
+    }
+  });
+  const collapse = () => {
+    try {
+      localStorage.setItem(MAP_LEGEND_HIDDEN_KEY, '1');
+    } catch (_) {}
+    setExpanded(false);
+  };
+  const expand = () => {
+    try {
+      localStorage.removeItem(MAP_LEGEND_HIDDEN_KEY);
+    } catch (_) {}
+    setExpanded(true);
+  };
+  if (!expanded) {
+    return (
+      <button type="button" className="map-legend-reveal" onClick={expand} aria-label="Show map legend">
+        Map legend
+      </button>
+    );
+  }
   return (
     <div className="map-legend" aria-label="Map legend">
-      <div className="map-legend-title">Map legend</div>
+      <div className="map-legend-header">
+        <div className="map-legend-title">Map legend</div>
+        <button type="button" className="map-legend-hide" onClick={collapse} aria-label="Hide map legend">
+          Hide
+        </button>
+      </div>
       <ul className="map-legend-list">
         <li className="map-legend-item">
           <span className="map-legend-swatch map-legend-swatch--rider" aria-hidden />
@@ -62,6 +95,28 @@ const GOOGLE_TASK_PIN_ICON = (() => {
   };
 })();
 
+/** Circle + stem — colors match --map-pin-rider-fill (Google icons cannot use CSS vars). */
+const GOOGLE_RIDER_PIN_ICON = (() => {
+  const svg =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="40" height="52" viewBox="0 0 40 52"><path fill="#2563eb" stroke="#fff" stroke-width="2.5" d="M20 44 L14 32 L26 32 Z"/><circle cx="20" cy="18" r="14" fill="#2563eb" stroke="#fff" stroke-width="3"/><circle cx="20" cy="18" r="5" fill="#fff"/></svg>';
+  return {
+    url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`,
+    scaledSize: { width: 40, height: 52 },
+    anchor: { x: 20, y: 52 },
+  };
+})();
+
+/** Teardrop — colors match --map-pin-merchant-fill */
+const GOOGLE_MERCHANT_PIN_ICON = (() => {
+  const svg =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="40" height="52" viewBox="0 0 40 52"><path fill="#7c3aed" stroke="#fff" stroke-width="2" d="M20 4C12 4 6 10 6 18c0 12 14 30 14 30s14-18 14-30c0-8-6-14-14-14z"/><rect x="12" y="12" width="16" height="10" rx="2" fill="#fff" opacity="0.92"/></svg>';
+  return {
+    url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`,
+    scaledSize: { width: 40, height: 52 },
+    anchor: { x: 20, y: 48 },
+  };
+})();
+
 const BAGUIO_CENTER = [16.4023, 120.596];
 const BAGUIO_VIEW = { longitude: 120.596, latitude: 16.4023, zoom: 13 };
 const MAP_STYLE = { width: '100%', height: '100%', minHeight: 400 };
@@ -91,6 +146,7 @@ function PinMarker({ type, imageUrl, title }) {
     <div className="map-pin-wrap" title={title || undefined}>
       <div className={`map-pin map-pin-${type} ${hasImage ? 'map-pin-has-image' : ''}`}>
         <div className="map-pin-head">
+          {type === 'rider' ? <span className="map-pin-rider-core" aria-hidden="true" /> : null}
           {type === 'task' ? <span className="map-pin-task-inner" aria-hidden="true" /> : null}
           {hasImage ? (
             <img src={resolvedUrl} alt="" className="map-pin-img" />
@@ -107,10 +163,11 @@ function leafletPinIcon(type, logoUrl) {
   const safeUrl = hasImage ? String(logoUrl).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;') : '';
   const imgHtml = hasImage ? `<img src="${safeUrl}" alt="" class="leaflet-pin-img" loading="lazy" />` : '';
   const taskInner = type === 'task' ? '<span class="leaflet-pin-task-inner" aria-hidden="true"></span>' : '';
+  const riderCore = type === 'rider' ? '<span class="leaflet-pin-rider-core" aria-hidden="true"></span>' : '';
   return new L.DivIcon({
     className: 'leaflet-pin-wrap',
     html: `<div class="leaflet-pin leaflet-pin-${type} ${hasImage ? 'leaflet-pin-has-image' : ''}">
-      <div class="leaflet-pin-head">${taskInner}${imgHtml}</div>
+      <div class="leaflet-pin-head">${riderCore}${taskInner}${imgHtml}</div>
       <div class="leaflet-pin-point"></div>
     </div>`,
     iconSize: [40, 52],
@@ -494,10 +551,16 @@ function GoogleMapView({ apiKey, locations, merchants, taskMarkers = [], center:
               key={`rider-${loc.driver_id ?? idx}`}
               position={{ lat: Number(loc.lat), lng: Number(loc.lng) }}
               title={riderMarkerTitle(loc)}
+              icon={GOOGLE_RIDER_PIN_ICON}
             />
           ))}
           {merchantMarkers.map((m, idx) => (
-            <GoogleMarker key={`merchant-${m.merchant_id ?? idx}`} position={{ lat: Number(m.lat), lng: Number(m.lng) }} title={merchantMapTitle(m.restaurant_name)} />
+            <GoogleMarker
+              key={`merchant-${m.merchant_id ?? idx}`}
+              position={{ lat: Number(m.lat), lng: Number(m.lng) }}
+              title={merchantMapTitle(m.restaurant_name)}
+              icon={GOOGLE_MERCHANT_PIN_ICON}
+            />
           ))}
           {taskMapMarkers.map((t, idx) => (
             <GoogleMarker
