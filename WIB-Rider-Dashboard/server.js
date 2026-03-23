@@ -149,6 +149,52 @@ app.put('/api/tasks/:id/assign', express.json(), async (req, res) => {
   }
 });
 
+// Proxy: PUT /api/tasks/:id/status (change status — was missing; otherwise HTML 404 broke JSON parse)
+app.put('/api/tasks/:id/status', express.json(), async (req, res) => {
+  setNoCache(res);
+  res.set('X-Dashboard-Proxy', '1');
+  const id = req.params.id;
+  const url = `${BACKEND_URL}/admin/api/tasks/${encodeURIComponent(id)}/status`;
+  try {
+    const response = await axios.put(url, req.body, {
+      headers: backendHeaders(req),
+      timeout: 15000,
+    });
+    res.json(response.data);
+  } catch (err) {
+    const status = err.response?.status || 500;
+    let data = err.response?.data;
+    if (data != null && typeof data === 'string' && data.trimStart().startsWith('<')) {
+      data = { error: 'Backend returned an error page. Check server logs and BACKEND_URL.' };
+    }
+    if (data == null || typeof data !== 'object') data = { error: err.message || 'Status update failed' };
+    res.status(status).json(data);
+  }
+});
+
+// Proxy: PUT /api/tasks/:id (edit task body)
+app.put('/api/tasks/:id', express.json(), async (req, res) => {
+  setNoCache(res);
+  res.set('X-Dashboard-Proxy', '1');
+  const id = req.params.id;
+  const url = `${BACKEND_URL}/admin/api/tasks/${encodeURIComponent(id)}`;
+  try {
+    const response = await axios.put(url, req.body, {
+      headers: backendHeaders(req),
+      timeout: 15000,
+    });
+    res.json(response.data);
+  } catch (err) {
+    const status = err.response?.status || 500;
+    let data = err.response?.data;
+    if (data != null && typeof data === 'string' && data.trimStart().startsWith('<')) {
+      data = { error: 'Backend returned an error page. Check server logs and BACKEND_URL.' };
+    }
+    if (data == null || typeof data !== 'object') data = { error: err.message || 'Update failed' };
+    res.status(status).json(data);
+  }
+});
+
 // Proxy: POST /api/tasks (create task)
 app.post('/api/tasks', express.json(), async (req, res) => {
   setNoCache(res);
