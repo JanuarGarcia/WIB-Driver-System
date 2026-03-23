@@ -182,7 +182,7 @@ const TASK_CHANGE_STATUS_OPTIONS = [
   { value: 'cancelled', label: 'Cancelled' },
 ];
 
-export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTaskDeleted, onShowDirections }) {
+export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTaskDeleted, onTaskListInvalidate, onShowDirections }) {
   const [data, setData] = useState(null);
   const [orderHistory, setOrderHistory] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -390,6 +390,7 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
       })
       .then((res) => {
         if (res && typeof res === 'object' && !res.error) setData(res);
+        onTaskListInvalidate?.();
       })
       .catch((err) => alert(err?.error || err?.message || 'Assign failed'))
       .finally(() => setActionLoading(false));
@@ -412,6 +413,7 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
     api(`tasks/${taskId}`, { method: 'DELETE' })
       .then(() => {
         setDeleteConfirmOpen(false);
+        onTaskListInvalidate?.();
         onTaskDeleted?.();
         handleClose();
       })
@@ -449,9 +451,11 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
         return api(`tasks/${taskId}`)
           .then((res) => {
             if (res && typeof res === 'object' && !res.error) setData(res);
+            onTaskListInvalidate?.();
           })
           .catch(() => {
             setData((prev) => (prev && prev.task ? { ...prev, task: { ...prev.task, status } } : prev));
+            onTaskListInvalidate?.();
           });
       })
       .catch((err) => alert(err?.error || err?.message || 'Update failed'))
@@ -542,6 +546,7 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
       .then((res) => {
         if (res && typeof res === 'object' && !res.error) setData(res);
         setEditOpen(false);
+        onTaskListInvalidate?.();
       })
       .catch((err) => alert(err?.error || err?.message || 'Update failed'))
       .finally(() => setActionLoading(false));

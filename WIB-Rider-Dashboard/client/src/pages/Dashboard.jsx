@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { useLocation, useNavigate } from 'react-router-dom';
 import TaskPanel from '../components/TaskPanel';
@@ -14,6 +14,9 @@ export default function Dashboard() {
   const navigate = useNavigate();
   const { selectedTeamId } = useTeamFilter();
   const [taskDetailsId, setTaskDetailsId] = useState(null);
+  /** Bumped when task details modal mutates tasks so TaskPanel + AgentPanel refetch immediately. */
+  const [taskListRevision, setTaskListRevision] = useState(0);
+  const bumpTaskLists = useCallback(() => setTaskListRevision((n) => n + 1), []);
   const [mobileSection, setMobileSection] = useState('tasks'); // 'tasks' | 'map' | 'agents' for small screens
   const [locations, setLocations] = useState([]);
   const [merchants, setMerchants] = useState([]);
@@ -218,7 +221,7 @@ export default function Dashboard() {
         </button>
       </nav>
       <div className="dashboard-layout-panel dashboard-layout-tasks">
-        <TaskPanel onOpenTaskDetails={setTaskDetailsId} />
+        <TaskPanel onOpenTaskDetails={setTaskDetailsId} listRevision={taskListRevision} />
       </div>
       {taskDetailsId != null &&
         createPortal(
@@ -226,6 +229,7 @@ export default function Dashboard() {
             taskId={taskDetailsId}
             onClose={() => setTaskDetailsId(null)}
             onAssignDriver={(id) => { setTaskDetailsId(null); navigate(`/tasks?highlight=${id}`); }}
+            onTaskListInvalidate={bumpTaskLists}
             onTaskDeleted={() => setTaskDetailsId(null)}
             onShowDirections={(payload) => {
               handleShowDirections(payload);
@@ -289,7 +293,7 @@ export default function Dashboard() {
       </div>
       </div>
       <div className="dashboard-layout-panel dashboard-layout-agents">
-        <AgentPanel onOpenTaskDetails={setTaskDetailsId} />
+        <AgentPanel onOpenTaskDetails={setTaskDetailsId} listRevision={taskListRevision} />
       </div>
     </div>
   );

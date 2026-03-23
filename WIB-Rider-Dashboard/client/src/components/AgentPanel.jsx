@@ -120,7 +120,7 @@ function formatQueueWaiting(joinedAt) {
   return `${d} day${d === 1 ? '' : 's'}`;
 }
 
-export default function AgentPanel({ onOpenTaskDetails }) {
+export default function AgentPanel({ onOpenTaskDetails, listRevision = 0 }) {
   const navigate = useNavigate();
   const { selectedTeamId } = useTeamFilter();
   const [details, setDetails] = useState({ active: [], offline: [], total: [] });
@@ -293,6 +293,12 @@ export default function AgentPanel({ onOpenTaskDetails }) {
       window.removeEventListener('storage', onStorage);
     };
   }, [loadAgents]);
+
+  useEffect(() => {
+    if (listRevision < 1) return;
+    loadAgents({ silent: true });
+    if (allTasksView) fetchAssignedTasks();
+  }, [listRevision, loadAgents, fetchAssignedTasks, allTasksView]);
 
   const handleRefresh = () => {
     loadAgents();

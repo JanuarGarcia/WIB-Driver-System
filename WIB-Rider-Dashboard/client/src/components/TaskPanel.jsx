@@ -161,7 +161,7 @@ function directionDisplayLabel(dir) {
   return map[v] ?? dir.trim().split(/\s+/).map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join('-');
 }
 
-export default function TaskPanel({ onOpenTaskDetails }) {
+export default function TaskPanel({ onOpenTaskDetails, listRevision = 0 }) {
   const navigate = useNavigate();
   const [tasks, setTasks] = useState([]);
   const [counts, setCounts] = useState({ unassigned: 0, assigned: 0, completed: 0 });
@@ -308,6 +308,11 @@ export default function TaskPanel({ onOpenTaskDetails }) {
   useEffect(() => {
     fetchTasks();
   }, [fetchTasks]);
+
+  useEffect(() => {
+    if (listRevision < 1) return;
+    fetchTasks();
+  }, [listRevision, fetchTasks]);
 
   useEffect(() => {
     const tick = () => setLiveTime(new Date());

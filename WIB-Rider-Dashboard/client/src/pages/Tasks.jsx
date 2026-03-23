@@ -550,7 +550,8 @@ export default function Tasks() {
           taskId={detailsTaskId}
           onClose={() => { setDetailsTaskId(null); if (highlightId) clearHighlight(); }}
           onAssignDriver={(id) => { setDetailsTaskId(null); if (highlightId) clearHighlight(); setAssignTaskId(id); }}
-          onTaskDeleted={() => { setDetailsTaskId(null); fetchTasks(); }}
+          onTaskListInvalidate={fetchTasks}
+          onTaskDeleted={() => { setDetailsTaskId(null); if (highlightId) clearHighlight(); }}
         />
       )}
     </div>
