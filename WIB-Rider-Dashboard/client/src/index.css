@@ -52,6 +52,17 @@
   --color-accent: #6b8c3a;
   --modal-backdrop: rgba(0, 0, 0, 0.52);
   --font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  /* Tasks header: Active | Problem control (rendered on --color-primary) */
+  --tasks-header-seg-radius: 6px;
+  --tasks-header-seg-border: rgba(255, 255, 255, 0.34);
+  --tasks-header-seg-track: rgba(0, 0, 0, 0.14);
+  --tasks-header-seg-track-inset: rgba(255, 255, 255, 0.08);
+  --tasks-header-seg-inactive-text: rgba(255, 255, 255, 0.9);
+  --tasks-header-seg-inactive-hover: rgba(255, 255, 255, 0.14);
+  --tasks-header-seg-active-bg: rgba(255, 255, 255, 0.93);
+  --tasks-header-seg-active-text: #243016;
+  --tasks-header-seg-active-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
+  --tasks-header-seg-divider: rgba(255, 255, 255, 0.24);
 }
 
 /* Dark theme – same structure, adjusted for contrast and polish */
@@ -107,6 +118,16 @@
   /* Legacy */
   --color-primary-dark: #7a9e48;
   --color-accent: #8ba83d;
+  /* Tasks header switch: slightly stronger edge on lighter brand bar */
+  --tasks-header-seg-border: rgba(255, 255, 255, 0.4);
+  --tasks-header-seg-track: rgba(0, 0, 0, 0.2);
+  --tasks-header-seg-track-inset: rgba(255, 255, 255, 0.1);
+  --tasks-header-seg-inactive-text: rgba(255, 255, 255, 0.92);
+  --tasks-header-seg-inactive-hover: rgba(255, 255, 255, 0.16);
+  --tasks-header-seg-active-bg: rgba(255, 255, 255, 0.96);
+  --tasks-header-seg-active-text: #161c0f;
+  --tasks-header-seg-active-shadow: 0 1px 3px rgba(0, 0, 0, 0.18);
+  --tasks-header-seg-divider: rgba(255, 255, 255, 0.28);
 }
 
 /* Dark mode: ensure all text inputs have visible text, placeholder, and caret */
@@ -2550,53 +2571,57 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
   flex-shrink: 0;
   min-width: 0;
 }
-/* Active | Problem — sits on brand-green header: high contrast in light & dark theme */
+/* Active | Problem — compact pill on brand header; colors from theme variables */
 .panel.tasks-panel .tasks-panel-header .tasks-panel-view-switch {
   display: inline-flex;
   align-items: stretch;
-  border: 1px solid rgba(255, 255, 255, 0.45);
-  border-radius: 8px;
+  border: 1px solid var(--tasks-header-seg-border);
+  border-radius: var(--tasks-header-seg-radius);
   overflow: hidden;
-  background: rgba(0, 0, 0, 0.16);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  background: var(--tasks-header-seg-track);
+  box-shadow: inset 0 1px 0 var(--tasks-header-seg-track-inset);
   flex-shrink: 0;
 }
 .panel.tasks-panel .tasks-panel-header .tasks-panel-view-switch-seg {
-  padding: 0.38rem 0.7rem;
-  min-height: 36px;
-  min-width: 44px;
-  font-size: 0.75rem;
-  font-weight: 600;
-  letter-spacing: 0.02em;
+  padding: 0.2rem 0.52rem;
+  min-height: 28px;
+  min-width: 0;
+  font-size: 0.6875rem;
+  font-weight: 500;
+  letter-spacing: 0.03em;
   border: none;
   background: transparent;
-  color: rgba(255, 255, 255, 0.92);
+  color: var(--tasks-header-seg-inactive-text);
   cursor: pointer;
   font-family: inherit;
-  transition: background 0.15s, color 0.15s;
+  transition: background 0.16s ease, color 0.16s ease, box-shadow 0.16s ease;
   white-space: nowrap;
   touch-action: manipulation;
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  line-height: 1.2;
+}
+.panel.tasks-panel .tasks-panel-header .tasks-panel-view-switch-seg:not(:last-child) {
+  border-right: 1px solid var(--tasks-header-seg-divider);
 }
 .panel.tasks-panel .tasks-panel-header .tasks-panel-view-switch-seg:hover {
-  background: rgba(255, 255, 255, 0.14);
+  background: var(--tasks-header-seg-inactive-hover);
   color: #fff;
 }
 .panel.tasks-panel .tasks-panel-header .tasks-panel-view-switch-seg:focus-visible {
-  outline: 2px solid rgba(255, 255, 255, 0.95);
+  outline: 2px solid var(--tasks-header-seg-active-bg);
   outline-offset: 2px;
 }
-/* Olive / cream chip — readable on both light & dark green headers */
 .panel.tasks-panel .tasks-panel-header .tasks-panel-view-switch-seg.is-active {
-  background: rgba(255, 255, 255, 0.94);
-  color: #2f3d1f;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.15);
+  background: var(--tasks-header-seg-active-bg);
+  color: var(--tasks-header-seg-active-text);
+  box-shadow: var(--tasks-header-seg-active-shadow);
 }
-[data-theme="dark"] .panel.tasks-panel .tasks-panel-header .tasks-panel-view-switch-seg.is-active {
-  background: #f4f7ec;
-  color: #1e2a12;
+.panel.tasks-panel .tasks-panel-header .tasks-panel-view-switch-seg.is-active:hover {
+  background: var(--tasks-header-seg-active-bg);
+  color: var(--tasks-header-seg-active-text);
+  filter: brightness(0.98);
 }
 .tasks-panel-view-mode-label {
   font-weight: 600;
@@ -7132,9 +7157,10 @@ tr:hover { background: var(--bg-hover) !important; }
     max-width: 100%;
   }
   .dashboard-layout .panel.tasks-panel .tasks-panel-header .tasks-panel-view-switch-seg {
-    min-height: 44px;
-    padding: 0.45rem 0.85rem;
-    font-size: 0.8125rem;
+    min-height: 40px;
+    padding: 0.3rem 0.7rem;
+    font-size: 0.75rem;
+    font-weight: 500;
   }
   .dashboard-layout .tasks-panel-sort-dropdown {
     position: fixed;
