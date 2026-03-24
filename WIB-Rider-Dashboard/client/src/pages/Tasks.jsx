@@ -98,6 +98,7 @@ export default function Tasks() {
   const [calendarViewYear, setCalendarViewYear] = useState(() => new Date().getFullYear());
   const [calendarSelectedDate, setCalendarSelectedDate] = useState(() => new Date());
   const dateTriggerRef = useRef(null);
+  const [directionsMapSettings, setDirectionsMapSettings] = useState(null);
   const { theme } = useTheme();
   const sortKey = searchParams.get('sort') || 'delivery_date';
   const sortOrder = searchParams.get('order') || 'desc';
@@ -111,8 +112,18 @@ export default function Tasks() {
         const sec = parseInt(s.activity_refresh_interval, 10);
         const intervalSec = Number.isFinite(sec) && sec >= 5 ? sec : 60;
         setActivityRefreshIntervalMs(disabled ? 86400000 : Math.max(5000, intervalSec * 1000));
+        const provider = (s.map_provider || '').toString().trim().toLowerCase();
+        setDirectionsMapSettings({
+          mapProvider: provider === 'google' ? 'google' : 'mapbox',
+          mapboxToken: (s.mapbox_access_token || '').toString().trim(),
+          googleApiKey: s.google_api_key || '',
+          googleMapStyle: s.google_map_style != null ? String(s.google_map_style) : '',
+        });
       })
-      .catch(() => setActivityRefreshIntervalMs(30000));
+      .catch(() => {
+        setActivityRefreshIntervalMs(30000);
+        setDirectionsMapSettings(null);
+      });
   }, []);
 
   const setSelectedDate = (d) => {
@@ -552,6 +563,7 @@ export default function Tasks() {
           onAssignDriver={(id) => { setDetailsTaskId(null); if (highlightId) clearHighlight(); setAssignTaskId(id); }}
           onTaskListInvalidate={fetchTasks}
           onTaskDeleted={() => { setDetailsTaskId(null); if (highlightId) clearHighlight(); }}
+          directionsMapSettings={directionsMapSettings}
         />
       )}
     </div>

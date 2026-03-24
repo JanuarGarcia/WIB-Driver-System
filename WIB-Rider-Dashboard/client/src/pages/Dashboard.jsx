@@ -10,6 +10,8 @@ import AgentPanel from '../components/AgentPanel';
 import { useMapMerchantFilterSelection } from '../components/MapMerchantFilter';
 import { hydrateMapMerchantFilterFromServer } from '../utils/mapMerchantFilterPrefs';
 import { api } from '../api';
+
+const MOBILE_DASHBOARD_MQ = '(max-width: 768px)';
 import { useTeamFilter } from '../context/TeamFilterContext';
 import {
   DASHBOARD_TASKS_MAP_DATE_EVENT,
@@ -41,6 +43,7 @@ export default function Dashboard() {
     [openTaskDetails]
   );
   const [mobileSection, setMobileSection] = useState('tasks'); // 'tasks' | 'map' | 'agents' for small screens
+  const [mapResizeTrigger, setMapResizeTrigger] = useState(0);
   const [locations, setLocations] = useState([]);
   const [merchants, setMerchants] = useState([]);
   const selectedMapMerchantIds = useMapMerchantFilterSelection();
@@ -52,11 +55,6 @@ export default function Dashboard() {
   const [defaultMapCenter, setDefaultMapCenter] = useState([12.8797, 121.774]);
   const [defaultMapZoom, setDefaultMapZoom] = useState(5);
   const [googleMapStyle, setGoogleMapStyle] = useState('');
-  const [directionsReq, setDirectionsReq] = useState(null); // { origin, destination, originCoords?, destinationCoords? }
-  const [directionsSteps, setDirectionsSteps] = useState([]);
-  const [directionsError, setDirectionsError] = useState(null);
-  const [directionsLoading, setDirectionsLoading] = useState(false);
-  const [mapboxRouteGeojson, setMapboxRouteGeojson] = useState(null); // GeoJSON LineString feature
   const [tasksMapDateStr, setTasksMapDateStr] = useState(() => readDashboardTasksMapDateFromStorage() || todayDateStrLocal());
   const [rawMapTasks, setRawMapTasks] = useState([]);
   /** null = not loaded yet; map shows no rider pins until set. Matches Agent panel "Active" tab roster. */
@@ -129,7 +127,8 @@ export default function Dashboard() {
 
   const locationsForMapActiveRiders = useMemo(() => {
     const locs = locations || [];
-    if (activePanelDriverIdSet === null) return [];
+    /* Until agent-dashboard resolves, show all GPS pins so the map is not empty on first paint. */
+    if (activePanelDriverIdSet === null) return locs;
     return locs.filter((loc) => activePanelDriverIdSet.has(String(loc.driver_id ?? '')));
   }, [locations, activePanelDriverIdSet]);
 
@@ -228,97 +227,19 @@ export default function Dashboard() {
     return () => clearInterval(id);
   }, [location.pathname, disableActivityTracking, activityRefreshIntervalSec, driversLocationsUrl, refreshMapData]);
 
-  const clearDirections = () => {
-    setDirectionsReq(null);
-    setDirectionsSteps([]);
-    setDirectionsError(null);
-    setDirectionsLoading(false);
-    setMapboxRouteGeojson(null);
-  };
-
-  async function mapboxGeocode(token, query) {
-    const q = (query || '').trim();
-    if (!q) return null;
-    const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(q)}.json?access_token=${encodeURIComponent(token)}&limit=1`;
-    const res = await fetch(url);
-    const data = await res.json();
-    const feat = Array.isArray(data?.features) ? data.features[0] : null;
-    const center = Array.isArray(feat?.center) ? feat.center : null; // [lng, lat]
-    if (!center || center.length < 2) return null;
-    return { lng: Number(center[0]), lat: Number(center[1]), place_name: feat.place_name };
-  }
-
-  async function loadMapboxDirections({ origin, destination, originCoords, destinationCoords }) {
-    const token = String(mapboxToken || '').trim();
-    if (!token) throw new Error('Mapbox token is missing. Set it in Settings → Map API keys.');
-    const o = originCoords || (await mapboxGeocode(token, origin));
-    const d = destinationCoords || (await mapboxGeocode(token, destination));
-    if (!o || !d) throw new Error('Unable to geocode origin/destination.');
-    const coords = `${o.lng},${o.lat};${d.lng},${d.lat}`;
-    const url = `https://api.mapbox.com/directions/v5/mapbox/driving/${coords}?access_token=${encodeURIComponent(token)}&geometries=geojson&steps=true&overview=full`;
-    const res = await fetch(url);
-    const data = await res.json();
-    const route = Array.isArray(data?.routes) ? data.routes[0] : null;
-    const geom = route?.geometry;
-    if (!geom || !Array.isArray(geom.coordinates)) throw new Error('No route returned from Mapbox.');
-    const steps = (route?.legs?.[0]?.steps || []).map((s) => s?.maneuver?.instruction).filter(Boolean);
-    setDirectionsSteps(steps);
-    setMapboxRouteGeojson({
-      type: 'Feature',
-      properties: {},
-      geometry: { type: 'LineString', coordinates: geom.coordinates },
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.matchMedia(MOBILE_DASHBOARD_MQ).matches) return undefined;
+    if (mobileSection !== 'map') return undefined;
+    const bump = () => setMapResizeTrigger((n) => n + 1);
+    const r0 = requestAnimationFrame(() => {
+      requestAnimationFrame(bump);
     });
-  }
-
-  const handleShowDirections = (taskOrData) => {
-    if (!taskOrData || typeof taskOrData !== 'object') {
-      setDirectionsError('No task data for directions.');
-      setDirectionsReq({ origin: '', destination: '' });
-      setDirectionsLoading(false);
-      setDirectionsSteps([]);
-      setMapboxRouteGeojson(null);
-      return;
-    }
-    // Accept either the task object or full details payload { task, order, merchant }
-    const isPayload = taskOrData.task !== undefined || taskOrData.delivery_address !== undefined;
-    const data = isPayload ? taskOrData : { task: taskOrData };
-    const t = data.task != null ? data.task : taskOrData;
-    const merchant = data.merchant || null;
-    const destination = String(t?.delivery_address ?? '').trim();
-    const originFromTask = String(t?.pickup_address ?? t?.drop_address ?? t?.merchant_address ?? '').trim();
-    const originFromMerchant = merchant && [merchant.street, merchant.city, merchant.state, merchant.post_code].filter(Boolean).join(', ');
-    const origin = originFromTask || String(originFromMerchant || '').trim();
-    const destinationCoords =
-      t?.task_lat != null && t?.task_lng != null
-        ? { lat: Number(t.task_lat), lng: Number(t.task_lng) }
-        : null;
-
-    setMapboxRouteGeojson(null);
-    setDirectionsSteps([]);
-
-    if (!destination && !destinationCoords) {
-      setDirectionsError('This task has no delivery address or coordinates to route to.');
-      setDirectionsReq({ origin: origin || '', destination: '' });
-      setDirectionsLoading(false);
-      return;
-    }
-
-    setDirectionsError(null);
-    setDirectionsReq({ origin, destination, destinationCoords });
-
-    if (mapProvider !== 'mapbox') {
-      setDirectionsLoading(true);
-      return;
-    }
-    setDirectionsLoading(true);
-    loadMapboxDirections({ origin, destination, destinationCoords })
-      .then(() => { setDirectionsLoading(false); })
-      .catch((e) => {
-        setDirectionsError(e?.message || 'Failed to load directions');
-        setMapboxRouteGeojson(null);
-        setDirectionsLoading(false);
-      });
-  };
+    const t = setTimeout(bump, 200);
+    return () => {
+      cancelAnimationFrame(r0);
+      clearTimeout(t);
+    };
+  }, [mobileSection]);
 
   return (
     <>
@@ -364,9 +285,11 @@ export default function Dashboard() {
             onAssignDriver={(id) => { setTaskDetailsId(null); navigate(`/tasks?highlight=${id}`); }}
             onTaskListInvalidate={bumpTaskLists}
             onTaskDeleted={() => setTaskDetailsId(null)}
-            onShowDirections={(payload) => {
-              handleShowDirections(payload);
-              setTimeout(() => setTaskDetailsId(null), 0);
+            directionsMapSettings={{
+              mapProvider,
+              mapboxToken,
+              googleApiKey,
+              googleMapStyle,
             }}
           />,
           document.body
@@ -394,37 +317,10 @@ export default function Dashboard() {
               center={mapShowsNoMarkers ? defaultMapCenter : undefined}
               zoom={mapShowsNoMarkers ? defaultMapZoom : undefined}
               googleMapStyle={googleMapStyle}
-              directionsRequest={directionsReq}
-              mapboxRouteGeojson={mapboxRouteGeojson}
-              onGoogleDirections={(payload) => {
-                setDirectionsLoading(false);
-                if (!payload) return;
-                if (payload.error) {
-                  setDirectionsError(payload.error);
-                  setDirectionsSteps([]);
-                } else if (Array.isArray(payload.steps)) {
-                  setDirectionsError(null);
-                  setDirectionsSteps(payload.steps);
-                }
-              }}
+              mapResizeTrigger={mapResizeTrigger}
             />
           </MapErrorBoundary>
         </div>
-        {directionsReq != null && (directionsLoading || directionsError || directionsSteps.length > 0) && (
-          <div id="direction_output" className="direction-output">
-            <div className="direction-output-header">
-              <strong>Directions</strong>
-              <button type="button" className="btn btn-sm" onClick={clearDirections}>Clear</button>
-            </div>
-            {directionsLoading && <div className="direction-output-loading">Loading route…</div>}
-            {directionsError && <div className="direction-output-error">{directionsError}</div>}
-            {!directionsLoading && !directionsError && directionsSteps.length > 0 && (
-              <ol className="direction-output-steps">
-                {directionsSteps.map((s, i) => <li key={i}>{s}</li>)}
-              </ol>
-            )}
-          </div>
-        )}
       </div>
       </div>
       <div className="dashboard-layout-panel dashboard-layout-agents">

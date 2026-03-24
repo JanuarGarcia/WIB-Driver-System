@@ -6,6 +6,35 @@ const API =
   import.meta.env.VITE_API_URL ||
   (import.meta.env.DEV ? 'http://localhost:3000/admin/api' : '/api');
 
+/** Origin where `/uploads/...` is served (matches API app in app.js). */
+export function uploadsOrigin() {
+  const raw = String(import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
+  if (raw.startsWith('http://') || raw.startsWith('https://')) {
+    return raw.replace(/\/admin\/api\/?$/i, '').replace(/\/$/, '');
+  }
+  if (import.meta.env.DEV) return 'http://localhost:3000';
+  return '';
+}
+
+/** Turn relative upload paths into absolute URLs when the API is on another host (e.g. Vite dev or split deploy). */
+export function resolveUploadUrl(path) {
+  if (path == null || typeof path !== 'string') return path;
+  const p = path.trim();
+  if (!p) return p;
+  const lower = p.toLowerCase();
+  if (
+    lower.startsWith('http://') ||
+    lower.startsWith('https://') ||
+    lower.startsWith('data:') ||
+    lower.startsWith('blob:')
+  ) {
+    return p;
+  }
+  const rel = p.startsWith('/') ? p : `/${p}`;
+  const origin = uploadsOrigin();
+  return origin ? `${origin}${rel}` : rel;
+}
+
 export async function api(path, options = {}) {
   const base = API.replace(/\/$/, '');
   const url = API.startsWith('http')

@@ -9,6 +9,7 @@ import { sanitizeLocationDisplayName, pickLocalizedMenuString } from '../utils/d
 import { getAdvanceOrderLines } from '../utils/advanceOrder';
 import MapView from './MapView';
 import LocationPreviewModal from './LocationPreviewModal';
+import DirectionsModal from './DirectionsModal';
 import { CountryCodeDropdown, COUNTRY_CODES } from './NewTaskModal';
 
 /** Split stored contact (e.g. +63917…) into dial code + national number for edit UI. */
@@ -356,7 +357,8 @@ export default function TaskDetailsModal({
   onAssignDriver,
   onTaskDeleted,
   onTaskListInvalidate,
-  onShowDirections,
+  /** When set, enables in-app Get directions (Mapbox and/or Google per Settings). */
+  directionsMapSettings = null,
   initialTab = 'details',
 }) {
   const initialTabRef = useRef(initialTab);
@@ -394,6 +396,7 @@ export default function TaskDetailsModal({
   const [orderHistoryProofImages, setOrderHistoryProofImages] = useState([]);
   /** In-app Leaflet preview for timeline “Location on Map” (no Google redirect). */
   const [locationPreview, setLocationPreview] = useState(null);
+  const [directionsContext, setDirectionsContext] = useState(null);
 
   useEffect(() => {
     if (!taskId) {
@@ -408,6 +411,7 @@ export default function TaskDetailsModal({
       setChangeStatusValue('');
       setChangeStatusReason('');
       setLocationPreview(null);
+      setDirectionsContext(null);
       return;
     }
     setData(null);
@@ -415,6 +419,7 @@ export default function TaskDetailsModal({
     setOrderHistoryProofImages([]);
     setError(null);
     setLocationPreview(null);
+    setDirectionsContext(null);
     {
       const it = initialTabRef.current;
       setTab(it === 'timeline' || it === 'order' ? it : 'details');
@@ -535,11 +540,47 @@ export default function TaskDetailsModal({
     setEditDriverId('');
     setEditContactCountryCode('+63');
     setLocationPreview(null);
+    setDirectionsContext(null);
     onClose?.();
   };
 
   const openTimelineLocation = (la, ln) => {
     setLocationPreview({ lat: la, lng: ln });
+  };
+
+  const openDirectionsModal = () => {
+    const t = data?.task ?? data;
+    if (!t) return;
+    const destination = String(t.delivery_address ?? '').trim();
+    const originFromTask = String(t.pickup_address ?? t.drop_address ?? t.merchant_address ?? '').trim();
+    const merchant = data?.merchant || null;
+    const originFromMerchant =
+      merchant && [merchant.street, merchant.city, merchant.state, merchant.post_code].filter(Boolean).join(', ');
+    const origin = originFromTask || String(originFromMerchant || '').trim();
+    const destinationCoords =
+      t.task_lat != null && t.task_lng != null ? { lat: Number(t.task_lat), lng: Number(t.task_lng) } : null;
+
+    if (!destination && !destinationCoords) {
+      window.alert('This task has no delivery address or coordinates to route to.');
+      return;
+    }
+
+    const pickup = (t.pickup_address || t.drop_address || t.merchant_address || '').trim();
+    const dest = (t.delivery_address || '').trim();
+    let externalMapsUrl = null;
+    if (dest) {
+      const params = new URLSearchParams({ api: '1', destination: dest });
+      if (pickup) params.set('origin', pickup);
+      externalMapsUrl = `https://www.google.com/maps/dir/?${params.toString()}`;
+    }
+
+    setDirectionsContext({
+      taskId: t.task_id ?? taskId,
+      origin,
+      destination,
+      destinationCoords,
+      externalMapsUrl,
+    });
   };
 
   /** Legacy-style assign dialog: Select Team + Assign Agent (opens as nested modal). */
@@ -1304,13 +1345,8 @@ export default function TaskDetailsModal({
                 {!changeStatusOpen && !editOpen && !assignOpen && (
                   <button type="button" className="btn" onClick={openChangeStatus} disabled={actionLoading}>Change status</button>
                 )}
-                {onShowDirections && (
-                  <button
-                    type="button"
-                    className="btn"
-                    onClick={() => onShowDirections?.({ task, order, merchant })}
-                    disabled={actionLoading}
-                  >
+                {directionsMapSettings && (
+                  <button type="button" className="btn" onClick={openDirectionsModal} disabled={actionLoading}>
                     Get directions
                   </button>
                 )}
@@ -1817,6 +1853,20 @@ export default function TaskDetailsModal({
                 ''
               : ''
           }
+        />
+      )}
+      {directionsContext != null && directionsMapSettings && (
+        <DirectionsModal
+          onClose={() => setDirectionsContext(null)}
+          taskId={directionsContext.taskId}
+          origin={directionsContext.origin}
+          destination={directionsContext.destination}
+          destinationCoords={directionsContext.destinationCoords}
+          mapProvider={directionsMapSettings.mapProvider === 'google' ? 'google' : 'mapbox'}
+          mapboxToken={directionsMapSettings.mapboxToken || ''}
+          googleApiKey={directionsMapSettings.googleApiKey || ''}
+          googleMapStyle={directionsMapSettings.googleMapStyle || ''}
+          externalMapsUrl={directionsContext.externalMapsUrl}
         />
       )}
     </div>

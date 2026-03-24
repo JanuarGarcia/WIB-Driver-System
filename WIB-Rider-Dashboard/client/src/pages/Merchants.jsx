@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { api } from '../api';
+import { api, resolveUploadUrl } from '../api';
 import { useTableAutoRefresh } from '../hooks/useTableAutoRefresh';
 import { useTablePagination, PAGE_SIZE_OPTIONS } from '../hooks/useTablePagination';
 import { useTableSort } from '../hooks/useTableSort';
@@ -21,7 +21,7 @@ function logoUrl(logo) {
   if (!logo || !String(logo).trim()) return null;
   const s = String(logo).trim();
   if (s.startsWith('http://') || s.startsWith('https://')) return s;
-  return `/uploads/merchants/${encodeURIComponent(s)}`;
+  return resolveUploadUrl(`/uploads/merchants/${encodeURIComponent(s)}`);
 }
 
 export default function Merchants() {

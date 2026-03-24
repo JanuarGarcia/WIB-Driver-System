@@ -1,11 +1,19 @@
-import { useMemo, useEffect, useState, useRef } from 'react';
+import { useMemo, useEffect, useState, useRef, useCallback } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 if (typeof window !== 'undefined') window.L = L;
 import Map, { Marker as MapboxMarker, Source, Layer } from 'react-map-gl/mapbox';
 import 'mapbox-gl/dist/mapbox-gl.css';
-import { LoadScript, GoogleMap, Marker as GoogleMarker, DirectionsService, DirectionsRenderer } from '@react-google-maps/api';
+import {
+  LoadScript,
+  GoogleMap,
+  Marker as GoogleMarker,
+  DirectionsService,
+  DirectionsRenderer,
+  useGoogleMap,
+} from '@react-google-maps/api';
+import { resolveUploadUrl } from '../api';
 import { sanitizeMerchantDisplayName } from '../utils/displayText';
 import { statusLabel } from '../api';
 import {
@@ -141,7 +149,7 @@ function merchantLogoUrl(logo) {
   if (!logo || !String(logo).trim()) return null;
   const s = String(logo).trim();
   if (s.startsWith('http://') || s.startsWith('https://')) return s;
-  return `/uploads/merchants/${encodeURIComponent(s)}`;
+  return resolveUploadUrl(`/uploads/merchants/${encodeURIComponent(s)}`);
 }
 
 function PinMarker({ type, imageUrl, title }) {
@@ -217,6 +225,48 @@ function LeafletSetView({ center, zoom }) {
   return null;
 }
 
+/** Leaflet measures the map once at mount; hidden mobile tabs or flex layout changes leave a wrong size until this runs. */
+function LeafletMapSizeSync({ resizeTrigger = 0 }) {
+  const map = useMap();
+  const invalidate = useCallback(() => {
+    try {
+      map.invalidateSize({ animate: false });
+    } catch (_) {}
+  }, [map]);
+
+  useEffect(() => {
+    const id = requestAnimationFrame(() => {
+      requestAnimationFrame(invalidate);
+    });
+    return () => cancelAnimationFrame(id);
+  }, [map, resizeTrigger, invalidate]);
+
+  useEffect(() => {
+    let container;
+    try {
+      container = map.getContainer();
+    } catch (_) {
+      return undefined;
+    }
+    if (!container) return undefined;
+    let raf;
+    const ro = new ResizeObserver(() => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(invalidate);
+    });
+    ro.observe(container);
+    const onResize = () => invalidate();
+    window.addEventListener('resize', onResize);
+    return () => {
+      ro.disconnect();
+      cancelAnimationFrame(raf);
+      window.removeEventListener('resize', onResize);
+    };
+  }, [map, invalidate]);
+
+  return null;
+}
+
 function LeafletFitBounds({ locations, merchants, taskMarkers, disabled }) {
   const map = useMap();
   const points = useMemo(() => {
@@ -247,7 +297,7 @@ function LeafletFitBounds({ locations, merchants, taskMarkers, disabled }) {
   return null;
 }
 
-function LeafletMapView({ locations, merchants, taskMarkers = [], center, zoom }) {
+function LeafletMapView({ locations, merchants, taskMarkers = [], center, zoom, mapResizeTrigger = 0 }) {
   const { riderMarkers, merchantMarkers, taskMapMarkers } = useDashboardMapMarkers(locations, merchants, taskMarkers);
   const mapCenter = center != null ? center : BAGUIO_CENTER;
   const mapZoom = zoom != null ? zoom : 13;
@@ -261,6 +311,7 @@ function LeafletMapView({ locations, merchants, taskMarkers = [], center, zoom }
         style={MAP_STYLE}
         scrollWheelZoom
       >
+        <LeafletMapSizeSync resizeTrigger={mapResizeTrigger} />
         {fitBoundsDisabled && <LeafletSetView center={mapCenter} zoom={mapZoom} />}
         <TileLayer
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
@@ -359,7 +410,7 @@ function LeafletMapboxTileError({ onTileError }) {
   return null;
 }
 
-function LeafletMapboxView({ mapboxToken, locations, merchants, taskMarkers = [], center, zoom, routeGeojson, showLegend = false }) {
+function LeafletMapboxView({ mapboxToken, locations, merchants, taskMarkers = [], center, zoom, routeGeojson, showLegend = false, mapResizeTrigger = 0 }) {
   const { riderMarkers, merchantMarkers, taskMapMarkers } = useDashboardMapMarkers(locations, merchants, taskMarkers);
   const mapCenter = center != null && Array.isArray(center) && center.length >= 2 ? center : BAGUIO_CENTER;
   const mapZoom = zoom != null ? zoom : 13;
@@ -380,6 +431,7 @@ function LeafletMapboxView({ mapboxToken, locations, merchants, taskMarkers = []
         style={MAP_STYLE}
         scrollWheelZoom
       >
+        <LeafletMapSizeSync resizeTrigger={mapResizeTrigger} />
         {fitBoundsDisabled && <LeafletSetView center={mapCenter} zoom={mapZoom} />}
         <TileLayer
           attribution='&copy; <a href="https://www.mapbox.com/about/maps/">Mapbox</a>'
@@ -476,7 +528,46 @@ function parseGoogleMapStyles(styleJson) {
   }
 }
 
-function GoogleMapView({ apiKey, locations, merchants, taskMarkers = [], center: centerProp, zoom: zoomProp, googleMapStyle, directionsRequest, onDirections }) {
+function GoogleMapResizeSync({ resizeTrigger = 0 }) {
+  const map = useGoogleMap();
+  const trigger = useCallback(() => {
+    try {
+      if (typeof window !== 'undefined' && window.google?.maps?.event && map) {
+        window.google.maps.event.trigger(map, 'resize');
+      }
+    } catch (_) {}
+  }, [map]);
+
+  useEffect(() => {
+    const id = requestAnimationFrame(() => {
+      requestAnimationFrame(trigger);
+    });
+    return () => cancelAnimationFrame(id);
+  }, [map, resizeTrigger, trigger]);
+
+  useEffect(() => {
+    if (!map || typeof map.getDiv !== 'function') return undefined;
+    const el = map.getDiv();
+    if (!el) return undefined;
+    let raf;
+    const ro = new ResizeObserver(() => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(trigger);
+    });
+    ro.observe(el);
+    const onResize = () => trigger();
+    window.addEventListener('resize', onResize);
+    return () => {
+      ro.disconnect();
+      cancelAnimationFrame(raf);
+      window.removeEventListener('resize', onResize);
+    };
+  }, [map, trigger]);
+
+  return null;
+}
+
+function GoogleMapView({ apiKey, locations, merchants, taskMarkers = [], center: centerProp, zoom: zoomProp, googleMapStyle, directionsRequest, onDirections, mapResizeTrigger = 0 }) {
   const [loadError, setLoadError] = useState(null);
   const { riderMarkers, merchantMarkers, taskMapMarkers } = useDashboardMapMarkers(locations, merchants, taskMarkers);
   const [directionsResult, setDirectionsResult] = useState(null);
@@ -513,6 +604,7 @@ function GoogleMapView({ apiKey, locations, merchants, taskMarkers = [], center:
         <div className="map-container" style={{ ...MAP_STYLE, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#e8e8e8', color: '#b33' }}>{loadError}</div>
       ) : (
         <GoogleMap mapContainerStyle={MAP_STYLE} mapContainerClassName="map-container" center={center} zoom={zoom} options={mapOptions}>
+          <GoogleMapResizeSync resizeTrigger={mapResizeTrigger} />
           {directionsRequest && directionsRequest.destination && (
             <DirectionsService
               options={{
@@ -595,6 +687,8 @@ export default function MapView({
   mapboxRouteGeojson,
   onGoogleDirections,
   showLegend = false,
+  /** Bump when the map container becomes visible or resizes (e.g. mobile tab switch). */
+  mapResizeTrigger = 0,
 }) {
   const token = String(mapboxToken || '').trim();
   const useMapbox = mapProvider === 'mapbox' && token.length > 0;
@@ -627,6 +721,7 @@ export default function MapView({
         zoom={zoom}
         routeGeojson={mapboxRouteGeojson}
         showLegend={showLegend}
+        mapResizeTrigger={mapResizeTrigger}
       />
     );
   }
@@ -642,6 +737,7 @@ export default function MapView({
         googleMapStyle={googleMapStyle}
         directionsRequest={directionsRequest}
         onDirections={onGoogleDirections}
+        mapResizeTrigger={mapResizeTrigger}
       />
     );
   }

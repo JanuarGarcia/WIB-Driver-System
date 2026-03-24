@@ -1518,14 +1518,12 @@ router.get('/order-history/feed', async (req, res) => {
 
   try {
     if (afterId === 0) {
+      // INNER JOIN avoids scanning mt_order_history with a per-row EXISTS (very slow on large history tables).
       const cursorSql = `
         SELECT COALESCE(MAX(h.id), 0) AS cursor
         FROM mt_order_history h
-        WHERE EXISTS (
-          SELECT 1 FROM mt_driver_task t
-          WHERE ${taskCondsSql}
-          AND ${historyLinkSql}
-        )`;
+        INNER JOIN mt_driver_task t ON ${historyLinkSql}
+        WHERE ${taskCondsSql}`;
       const [rows] = await pool.query(cursorSql, [...taskParams]);
       const cursor = rows && rows[0] ? Number(rows[0].cursor) || 0 : 0;
       return res.json({ cursor, events: [] });
@@ -1563,7 +1561,8 @@ router.get('/order-history/feed', async (req, res) => {
     if (e.code === 'ER_NO_SUCH_TABLE' || e.code === 'ER_BAD_FIELD_ERROR') {
       return res.json({ cursor: afterId, events: [] });
     }
-    throw e;
+    console.error('[order-history/feed]', e.message || e, e.code);
+    return res.status(200).json({ cursor: afterId, events: [] });
   }
 });
 
