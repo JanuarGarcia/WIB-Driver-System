@@ -323,6 +323,29 @@ app.put('/api/settings', express.json(), async (req, res) => {
   }
 });
 
+// Proxy: PUT /api/* -> BACKEND_URL/admin/api/* (map-merchant-filter, user-preferences, future PUTs)
+app.put('/api/*', express.json(), async (req, res) => {
+  setNoCache(res);
+  res.set('X-Dashboard-Proxy', '1');
+  const subPath = (req.path || '').replace(/^\/api\/?/, '') || '';
+  const url = `${BACKEND_URL}/admin/api/${subPath}`;
+  try {
+    const response = await axios.put(url, req.body || {}, {
+      headers: backendHeaders(req),
+      timeout: 15000,
+    });
+    res.json(response.data);
+  } catch (err) {
+    const status = err.response?.status || 500;
+    let data = err.response?.data;
+    if (data != null && typeof data === 'string' && data.trimStart().startsWith('<')) {
+      data = { error: 'Backend returned an error page. Check BACKEND_URL.' };
+    }
+    if (data == null || typeof data !== 'object') data = { error: err.message || 'Request failed' };
+    res.status(status).json(data);
+  }
+});
+
 // Serve React build only (run "npm run build" from repo root first)
 const clientBuild = path.join(__dirname, 'client', 'dist');
 const fs = require('fs');
