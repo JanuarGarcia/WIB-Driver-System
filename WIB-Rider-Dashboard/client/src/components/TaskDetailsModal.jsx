@@ -8,6 +8,7 @@ import {
 import { sanitizeLocationDisplayName, pickLocalizedMenuString } from '../utils/displayText';
 import { getAdvanceOrderLines } from '../utils/advanceOrder';
 import MapView from './MapView';
+import LocationPreviewModal from './LocationPreviewModal';
 import { CountryCodeDropdown, COUNTRY_CODES } from './NewTaskModal';
 
 /** Split stored contact (e.g. +63917…) into dial code + national number for edit UI. */
@@ -95,11 +96,11 @@ function timelineEntryShowsMapLink(entry) {
   return TIMELINE_MAP_LINK_STATUSES.has(key);
 }
 
-function buildTimelineMapHref(task) {
+function getTaskMapCoords(task) {
   const lat = task?.task_lat != null ? Number(task.task_lat) : NaN;
   const lng = task?.task_lng != null ? Number(task.task_lng) : NaN;
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
-  return `https://www.google.com/maps?q=${lat},${lng}`;
+  return { lat, lng };
 }
 
 function timelineHistoryBadgeLabel(entry) {
@@ -118,9 +119,9 @@ function timelineHistoryPrimaryText(entry) {
   return st ? displaySanitized(st) || st : '';
 }
 
-function ActivityTimelineMetaCol({ task, entry, dateCreated }) {
-  const href = buildTimelineMapHref(task);
-  const showMap = timelineEntryShowsMapLink(entry) && href;
+function ActivityTimelineMetaCol({ task, entry, dateCreated, onOpenLocation }) {
+  const coords = getTaskMapCoords(task);
+  const showMap = timelineEntryShowsMapLink(entry) && coords && typeof onOpenLocation === 'function';
   return (
     <div className="activity-timeline-meta-col">
       <div className="activity-timeline-meta-time">
@@ -131,17 +132,16 @@ function ActivityTimelineMetaCol({ task, entry, dateCreated }) {
         <span>{formatActivityTimelineDateTimeShort(dateCreated)}</span>
       </div>
       {showMap ? (
-        <a
-          href={href}
-          target="_blank"
-          rel="noopener noreferrer"
+        <button
+          type="button"
           className="activity-timeline-map-link"
+          onClick={() => onOpenLocation(coords.lat, coords.lng)}
         >
           <svg className="activity-timeline-meta-icon" width="14" height="14" viewBox="0 0 24 24" aria-hidden="true" fill="currentColor">
             <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z" />
           </svg>
           Location on Map
-        </a>
+        </button>
       ) : null}
     </div>
   );
@@ -392,6 +392,8 @@ export default function TaskDetailsModal({
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   /** proof_images when loaded only via /tasks/:id/order-history (task payload had no order_history). */
   const [orderHistoryProofImages, setOrderHistoryProofImages] = useState([]);
+  /** In-app Leaflet preview for timeline “Location on Map” (no Google redirect). */
+  const [locationPreview, setLocationPreview] = useState(null);
 
   useEffect(() => {
     if (!taskId) {
@@ -405,12 +407,14 @@ export default function TaskDetailsModal({
       setChangeStatusOpen(false);
       setChangeStatusValue('');
       setChangeStatusReason('');
+      setLocationPreview(null);
       return;
     }
     setData(null);
     setOrderHistory([]);
     setOrderHistoryProofImages([]);
     setError(null);
+    setLocationPreview(null);
     {
       const it = initialTabRef.current;
       setTab(it === 'timeline' || it === 'order' ? it : 'details');
@@ -530,7 +534,12 @@ export default function TaskDetailsModal({
     setEditTeamId('');
     setEditDriverId('');
     setEditContactCountryCode('+63');
+    setLocationPreview(null);
     onClose?.();
+  };
+
+  const openTimelineLocation = (la, ln) => {
+    setLocationPreview({ lat: la, lng: ln });
   };
 
   /** Legacy-style assign dialog: Select Team + Assign Agent (opens as nested modal). */
@@ -1045,11 +1054,17 @@ export default function TaskDetailsModal({
                             {entry.type === 'photo' ? (
                               <>
                                 <div className="activity-timeline-row">
-                                  <div className="activity-timeline-badge-col">
-                                    <span className="tag status-green">Proof of delivery</span>
+                                  <div className="activity-timeline-content-col">
+                                    <div className="activity-timeline-badge-col">
+                                      <span className="tag status-green">Proof of delivery</span>
+                                    </div>
                                   </div>
-                                  <div className="activity-timeline-body-col activity-timeline-body-col--photo" aria-hidden="true" />
-                                  <ActivityTimelineMetaCol task={task} entry={entry} dateCreated={entry?.date_created} />
+                                  <ActivityTimelineMetaCol
+                                    task={task}
+                                    entry={entry}
+                                    dateCreated={entry?.date_created}
+                                    onOpenLocation={openTimelineLocation}
+                                  />
                                 </div>
                                 {entry.urls?.length > 0 ? (
                                   <div
@@ -1075,25 +1090,32 @@ export default function TaskDetailsModal({
                             ) : (
                               <>
                                 <div className="activity-timeline-row">
-                                  <div className="activity-timeline-badge-col">
-                                    <span className={`tag ${statusDisplayClass(entry?.status ?? entry?.description)}`}>
-                                      {timelineHistoryBadgeLabel(entry)}
-                                    </span>
+                                  <div className="activity-timeline-content-col">
+                                    <div className="activity-timeline-badge-col">
+                                      <span className={`tag ${statusDisplayClass(entry?.status ?? entry?.description)}`}>
+                                        {timelineHistoryBadgeLabel(entry)}
+                                      </span>
+                                    </div>
+                                    <div className="activity-timeline-body-col">
+                                      {(() => {
+                                        const primary = timelineHistoryPrimaryText(entry);
+                                        if (primary) {
+                                          return <div className="activity-timeline-primary">{primary}</div>;
+                                        }
+                                        const by = (entry.update_by_name || entry.update_by_type || '').trim();
+                                        if (by) {
+                                          return <span className="activity-timeline-by">by {by}</span>;
+                                        }
+                                        return null;
+                                      })()}
+                                    </div>
                                   </div>
-                                  <div className="activity-timeline-body-col">
-                                    {(() => {
-                                      const primary = timelineHistoryPrimaryText(entry);
-                                      if (primary) {
-                                        return <div className="activity-timeline-primary">{primary}</div>;
-                                      }
-                                      const by = (entry.update_by_name || entry.update_by_type || '').trim();
-                                      if (by) {
-                                        return <span className="activity-timeline-by">by {by}</span>;
-                                      }
-                                      return null;
-                                    })()}
-                                  </div>
-                                  <ActivityTimelineMetaCol task={task} entry={entry} dateCreated={entry?.date_created} />
+                                  <ActivityTimelineMetaCol
+                                    task={task}
+                                    entry={entry}
+                                    dateCreated={entry?.date_created}
+                                    onOpenLocation={openTimelineLocation}
+                                  />
                                 </div>
                                 {proofHistoryAttachEntry === entry && proofImages.length > 0 && (
                                   <div
@@ -1782,6 +1804,20 @@ export default function TaskDetailsModal({
             </div>
           </div>
         </div>
+      )}
+      {locationPreview != null && (
+        <LocationPreviewModal
+          lat={locationPreview.lat}
+          lng={locationPreview.lng}
+          onClose={() => setLocationPreview(null)}
+          caption={
+            task
+              ? displaySanitized(task.delivery_address) ||
+                displaySanitized(task.delivery_landmark) ||
+                ''
+              : ''
+          }
+        />
       )}
     </div>
   );
