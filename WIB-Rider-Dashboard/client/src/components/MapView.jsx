@@ -126,8 +126,48 @@ const GOOGLE_MERCHANT_PIN_ICON = (() => {
 })();
 
 const BAGUIO_CENTER = [16.4023, 120.596];
+const BAGUIO_LATLNG = { lat: 16.4023, lng: 120.596 };
 const BAGUIO_VIEW = { longitude: 120.596, latitude: 16.4023, zoom: 13 };
 const MAP_STYLE = { width: '100%', height: '100%', minHeight: 400 };
+/** Metro framing for a lone pin (matches typical Baguio dashboard load). */
+const DASHBOARD_SINGLE_MARKER_ZOOM = 14;
+const FIT_BOUNDS_PADDING_PX = 52;
+
+function markerEnvelopeFromPoints(points) {
+  if (!points.length) return null;
+  const lats = points.map((p) => p[0]);
+  const lngs = points.map((p) => p[1]);
+  return {
+    minLat: Math.min(...lats),
+    maxLat: Math.max(...lats),
+    minLng: Math.min(...lngs),
+    maxLng: Math.max(...lngs),
+  };
+}
+
+function markerEnvelopeFromLatLngObjs(pts) {
+  if (!pts.length) return null;
+  const lats = pts.map((p) => Number(p.lat));
+  const lngs = pts.map((p) => Number(p.lng));
+  return {
+    minLat: Math.min(...lats),
+    maxLat: Math.max(...lats),
+    minLng: Math.min(...lngs),
+    maxLng: Math.max(...lngs),
+  };
+}
+
+/** True if outer's axis-aligned box fully contains inner's (float-tolerant). */
+function envelopeContainsOuter(outer, inner) {
+  if (!outer || !inner) return false;
+  const ε = 1e-5;
+  return (
+    outer.minLat <= inner.minLat + ε &&
+    outer.maxLat + ε >= inner.maxLat &&
+    outer.minLng <= inner.minLng + ε &&
+    outer.maxLng + ε >= inner.maxLng
+  );
+}
 
 function merchantMapTitle(restaurantName) {
   const s = sanitizeMerchantDisplayName(restaurantName);
@@ -212,8 +252,6 @@ function useDashboardMapMarkers(locations, merchants, taskMarkers) {
   return { riderMarkers, merchantMarkers, taskMapMarkers };
 }
 
-const BAGUIO_BOUNDS_MAX_SPAN = 1.5; // degrees lat/lng — only fit bounds when markers are within this range of each other
-
 /** When center/zoom are controlled, update map view when they change (e.g. New Task modal after selecting address). */
 function LeafletSetView({ center, zoom }) {
   const map = useMap();
@@ -267,13 +305,17 @@ function LeafletMapSizeSync({ resizeTrigger = 0 }) {
   return null;
 }
 
-function LeafletFitBounds({ locations, merchants, taskMarkers, disabled }) {
+function LeafletFitBounds({ locations, merchants, taskMarkers, disabled, mapResizeTrigger = 0 }) {
   const map = useMap();
   const points = useMemo(() => {
     if (disabled) return [];
     const out = [];
-    (locations || []).forEach((loc) => { if (loc.lat != null && loc.lng != null) out.push([Number(loc.lat), Number(loc.lng)]); });
-    (merchants || []).forEach((m) => { if (m.lat != null && m.lng != null) out.push([Number(m.lat), Number(m.lng)]); });
+    (locations || []).forEach((loc) => {
+      if (loc.lat != null && loc.lng != null) out.push([Number(loc.lat), Number(loc.lng)]);
+    });
+    (merchants || []).forEach((m) => {
+      if (m.lat != null && m.lng != null) out.push([Number(m.lat), Number(m.lng)]);
+    });
     (taskMarkers || []).forEach((t) => {
       const la = Number(t.lat);
       const ln = Number(t.lng);
@@ -281,19 +323,52 @@ function LeafletFitBounds({ locations, merchants, taskMarkers, disabled }) {
     });
     return out;
   }, [locations, merchants, taskMarkers, disabled]);
+  const prevEnvelopeRef = useRef(null);
+  const lastResizeTriggerRef = useRef(mapResizeTrigger);
+
   useEffect(() => {
-    if (disabled || points.length < 2) return;
-    try {
-      const lats = points.map((p) => p[0]);
-      const lngs = points.map((p) => p[1]);
-      const spanLat = Math.max(...lats) - Math.min(...lats);
-      const spanLng = Math.max(...lngs) - Math.min(...lngs);
-      if (spanLat > BAGUIO_BOUNDS_MAX_SPAN || spanLng > BAGUIO_BOUNDS_MAX_SPAN) {
-        return;
-      }
-      map.fitBounds(points, { padding: [40, 40], maxZoom: 15 });
-    } catch (_) {}
-  }, [map, points]);
+    if (disabled) {
+      prevEnvelopeRef.current = null;
+      return;
+    }
+    if (points.length === 0) {
+      prevEnvelopeRef.current = null;
+      return;
+    }
+
+    const env = markerEnvelopeFromPoints(points);
+    const resizeBump = mapResizeTrigger !== lastResizeTriggerRef.current;
+    lastResizeTriggerRef.current = mapResizeTrigger;
+    const prev = prevEnvelopeRef.current;
+    const shouldFit = resizeBump || prev == null || !envelopeContainsOuter(prev, env);
+    if (!shouldFit) return;
+
+    const animate = prev != null && !resizeBump;
+
+    const run = () => {
+      try {
+        if (points.length === 1) {
+          map.setView(points[0], DASHBOARD_SINGLE_MARKER_ZOOM, { animate });
+        } else {
+          const bounds = L.latLngBounds(points);
+          map.fitBounds(bounds, {
+            padding: [FIT_BOUNDS_PADDING_PX, FIT_BOUNDS_PADDING_PX],
+            maxZoom: 15,
+            animate,
+          });
+        }
+        prevEnvelopeRef.current = env;
+      } catch (_) {}
+    };
+
+    if (resizeBump) {
+      requestAnimationFrame(() => {
+        requestAnimationFrame(run);
+      });
+    } else {
+      run();
+    }
+  }, [map, points, disabled, mapResizeTrigger]);
   return null;
 }
 
@@ -317,7 +392,13 @@ function LeafletMapView({ locations, merchants, taskMarkers = [], center, zoom, 
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
-        <LeafletFitBounds locations={riderMarkers} merchants={merchantMarkers} taskMarkers={taskMapMarkers} disabled={fitBoundsDisabled} />
+        <LeafletFitBounds
+          locations={riderMarkers}
+          merchants={merchantMarkers}
+          taskMarkers={taskMapMarkers}
+          disabled={fitBoundsDisabled}
+          mapResizeTrigger={mapResizeTrigger}
+        />
         {riderMarkers.map((loc, idx) => (
           <Marker key={`rider-${loc.driver_id ?? idx}`} position={[Number(loc.lat), Number(loc.lng)]} icon={riderPinIcon}>
             <Popup className="map-popup-leaflet" minWidth={260}>
@@ -443,7 +524,13 @@ function LeafletMapboxView({ mapboxToken, locations, merchants, taskMarkers = []
           minZoom={0}
         />
         <LeafletMapboxTileError onTileError={() => setTileError(true)} />
-        <LeafletFitBounds locations={riderMarkers} merchants={merchantMarkers} taskMarkers={taskMapMarkers} disabled={fitBoundsDisabled} />
+        <LeafletFitBounds
+          locations={riderMarkers}
+          merchants={merchantMarkers}
+          taskMarkers={taskMapMarkers}
+          disabled={fitBoundsDisabled}
+          mapResizeTrigger={mapResizeTrigger}
+        />
         <LeafletMapboxMarkersLayer riderMarkers={riderMarkers} merchantMarkers={merchantMarkers} taskMapMarkers={taskMapMarkers} />
       </MapContainer>
       {showLegend ? <MapLegend /> : null}
@@ -567,18 +654,112 @@ function GoogleMapResizeSync({ resizeTrigger = 0 }) {
   return null;
 }
 
+/** Dashboard-style auto framing: fit all pins on load; re-fit when the marker hull grows (new distant task/rider). */
+function GoogleMapAutoFit({ points, mapResizeTrigger = 0, onViewCommitted }) {
+  const map = useGoogleMap();
+  const prevEnvelopeRef = useRef(null);
+  const lastResizeTriggerRef = useRef(mapResizeTrigger);
+  const onCommittedRef = useRef(onViewCommitted);
+  onCommittedRef.current = onViewCommitted;
+
+  useEffect(() => {
+    if (!map || typeof window === 'undefined' || !window.google?.maps) return;
+    if (points.length === 0) {
+      prevEnvelopeRef.current = null;
+      return;
+    }
+
+    const env = markerEnvelopeFromLatLngObjs(points);
+    const resizeBump = mapResizeTrigger !== lastResizeTriggerRef.current;
+    lastResizeTriggerRef.current = mapResizeTrigger;
+    const prev = prevEnvelopeRef.current;
+    const shouldFit = resizeBump || prev == null || !envelopeContainsOuter(prev, env);
+    if (!shouldFit) return;
+
+    const run = () => {
+      try {
+        if (points.length === 1) {
+          map.setCenter(points[0]);
+          map.setZoom(DASHBOARD_SINGLE_MARKER_ZOOM);
+        } else {
+          const b = new window.google.maps.LatLngBounds();
+          points.forEach((p) => b.extend(p));
+          map.fitBounds(b, {
+            top: FIT_BOUNDS_PADDING_PX,
+            right: FIT_BOUNDS_PADDING_PX,
+            bottom: FIT_BOUNDS_PADDING_PX,
+            left: FIT_BOUNDS_PADDING_PX,
+          });
+          const z = map.getZoom();
+          if (typeof z === 'number' && z > 15) map.setZoom(15);
+        }
+        prevEnvelopeRef.current = env;
+        const c = map.getCenter();
+        onCommittedRef.current?.({ lat: c.lat(), lng: c.lng() }, map.getZoom());
+      } catch (_) {}
+    };
+
+    if (resizeBump) {
+      requestAnimationFrame(() => {
+        requestAnimationFrame(run);
+      });
+    } else {
+      run();
+    }
+  }, [map, points, mapResizeTrigger]);
+
+  return null;
+}
+
 function GoogleMapView({ apiKey, locations, merchants, taskMarkers = [], center: centerProp, zoom: zoomProp, googleMapStyle, directionsRequest, onDirections, mapResizeTrigger = 0 }) {
   const [loadError, setLoadError] = useState(null);
   const { riderMarkers, merchantMarkers, taskMapMarkers } = useDashboardMapMarkers(locations, merchants, taskMarkers);
   const [directionsResult, setDirectionsResult] = useState(null);
   const [directionsStatus, setDirectionsStatus] = useState(null);
+  const autoFit = centerProp == null && zoomProp == null && !directionsRequest;
+  const [autoCenter, setAutoCenter] = useState(() => ({ ...BAGUIO_LATLNG }));
+  const [autoZoom, setAutoZoom] = useState(13);
+  const commitAutoView = useCallback((c, z) => {
+    setAutoCenter(c);
+    setAutoZoom(z);
+  }, []);
+
+  const autoFitPoints = useMemo(() => {
+    const out = [];
+    (riderMarkers || []).forEach((loc) => {
+      if (loc.lat != null && loc.lng != null) out.push({ lat: Number(loc.lat), lng: Number(loc.lng) });
+    });
+    (merchantMarkers || []).forEach((m) => {
+      if (m.lat != null && m.lng != null) out.push({ lat: Number(m.lat), lng: Number(m.lng) });
+    });
+    (taskMapMarkers || []).forEach((t) => {
+      const la = Number(t.lat);
+      const ln = Number(t.lng);
+      if (Number.isFinite(la) && Number.isFinite(ln)) out.push({ lat: la, lng: ln });
+    });
+    return out;
+  }, [riderMarkers, merchantMarkers, taskMapMarkers]);
+
+  useEffect(() => {
+    if (!autoFit) return;
+    if (autoFitPoints.length === 0) {
+      setAutoCenter({ ...BAGUIO_LATLNG });
+      setAutoZoom(13);
+    }
+  }, [autoFit, autoFitPoints.length]);
+
   const center = useMemo(() => {
     if (centerProp != null && Array.isArray(centerProp) && centerProp.length >= 2) {
       return { lat: centerProp[0], lng: centerProp[1] };
     }
-    return { lat: 16.4023, lng: 120.596 };
-  }, [centerProp]);
-  const zoom = zoomProp != null ? zoomProp : 13;
+    if (autoFit) return autoCenter;
+    return { ...BAGUIO_LATLNG };
+  }, [centerProp, autoFit, autoCenter]);
+  const zoom = useMemo(() => {
+    if (zoomProp != null) return zoomProp;
+    if (autoFit) return autoZoom;
+    return 13;
+  }, [zoomProp, autoFit, autoZoom]);
   const mapOptions = useMemo(() => {
     const opts = { zoomControl: true };
     const styles = parseGoogleMapStyles(googleMapStyle);
@@ -604,6 +785,13 @@ function GoogleMapView({ apiKey, locations, merchants, taskMarkers = [], center:
         <div className="map-container" style={{ ...MAP_STYLE, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#e8e8e8', color: '#b33' }}>{loadError}</div>
       ) : (
         <GoogleMap mapContainerStyle={MAP_STYLE} mapContainerClassName="map-container" center={center} zoom={zoom} options={mapOptions}>
+          {autoFit && autoFitPoints.length > 0 ? (
+            <GoogleMapAutoFit
+              points={autoFitPoints}
+              mapResizeTrigger={mapResizeTrigger}
+              onViewCommitted={commitAutoView}
+            />
+          ) : null}
           <GoogleMapResizeSync resizeTrigger={mapResizeTrigger} />
           {directionsRequest && directionsRequest.destination && (
             <DirectionsService

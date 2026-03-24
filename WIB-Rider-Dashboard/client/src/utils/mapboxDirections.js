@@ -1,6 +1,12 @@
 /**
- * Mapbox Directions API helpers (same routing as dashboard; geometry works with Leaflet/OSM).
+ * Mapbox Directions API helpers (same routing as dashboard; geometry works with Leaflet).
  */
+
+/** Leaflet raster URL for streets-v12 — 512px tiles + zoomOffset -1 (matches dashboard MapView). */
+export function mapboxLeafletRasterTileUrl(accessToken) {
+  const t = encodeURIComponent(String(accessToken || '').trim());
+  return `https://api.mapbox.com/styles/v1/mapbox/streets-v12/tiles/512/{z}/{x}/{y}?access_token=${t}`;
+}
 
 export async function mapboxGeocode(token, query) {
   const q = (query || '').trim();

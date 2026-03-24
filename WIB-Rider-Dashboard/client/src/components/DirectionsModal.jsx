@@ -3,7 +3,7 @@ import { MapContainer, TileLayer, Polyline, Marker, useMap } from 'react-leaflet
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { LoadScript, GoogleMap, DirectionsService, DirectionsRenderer } from '@react-google-maps/api';
-import { fetchMapboxDrivingRoute } from '../utils/mapboxDirections';
+import { fetchMapboxDrivingRoute, mapboxLeafletRasterTileUrl } from '../utils/mapboxDirections';
 
 function stripHtml(s) {
   return String(s || '')
@@ -106,13 +106,22 @@ function bluePinIcon() {
 
 const BLUE_PIN = bluePinIcon();
 
-function MapboxRouteMap({ positions, originLatLng, destLatLng }) {
+function MapboxRouteMap({ mapboxToken, positions, originLatLng, destLatLng }) {
   const center = positions[Math.floor(positions.length / 2)] || originLatLng;
+  const tileUrl = useMemo(() => mapboxLeafletRasterTileUrl(mapboxToken), [mapboxToken]);
   return (
-    <div className="directions-modal-map map-container leaflet-map-wrap">
+    <div className="directions-modal-map map-container leaflet-map-wrap leaflet-mapbox-wrap">
       <MapContainer center={center} zoom={14} className="leaflet-map directions-modal-leaflet" style={{ width: '100%', height: '100%', minHeight: 260 }} scrollWheelZoom>
         <MapInvalidateWhenReady />
-        <TileLayer attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>' url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+        <TileLayer
+          attribution='&copy; <a href="https://www.mapbox.com/about/maps/">Mapbox</a>'
+          url={tileUrl}
+          crossOrigin="anonymous"
+          tileSize={512}
+          zoomOffset={-1}
+          maxZoom={19}
+          minZoom={0}
+        />
         <RouteFitBounds positions={positions} />
         {positions.length >= 2 && (
           <Polyline positions={positions} pathOptions={{ color: '#ea580c', weight: 6, opacity: 0.92, lineJoin: 'round', lineCap: 'round' }} />
@@ -324,7 +333,12 @@ export default function DirectionsModal({
 
         {useMapboxRouting && !loading && !error && mapboxData && (
           <>
-            <MapboxRouteMap positions={mapboxData.positions} originLatLng={mapboxData.originLatLng} destLatLng={mapboxData.destLatLng} />
+            <MapboxRouteMap
+              mapboxToken={token}
+              positions={mapboxData.positions}
+              originLatLng={mapboxData.originLatLng}
+              destLatLng={mapboxData.destLatLng}
+            />
             {summaryLine ? <div className="directions-modal-summary">{summaryLine}</div> : null}
             <div className="directions-modal-addresses">
               <div className="directions-modal-address directions-modal-address--from">
