@@ -760,6 +760,10 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
   })();
   const taskDescriptionDisplay = displaySanitized(task?.task_description) || '—';
   const deliveryInstructionDisplay = displaySanitizedOrDash(order?.delivery_instruction ?? task?.delivery_instruction);
+  const orderDeliveryAddr = data?.order_delivery_address ?? null;
+  const landmarkDisplay = displaySanitizedOrDash(
+    orderDeliveryAddr?.location_name ?? task?.delivery_landmark
+  );
   const teamNameDisplay = displaySanitizedOrDash(task?.team_name);
   const driverNameDisplay = displaySanitizedOrDash(task?.driver_name);
   const completeBefore = order?.delivery_date && order?.delivery_time
@@ -1014,6 +1018,7 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
                         <div className="task-detail-row"><span className="task-detail-label">TRN date</span><span className="task-detail-value">{order?.date_created ? formatDate(order.date_created) : '—'}</span></div>
                         <div className="task-detail-row"><span className="task-detail-label">Delivery date</span><span className="task-detail-value">{order?.delivery_date ? formatDate(order.delivery_date) : '—'}</span></div>
                         <div className="task-detail-row"><span className="task-detail-label">Delivery instruction</span><span className="task-detail-value">{deliveryInstructionDisplay}</span></div>
+                        <div className="task-detail-row"><span className="task-detail-label">Landmark</span><span className="task-detail-value">{landmarkDisplay}</span></div>
                       </div>
                     </div>
                     {orderDetails.length > 0 && (() => {

@@ -127,9 +127,14 @@ function merchantMapTitle(restaurantName) {
 }
 
 function taskMapTitle(t) {
-  if (t.order_id != null) return `Task #${t.order_id}`;
-  if (t.task_id != null) return `Task ID ${t.task_id}`;
-  return 'Task (delivery)';
+  let base;
+  if (t.order_id != null) base = `Task #${t.order_id}`;
+  else if (t.task_id != null) base = `Task ID ${t.task_id}`;
+  else base = 'Task (delivery)';
+  const lm = String(t.landmark || '').trim();
+  if (!lm) return base;
+  const short = lm.length > 36 ? `${lm.slice(0, 33)}…` : lm;
+  return `${base} · ${short}`;
 }
 
 function merchantLogoUrl(logo) {

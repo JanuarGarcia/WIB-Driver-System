@@ -36,7 +36,7 @@ export const TASK_MAP_MARKER_STATUS_SET = new Set(['unassigned', 'inprogress', '
 /**
  * Tasks that can be drawn on the map (delivery coordinates).
  * @param {Array<Record<string, unknown>>|null|undefined} tasks
- * @returns {Array<{ task_id: *, lat: number, lng: number, merchant_id?: *, delivery_address?: string, restaurant_name?: string, status?: string, order_id?: * }>}
+ * @returns {Array<{ task_id: *, lat: number, lng: number, merchant_id?: *, delivery_address?: string, restaurant_name?: string, status?: string, order_id?: *, landmark?: string }>}
  */
 export function tasksWithMapCoordinates(tasks) {
   return (tasks || [])
@@ -44,6 +44,7 @@ export function tasksWithMapCoordinates(tasks) {
       const lat = t.task_lat != null ? Number(t.task_lat) : NaN;
       const lng = t.task_lng != null ? Number(t.task_lng) : NaN;
       if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+      const landmarkRaw = t.delivery_landmark != null ? String(t.delivery_landmark).trim() : '';
       return {
         task_id: t.task_id,
         lat,
@@ -53,6 +54,7 @@ export function tasksWithMapCoordinates(tasks) {
         restaurant_name: t.restaurant_name,
         status: t.status,
         order_id: t.order_id,
+        landmark: landmarkRaw || undefined,
       };
     })
     .filter(Boolean)

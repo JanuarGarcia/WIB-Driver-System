@@ -1433,6 +1433,27 @@ router.get('/tasks/:id', async (req, res) => {
     result.order_status_timeline = [];
   }
 
+  result.order_delivery_address = null;
+  if (orderId) {
+    try {
+      const [addrRows] = await pool.query(
+        'SELECT location_name, google_lat, google_lng FROM mt_order_delivery_address WHERE order_id = ? ORDER BY id DESC LIMIT 1',
+        [orderId]
+      );
+      if (addrRows && addrRows.length) {
+        result.order_delivery_address = addrRows[0];
+        const la = parseFloat(addrRows[0].google_lat);
+        const ln = parseFloat(addrRows[0].google_lng);
+        if (Number.isFinite(la) && Number.isFinite(ln)) {
+          result.task.task_lat = la;
+          result.task.task_lng = ln;
+        }
+      }
+    } catch (e) {
+      if (e.code !== 'ER_NO_SUCH_TABLE' && e.code !== 'ER_BAD_FIELD_ERROR') throw e;
+    }
+  }
+
   // Resolve merchant from task.dropoff_merchant when numeric (same as task list JOIN m2)
   if (!result.merchant && task.dropoff_merchant != null && String(task.dropoff_merchant).trim() !== '' && /^\d+$/.test(String(task.dropoff_merchant).trim())) {
     try {
@@ -1580,12 +1601,25 @@ router.get('/tasks', async (req, res) => {
     o.status AS order_status,
     o.delivery_time AS order_delivery_time,
     o.delivery_date AS order_delivery_date,
-    o.date_created AS order_placed_at
+    o.date_created AS order_placed_at,
+    del_addr.delivery_location_name, del_addr.delivery_google_lat, del_addr.delivery_google_lng
     FROM mt_driver_task t
     LEFT JOIN mt_driver d ON t.driver_id = d.driver_id
     LEFT JOIN mt_order o ON t.order_id = o.order_id
     LEFT JOIN mt_merchant m ON o.merchant_id = m.merchant_id
     LEFT JOIN mt_merchant m2 ON t.dropoff_merchant REGEXP '^[0-9]+$' AND m2.merchant_id = t.dropoff_merchant
+    LEFT JOIN (
+      SELECT da.order_id,
+        da.location_name AS delivery_location_name,
+        da.google_lat AS delivery_google_lat,
+        da.google_lng AS delivery_google_lng
+      FROM mt_order_delivery_address da
+      INNER JOIN (
+        SELECT order_id, MAX(id) AS max_id
+        FROM mt_order_delivery_address
+        GROUP BY order_id
+      ) latest ON latest.order_id = da.order_id AND latest.max_id = da.id
+    ) del_addr ON del_addr.order_id = t.order_id
     WHERE 1=1`;
   const params = [];
   if (date) {
@@ -1627,12 +1661,24 @@ router.get('/tasks', async (req, res) => {
       const out = { ...r };
       delete out.driver_lat;
       delete out.driver_lng;
+      delete out.delivery_google_lat;
+      delete out.delivery_google_lng;
+      delete out.delivery_location_name;
+      const delLat = parseFloat(r.delivery_google_lat);
+      const delLng = parseFloat(r.delivery_google_lng);
+      const delOk = Number.isFinite(delLat) && Number.isFinite(delLng);
+      const tLat = parseFloat(r.task_lat);
+      const tLng = parseFloat(r.task_lng);
+      const mapLat = delOk ? delLat : tLat;
+      const mapLng = delOk ? delLng : tLng;
+      if (Number.isFinite(mapLat)) out.task_lat = mapLat;
+      if (Number.isFinite(mapLng)) out.task_lng = mapLng;
+      const lm = r.delivery_location_name != null ? String(r.delivery_location_name).trim() : '';
+      if (lm) out.delivery_landmark = lm;
       const drLat = r.driver_lat != null && r.driver_lng != null ? parseFloat(r.driver_lat) : null;
       const drLng = r.driver_lat != null && r.driver_lng != null ? parseFloat(r.driver_lng) : null;
-      const tLat = r.task_lat != null ? parseFloat(r.task_lat) : null;
-      const tLng = r.task_lng != null ? parseFloat(r.task_lng) : null;
-      if (drLat != null && !Number.isNaN(drLat) && drLng != null && !Number.isNaN(drLng) && tLat != null && !Number.isNaN(tLat) && tLng != null && !Number.isNaN(tLng)) {
-        out.direction = bearingToCompass(getBearing(drLat, drLng, tLat, tLng));
+      if (Number.isFinite(drLat) && Number.isFinite(drLng) && Number.isFinite(mapLat) && Number.isFinite(mapLng)) {
+        out.direction = bearingToCompass(getBearing(drLat, drLng, mapLat, mapLng));
       } else if (r.direction != null && String(r.direction).trim() !== '') {
         out.direction = String(r.direction).trim();
       } else {

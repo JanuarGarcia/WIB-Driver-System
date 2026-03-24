@@ -88,6 +88,10 @@ export function taskLeafletPopupHtmlStyled(t, statusLabelFn) {
   }
   const rn = sanitizeMerchantDisplayName(t.restaurant_name || '');
   if (rn) parts.push(`<p class="map-popup-detail">${escapeMapHtml(rn)}</p>`);
+  const landmark = sanitizeLocationDisplayName(String(t.landmark || ''));
+  if (landmark) {
+    parts.push(`<p class="map-popup-detail"><strong>Landmark</strong> · ${escapeMapHtml(landmark.length > 120 ? `${landmark.slice(0, 117)}…` : landmark)}</p>`);
+  }
   const addr = sanitizeLocationDisplayName(String(t.delivery_address || ''));
   if (addr) {
     const short = addr.length > 160 ? `${addr.slice(0, 157)}…` : addr;
