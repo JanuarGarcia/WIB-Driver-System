@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { useLocation, useNavigate } from 'react-router-dom';
 import TaskPanel from '../components/TaskPanel';
 import TaskDetailsModal from '../components/TaskDetailsModal';
+import ActivityTimelineToastStack from '../components/ActivityTimelineToastStack';
 import MapView from '../components/MapView';
 import MapErrorBoundary from '../components/MapErrorBoundary';
 import AgentPanel from '../components/AgentPanel';
@@ -23,9 +24,22 @@ export default function Dashboard() {
   const navigate = useNavigate();
   const { selectedTeamId } = useTeamFilter();
   const [taskDetailsId, setTaskDetailsId] = useState(null);
+  const [taskDetailsInitialTab, setTaskDetailsInitialTab] = useState('details');
   /** Bumped when task details modal mutates tasks so TaskPanel + AgentPanel refetch immediately. */
   const [taskListRevision, setTaskListRevision] = useState(0);
   const bumpTaskLists = useCallback(() => setTaskListRevision((n) => n + 1), []);
+
+  const openTaskDetails = useCallback((id, opts) => {
+    const tab =
+      opts && (opts.initialTab === 'timeline' || opts.initialTab === 'order') ? opts.initialTab : 'details';
+    setTaskDetailsInitialTab(tab);
+    setTaskDetailsId(id);
+  }, []);
+
+  const handleOpenTaskDetailsFromPanel = useCallback(
+    (id) => openTaskDetails(id, { initialTab: 'details' }),
+    [openTaskDetails]
+  );
   const [mobileSection, setMobileSection] = useState('tasks'); // 'tasks' | 'map' | 'agents' for small screens
   const [locations, setLocations] = useState([]);
   const [merchants, setMerchants] = useState([]);
@@ -307,6 +321,7 @@ export default function Dashboard() {
   };
 
   return (
+    <>
     <div className="dashboard-layout" data-mobile-section={mobileSection}>
       <nav className="dashboard-mobile-tabs" aria-label="Dashboard sections">
         <button
@@ -335,13 +350,17 @@ export default function Dashboard() {
         </button>
       </nav>
       <div className="dashboard-layout-panel dashboard-layout-tasks">
-        <TaskPanel onOpenTaskDetails={setTaskDetailsId} listRevision={taskListRevision} />
+        <TaskPanel onOpenTaskDetails={handleOpenTaskDetailsFromPanel} listRevision={taskListRevision} />
       </div>
       {taskDetailsId != null &&
         createPortal(
           <TaskDetailsModal
             taskId={taskDetailsId}
-            onClose={() => setTaskDetailsId(null)}
+            initialTab={taskDetailsInitialTab}
+            onClose={() => {
+              setTaskDetailsId(null);
+              setTaskDetailsInitialTab('details');
+            }}
             onAssignDriver={(id) => { setTaskDetailsId(null); navigate(`/tasks?highlight=${id}`); }}
             onTaskListInvalidate={bumpTaskLists}
             onTaskDeleted={() => setTaskDetailsId(null)}
@@ -409,8 +428,13 @@ export default function Dashboard() {
       </div>
       </div>
       <div className="dashboard-layout-panel dashboard-layout-agents">
-        <AgentPanel onOpenTaskDetails={setTaskDetailsId} listRevision={taskListRevision} />
+        <AgentPanel onOpenTaskDetails={handleOpenTaskDetailsFromPanel} listRevision={taskListRevision} />
       </div>
     </div>
+    <ActivityTimelineToastStack
+      dateStr={tasksMapDateStr}
+      onOpenTaskTimeline={(id) => openTaskDetails(id, { initialTab: 'timeline' })}
+    />
+    </>
   );
 }

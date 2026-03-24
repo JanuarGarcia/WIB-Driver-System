@@ -1471,6 +1471,102 @@ router.get('/tasks/:id/order-history', async (req, res) => {
   }
 });
 
+/**
+ * Dashboard: poll new mt_order_history rows for tasks visible on the task list (same date / hide rules as GET /tasks).
+ * Query: ?date=YYYY-MM-DD&after_id=<last seen id>&team_id=<optional>
+ */
+router.get('/order-history/feed', async (req, res) => {
+  const dateStr = req.query.date != null && String(req.query.date).trim() ? String(req.query.date).trim() : null;
+  if (!dateStr || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+    return res.status(400).json({ error: 'date query (YYYY-MM-DD) is required' });
+  }
+  const afterRaw = req.query.after_id != null ? parseInt(String(req.query.after_id), 10) : 0;
+  const afterId = Number.isFinite(afterRaw) && afterRaw >= 0 ? afterRaw : 0;
+  const teamRaw = req.query.team_id != null && String(req.query.team_id).trim() !== '' ? parseInt(String(req.query.team_id), 10) : null;
+  const teamId = Number.isFinite(teamRaw) ? teamRaw : null;
+
+  let map = {};
+  try {
+    map = await getSettingsMap();
+  } catch (_) {}
+
+  const taskCondParts = ['(t.delivery_date = ? OR DATE(t.delivery_date) = ?)'];
+  const taskParams = [dateStr, dateStr];
+  if (teamId != null) {
+    taskCondParts.push('t.team_id = ?');
+    taskParams.push(teamId);
+  }
+  if (map.hide_pickup === '1') {
+    taskCondParts.push("(t.trans_type IS NULL OR LOWER(TRIM(t.trans_type)) != 'pickup')");
+  }
+  if (map.hide_delivery === '1') {
+    taskCondParts.push("(t.trans_type IS NULL OR LOWER(TRIM(t.trans_type)) != 'delivery')");
+  }
+  if (map.hide_successful === '1') {
+    taskCondParts.push("(t.status IS NULL OR LOWER(TRIM(t.status)) NOT IN ('completed', 'successful', 'delivered'))");
+  }
+  const taskCondsSql = taskCondParts.join(' AND ');
+
+  const historyLinkSql = `(
+    (h.task_id IS NOT NULL AND CAST(h.task_id AS UNSIGNED) > 0 AND h.task_id = t.task_id)
+    OR (
+      (h.task_id IS NULL OR CAST(h.task_id AS UNSIGNED) = 0)
+      AND h.order_id IS NOT NULL AND CAST(h.order_id AS UNSIGNED) > 0
+      AND h.order_id = t.order_id
+    )
+  )`;
+
+  try {
+    if (afterId === 0) {
+      const cursorSql = `
+        SELECT COALESCE(MAX(h.id), 0) AS cursor
+        FROM mt_order_history h
+        WHERE EXISTS (
+          SELECT 1 FROM mt_driver_task t
+          WHERE ${taskCondsSql}
+          AND ${historyLinkSql}
+        )`;
+      const [rows] = await pool.query(cursorSql, [...taskParams]);
+      const cursor = rows && rows[0] ? Number(rows[0].cursor) || 0 : 0;
+      return res.json({ cursor, events: [] });
+    }
+
+    const listSql = `
+      SELECT h.id, h.order_id, h.status, h.remarks, h.date_created, h.update_by_type, h.update_by_name, h.reason, h.notes,
+        t.task_id AS resolved_task_id
+      FROM mt_order_history h
+      INNER JOIN mt_driver_task t ON ${historyLinkSql}
+      WHERE ${taskCondsSql}
+      AND h.id > ?
+      ORDER BY h.id ASC
+      LIMIT 40`;
+    const [events] = await pool.query(listSql, [...taskParams, afterId]);
+    const list = (events || []).map((row) => ({
+      id: row.id,
+      order_id: row.order_id,
+      status: row.status,
+      remarks: row.remarks,
+      date_created: row.date_created,
+      update_by_type: row.update_by_type,
+      update_by_name: row.update_by_name,
+      reason: row.reason,
+      notes: row.notes,
+      resolved_task_id: row.resolved_task_id,
+    }));
+    let nextCursor = afterId;
+    for (const ev of list) {
+      const n = Number(ev.id);
+      if (Number.isFinite(n) && n > nextCursor) nextCursor = n;
+    }
+    return res.json({ cursor: nextCursor, events: list });
+  } catch (e) {
+    if (e.code === 'ER_NO_SUCH_TABLE' || e.code === 'ER_BAD_FIELD_ERROR') {
+      return res.json({ cursor: afterId, events: [] });
+    }
+    throw e;
+  }
+});
+
 // ---- Single task (for task details) ----
 router.get('/tasks/:id', async (req, res) => {
   const id = parseInt(req.params.id, 10);

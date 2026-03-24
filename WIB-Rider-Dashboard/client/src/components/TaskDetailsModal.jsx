@@ -1,5 +1,10 @@
 import { useState, useEffect, useRef } from 'react';
-import { api, formatDate, formatActivityTimelineDateTime, statusDisplayClass } from '../api';
+import {
+  api,
+  formatDate,
+  formatActivityTimelineDateTimeShort,
+  statusDisplayClass,
+} from '../api';
 import { sanitizeLocationDisplayName, pickLocalizedMenuString } from '../utils/displayText';
 import { getAdvanceOrderLines } from '../utils/advanceOrder';
 import MapView from './MapView';
@@ -59,6 +64,87 @@ function formatDeliveryAddressFromOrderRow(row) {
     (p) => p != null && String(p).trim() !== ''
   );
   return parts.join(' ').trim();
+}
+
+function normalizeTimelineStatusKey(s) {
+  return String(s || '')
+    .toLowerCase()
+    .replace(/\s+/g, '')
+    .replace(/_/g, '');
+}
+
+const TIMELINE_MAP_LINK_STATUSES = new Set([
+  'acknowledged',
+  'started',
+  'inprogress',
+  'successful',
+  'completed',
+  'delivered',
+  'failed',
+  'declined',
+  'cancelled',
+  'canceled',
+  'verification',
+]);
+
+function timelineEntryShowsMapLink(entry) {
+  if (!entry || entry.type === 'legacy') return false;
+  if (entry.type === 'photo') return true;
+  const key = normalizeTimelineStatusKey(entry.status || entry.description);
+  if (!key) return false;
+  return TIMELINE_MAP_LINK_STATUSES.has(key);
+}
+
+function buildTimelineMapHref(task) {
+  const lat = task?.task_lat != null ? Number(task.task_lat) : NaN;
+  const lng = task?.task_lng != null ? Number(task.task_lng) : NaN;
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  return `https://www.google.com/maps?q=${lat},${lng}`;
+}
+
+function timelineHistoryBadgeLabel(entry) {
+  return (entry.status || entry.description || '').trim() || '—';
+}
+
+function timelineHistoryPrimaryText(entry) {
+  const rem = (entry.remarks || entry.reason || '').trim();
+  if (rem) return displaySanitized(rem) || rem;
+  const notes = entry.notes != null ? String(entry.notes).trim() : '';
+  if (notes) return displaySanitized(notes) || notes;
+  const by = (entry.update_by_name || entry.update_by_type || '').trim();
+  const st = (entry.status || entry.description || '').trim();
+  if (by && st) return `${by} — ${st}`;
+  if (entry.type === 'legacy' && !by) return '';
+  return st ? displaySanitized(st) || st : '';
+}
+
+function ActivityTimelineMetaCol({ task, entry, dateCreated }) {
+  const href = buildTimelineMapHref(task);
+  const showMap = timelineEntryShowsMapLink(entry) && href;
+  return (
+    <div className="activity-timeline-meta-col">
+      <div className="activity-timeline-meta-time">
+        <svg className="activity-timeline-meta-icon" width="14" height="14" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+          <circle cx="12" cy="12" r="10" />
+          <path d="M12 6v6l4 2" />
+        </svg>
+        <span>{formatActivityTimelineDateTimeShort(dateCreated)}</span>
+      </div>
+      {showMap ? (
+        <a
+          href={href}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="activity-timeline-map-link"
+        >
+          <svg className="activity-timeline-meta-icon" width="14" height="14" viewBox="0 0 24 24" aria-hidden="true" fill="currentColor">
+            <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z" />
+          </svg>
+          Location on Map
+        </a>
+      ) : null}
+    </div>
+  );
 }
 
 /** Title-case category heading for order line groups (e.g. mt_category.category_name). */
@@ -264,7 +350,17 @@ const TASK_CHANGE_STATUS_OPTIONS = [
   { value: 'cancelled', label: 'Cancelled' },
 ];
 
-export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTaskDeleted, onTaskListInvalidate, onShowDirections }) {
+export default function TaskDetailsModal({
+  taskId,
+  onClose,
+  onAssignDriver,
+  onTaskDeleted,
+  onTaskListInvalidate,
+  onShowDirections,
+  initialTab = 'details',
+}) {
+  const initialTabRef = useRef(initialTab);
+  initialTabRef.current = initialTab;
   const [data, setData] = useState(null);
   const [orderHistory, setOrderHistory] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -315,7 +411,10 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
     setOrderHistory([]);
     setOrderHistoryProofImages([]);
     setError(null);
-    setTab('details');
+    {
+      const it = initialTabRef.current;
+      setTab(it === 'timeline' || it === 'order' ? it : 'details');
+    }
     setDeleteConfirmOpen(false);
     setAssignOpen(false);
     setChangeStatusOpen(false);
@@ -724,17 +823,17 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
       photo_rows: [row],
     }));
   })();
-  /* Newest first (latest at top), same ordering as legacy PHP rider admin timeline */
+  /* Oldest first (initial order at top, successful / latest at bottom) — matches classic rider timeline */
   const combined = [...historyEntries, ...photoEntries].sort((a, b) => {
     const da = a.date_created ? new Date(a.date_created).getTime() : 0;
     const db = b.date_created ? new Date(b.date_created).getTime() : 0;
-    if (da !== db) return db - da;
+    if (da !== db) return da - db;
     const ida = typeof a.id === 'string' && a.id.startsWith('photo-') ? a.id : Number(a.id);
     const idb = typeof b.id === 'string' && b.id.startsWith('photo-') ? b.id : Number(b.id);
     if (typeof ida === 'number' && typeof idb === 'number' && !Number.isNaN(ida) && !Number.isNaN(idb)) {
-      return idb - ida;
+      return ida - idb;
     }
-    return String(b.id).localeCompare(String(a.id));
+    return String(a.id).localeCompare(String(b.id));
   });
   const timeline =
     combined.length > 0
@@ -744,7 +843,7 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
           .sort((a, b) => {
             const da = a.date_created ? new Date(a.date_created).getTime() : 0;
             const db = b.date_created ? new Date(b.date_created).getTime() : 0;
-            return db - da;
+            return da - db;
           });
   const customerName = displaySanitizedOrDash(task?.customer_name);
   const merchantName = (() => {
@@ -756,6 +855,8 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
     if (fromTask && !/^\d+$/.test(fromTask)) return displaySanitizedOrDash(fromTask);
     return '—';
   })();
+  /** Merchant pickup contact person (mt_merchant.contact_name). */
+  const merchantContactNameDisplay = displaySanitizedOrDash(merchant?.contact_name);
   const merchantAddressDisplay = (() => {
     if (merchant) {
       const line = [merchant.street, merchant.city, merchant.state, merchant.post_code]
@@ -918,7 +1019,7 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
                         </div>
                         <div className="task-detail-pickup-item">
                           <span className="task-detail-label">Name</span>
-                          <span className="task-detail-value">{customerName}</span>
+                          <span className="task-detail-value">{merchantContactNameDisplay}</span>
                         </div>
                         <div className="task-detail-pickup-item">
                           <span className="task-detail-label">Customer contact number</span>
@@ -935,20 +1036,24 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
                 {tab === 'timeline' && (
                   <div className="task-details-content">
                     <div className="task-detail-section">
-                      <div className="activity-timeline">
+                      <div className="activity-timeline activity-timeline--classic">
                         {timeline.length ? filteredTimeline.map((entry, i) => (
-                          <div key={entry.id ?? entry.stats_id ?? i} className={`activity-timeline-item ${entry.type === 'photo' ? 'activity-timeline-item-photo' : 'activity-timeline-item-history'}`}>
+                          <div
+                            key={entry.id ?? entry.stats_id ?? i}
+                            className={`activity-timeline-item ${entry.type === 'photo' ? 'activity-timeline-item-photo' : 'activity-timeline-item-history'}`}
+                          >
                             {entry.type === 'photo' ? (
                               <>
-                                <div className="activity-timeline-top">
-                                  <div className="activity-timeline-main">
+                                <div className="activity-timeline-row">
+                                  <div className="activity-timeline-badge-col">
                                     <span className="tag status-green">Proof of delivery</span>
                                   </div>
-                                  <span className="activity-timeline-time activity-timeline-time--right">{formatActivityTimelineDateTime(entry?.date_created)}</span>
+                                  <div className="activity-timeline-body-col activity-timeline-body-col--photo" aria-hidden="true" />
+                                  <ActivityTimelineMetaCol task={task} entry={entry} dateCreated={entry?.date_created} />
                                 </div>
                                 {entry.urls?.length > 0 ? (
                                   <div
-                                    className={`activity-timeline-proof-grid ${entry.urls.length === 1 ? 'activity-timeline-proof-grid--single' : ''}`}
+                                    className={`activity-timeline-item-extra activity-timeline-proof-grid ${entry.urls.length === 1 ? 'activity-timeline-proof-grid--single' : ''}`}
                                   >
                                     {entry.urls.map((url, idx) => (
                                       <ProofTimelineThumb
@@ -960,31 +1065,39 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
                                     ))}
                                   </div>
                                 ) : (
-                                  entry.photo_rows?.map((row) => (
-                                    <TaskPhotoImage key={row.id} photoId={row.id} photoName={row.photo_name} />
-                                  ))
+                                  <div className="activity-timeline-item-extra">
+                                    {entry.photo_rows?.map((row) => (
+                                      <TaskPhotoImage key={row.id} photoId={row.id} photoName={row.photo_name} />
+                                    ))}
+                                  </div>
                                 )}
                               </>
                             ) : (
                               <>
-                                <div className="activity-timeline-top">
-                                  <div className="activity-timeline-main">
-                                    <span className={`tag ${statusDisplayClass(entry?.status ?? entry?.description)}`}>{entry?.status ?? entry?.description ?? '—'}</span>
-                                    {(entry?.update_by_name || entry?.update_by_type) && (
-                                      <span className="activity-timeline-by">by {entry.update_by_name || entry.update_by_type || '—'}</span>
-                                    )}
-                                    {(entry?.remarks || entry?.reason) && (
-                                      <div className="activity-timeline-remarks">{displaySanitized(entry.remarks || entry.reason) || entry.remarks || entry.reason}</div>
-                                    )}
-                                    {entry?.notes && (
-                                      <div className="activity-timeline-notes">{displaySanitized(entry.notes) || entry.notes}</div>
-                                    )}
+                                <div className="activity-timeline-row">
+                                  <div className="activity-timeline-badge-col">
+                                    <span className={`tag ${statusDisplayClass(entry?.status ?? entry?.description)}`}>
+                                      {timelineHistoryBadgeLabel(entry)}
+                                    </span>
                                   </div>
-                                  <span className="activity-timeline-time activity-timeline-time--right">{formatActivityTimelineDateTime(entry?.date_created)}</span>
+                                  <div className="activity-timeline-body-col">
+                                    {(() => {
+                                      const primary = timelineHistoryPrimaryText(entry);
+                                      if (primary) {
+                                        return <div className="activity-timeline-primary">{primary}</div>;
+                                      }
+                                      const by = (entry.update_by_name || entry.update_by_type || '').trim();
+                                      if (by) {
+                                        return <span className="activity-timeline-by">by {by}</span>;
+                                      }
+                                      return null;
+                                    })()}
+                                  </div>
+                                  <ActivityTimelineMetaCol task={task} entry={entry} dateCreated={entry?.date_created} />
                                 </div>
                                 {proofHistoryAttachEntry === entry && proofImages.length > 0 && (
                                   <div
-                                    className={`activity-timeline-proof-grid activity-timeline-proof-grid--embedded ${proofImages.length === 1 ? 'activity-timeline-proof-grid--single' : ''}`}
+                                    className={`activity-timeline-item-extra activity-timeline-proof-grid activity-timeline-proof-grid--embedded ${proofImages.length === 1 ? 'activity-timeline-proof-grid--single' : ''}`}
                                   >
                                     {proofImages.map((url, idx) => (
                                       <ProofTimelineThumb

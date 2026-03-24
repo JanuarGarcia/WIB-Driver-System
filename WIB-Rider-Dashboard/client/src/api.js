@@ -48,6 +48,18 @@ export function formatActivityTimelineDateTime(d) {
   return `${datePart}, ${timePart}`;
 }
 
+/** Compact timeline time (legacy rider UI style): "Mar 24, 26 8:56 am". */
+export function formatActivityTimelineDateTimeShort(d) {
+  if (!d) return '—';
+  const dt = new Date(d);
+  if (isNaN(dt.getTime())) return String(d);
+  const mon = dt.toLocaleDateString('en-US', { month: 'short' });
+  const day = dt.getDate();
+  const yy = String(dt.getFullYear()).slice(-2);
+  const timePart = dt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }).toLowerCase();
+  return `${mon}-${day}-${yy} ${timePart}`;
+}
+
 /** Status class for tags - matches WIB Driver app order/colors */
 export function statusClass(s) {
   if (!s) return 'status-default';
