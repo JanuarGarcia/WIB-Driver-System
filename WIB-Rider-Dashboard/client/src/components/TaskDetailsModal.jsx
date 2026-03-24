@@ -921,8 +921,8 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
                           <span className="task-detail-value">{customerName}</span>
                         </div>
                         <div className="task-detail-pickup-item">
-                          <span className="task-detail-label">Contact number</span>
-                          <span className="task-detail-value">{task.contact_number ?? '—'}</span>
+                          <span className="task-detail-label">Customer contact number</span>
+                          <span className="task-detail-value">{task.contact_number ?? order?.contact_number ?? '—'}</span>
                         </div>
                         <div className="task-detail-pickup-item task-detail-pickup-address">
                           <span className="task-detail-label">Address</span>
@@ -1010,8 +1010,8 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
                   <div className="task-details-content order-details-panel order-details-panel--ref">
                     <div className="order-details-quick-row">
                       <div className="order-details-quick-cell">
-                        <span className="order-details-quick-label">CONTACT NUMBER</span>
-                        <span className="order-details-quick-value">{task.contact_number ?? '—'}</span>
+                        <span className="order-details-quick-label">CUSTOMER CONTACT NUMBER</span>
+                        <span className="order-details-quick-value">{task.contact_number ?? order?.contact_number ?? '—'}</span>
                       </div>
                       <div className="order-details-quick-cell order-details-quick-cell--end">
                         <span className="order-details-quick-label">CHANGE</span>
@@ -1022,11 +1022,15 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
                     </div>
                     <div className="task-detail-section">
                       <div className="task-detail-section-title">Customer & merchant</div>
-                      <div className="task-detail-section-row">
-                        <div className="task-detail-row"><span className="task-detail-label">Customer name</span><span className="task-detail-value">{customerName}</span></div>
-                        <div className="task-detail-row"><span className="task-detail-label">Merchant name</span><span className="task-detail-value">{merchantName}</span></div>
-                        <div className="task-detail-row"><span className="task-detail-label">Telephone</span><span className="task-detail-value">{merchant?.restaurant_phone ?? '—'}</span></div>
-                        <div className="task-detail-row"><span className="task-detail-label">Address</span><span className="task-detail-value">{merchantAddressDisplay}</span></div>
+                      <div className="task-detail-section-split">
+                        <div className="task-detail-col">
+                          <div className="task-detail-row"><span className="task-detail-label">Customer name</span><span className="task-detail-value">{customerName}</span></div>
+                        </div>
+                        <div className="task-detail-col">
+                          <div className="task-detail-row"><span className="task-detail-label">Merchant name</span><span className="task-detail-value">{merchantName}</span></div>
+                          <div className="task-detail-row"><span className="task-detail-label">Merchant contact number</span><span className="task-detail-value">{merchant?.restaurant_phone ?? '—'}</span></div>
+                          <div className="task-detail-row"><span className="task-detail-label">Address</span><span className="task-detail-value">{merchantAddressDisplay}</span></div>
+                        </div>
                       </div>
                     </div>
                     <div className="task-detail-section">
@@ -1463,7 +1467,7 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
                 </div>
                 <div className="new-task-row">
                   <div className="new-task-field">
-                    <label className="new-task-label" htmlFor="edit-contact-number">Contact number</label>
+                    <label className="new-task-label" htmlFor="edit-contact-number">Customer contact number</label>
                     <div className="new-task-contact-wrap">
                       <CountryCodeDropdown
                         value={editContactCountryCode}
