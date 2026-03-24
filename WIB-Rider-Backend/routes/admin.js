@@ -1437,7 +1437,7 @@ router.get('/tasks/:id', async (req, res) => {
   if (orderId) {
     try {
       const [addrRows] = await pool.query(
-        'SELECT location_name, google_lat, google_lng FROM mt_order_delivery_address WHERE order_id = ? ORDER BY id DESC LIMIT 1',
+        'SELECT location_name, google_lat, google_lng, street, city, state, zipcode, country, formatted_address FROM mt_order_delivery_address WHERE order_id = ? ORDER BY id DESC LIMIT 1',
         [orderId]
       );
       if (addrRows && addrRows.length) {
