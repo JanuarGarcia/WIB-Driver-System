@@ -430,8 +430,26 @@ async function upsertGlobalSettingKey(strValue, key) {
   }
 }
 
-// ---- Global dashboard map merchant filter (all admins, all devices) ----
-router.get('/settings/map-merchant-filter', async (req, res) => {
+// ---- Settings (General) - merge `settings` + `mt_option` (`settings` wins on duplicate keys) ----
+async function getSettingsMap() {
+  let fromOption = {};
+  try {
+    const [rows] = await pool.query('SELECT option_name AS `key`, option_value AS value FROM mt_option');
+    if (rows && rows.length > 0) {
+      fromOption = Object.fromEntries(rows.map((r) => [r.key, r.value]));
+    }
+  } catch (_) {}
+  try {
+    const [rows] = await pool.query('SELECT `key`, value FROM settings');
+    if (rows && rows.length > 0) {
+      const fromSettings = Object.fromEntries(rows.map((r) => [r.key, r.value]));
+      return { ...fromOption, ...fromSettings };
+    }
+  } catch (_) {}
+  return fromOption;
+}
+
+async function handleGetDashboardMapMerchantFilter(_req, res) {
   try {
     const map = await getSettingsMap();
     const raw = map[DASHBOARD_MAP_MERCHANT_FILTER_KEY];
@@ -449,9 +467,9 @@ router.get('/settings/map-merchant-filter', async (req, res) => {
   } catch (e) {
     return res.status(500).json({ error: e.message || 'Failed to load map merchant filter' });
   }
-});
+}
 
-router.put('/settings/map-merchant-filter', async (req, res) => {
+async function handlePutDashboardMapMerchantFilter(req, res) {
   const raw = req.body?.merchant_ids;
   if (!Array.isArray(raw)) {
     return res.status(400).json({ error: 'merchant_ids must be an array' });
@@ -464,23 +482,14 @@ router.put('/settings/map-merchant-filter', async (req, res) => {
   } catch (e) {
     return res.status(500).json({ error: e.message || 'Failed to save map merchant filter' });
   }
-});
-
-// ---- Settings (General) - uses `settings` table (key, value) from init-db; fallback to mt_option if present ----
-async function getSettingsMap() {
-  try {
-    const [rows] = await pool.query('SELECT `key`, value FROM settings');
-    if (rows && rows.length > 0) return Object.fromEntries(rows.map((r) => [r.key, r.value]));
-  } catch (e) {
-    // ignore if settings table missing
-  }
-  try {
-    const [rows] = await pool.query('SELECT option_name AS `key`, option_value AS value FROM mt_option');
-    return Object.fromEntries(rows.map((r) => [r.key, r.value]));
-  } catch (e) {
-    return {};
-  }
 }
+
+// ---- Global dashboard map merchant filter (all admins, all devices) ----
+router.get('/settings/map-merchant-filter', handleGetDashboardMapMerchantFilter);
+router.put('/settings/map-merchant-filter', handlePutDashboardMapMerchantFilter);
+/** Same handler — older dashboard bundles may call this path. */
+router.get('/user-preferences/map-merchant-filter', handleGetDashboardMapMerchantFilter);
+router.put('/user-preferences/map-merchant-filter', handlePutDashboardMapMerchantFilter);
 
 router.get('/settings', async (req, res) => {
   try {

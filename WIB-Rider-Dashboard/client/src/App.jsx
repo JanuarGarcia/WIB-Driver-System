@@ -2,7 +2,10 @@ import { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { Routes, Route, useNavigate, useLocation, Navigate } from 'react-router-dom';
 import { isAuthenticated } from './auth';
-import { hydrateMapMerchantFilterFromServer } from './utils/mapMerchantFilterPrefs';
+import {
+  hydrateMapMerchantFilterFromServer,
+  setupMapMerchantFilterServerListeners,
+} from './utils/mapMerchantFilterPrefs';
 import { TeamFilterProvider } from './context/TeamFilterContext';
 import Sidebar from './components/Sidebar';
 import MainHeader from './components/MainHeader';
@@ -28,6 +31,12 @@ import Merchants from './pages/Merchants';
 function MapMerchantFilterServerSync() {
   useEffect(() => {
     hydrateMapMerchantFilterFromServer();
+    const retry = setTimeout(() => hydrateMapMerchantFilterFromServer(), 2000);
+    const removeListeners = setupMapMerchantFilterServerListeners();
+    return () => {
+      clearTimeout(retry);
+      removeListeners();
+    };
   }, []);
   return null;
 }

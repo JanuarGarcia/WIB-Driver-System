@@ -7,6 +7,7 @@ import MapView from '../components/MapView';
 import MapErrorBoundary from '../components/MapErrorBoundary';
 import AgentPanel from '../components/AgentPanel';
 import { useMapMerchantFilterSelection } from '../components/MapMerchantFilter';
+import { hydrateMapMerchantFilterFromServer } from '../utils/mapMerchantFilterPrefs';
 import { api } from '../api';
 import { useTeamFilter } from '../context/TeamFilterContext';
 import {
@@ -186,6 +187,10 @@ export default function Dashboard() {
 
   useEffect(() => {
     refreshMapSettings();
+  }, []);
+
+  useEffect(() => {
+    hydrateMapMerchantFilterFromServer();
   }, []);
 
   useEffect(() => {

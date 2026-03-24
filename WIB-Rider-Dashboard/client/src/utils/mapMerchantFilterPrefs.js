@@ -5,6 +5,8 @@ export const MAP_MERCHANT_FILTER_STORAGE_KEY = 'wib-map-merchant-filter-ids';
 
 const FILTER_CHANGED = 'wib-map-merchant-filter-changed';
 
+const HYDRATE_PATHS = ['settings/map-merchant-filter', 'user-preferences/map-merchant-filter'];
+
 /** Read raw JSON array from localStorage; one-time migrate from legacy sessionStorage. */
 function readMerchantFilterRaw() {
   try {
@@ -40,10 +42,9 @@ function persistMapMerchantFilterToServer(ids) {
   if (!getToken()) return;
   clearTimeout(persistTimer);
   persistTimer = setTimeout(() => {
-    api('settings/map-merchant-filter', {
-      method: 'PUT',
-      body: JSON.stringify({ merchant_ids: ids }),
-    }).catch(() => {});
+    const body = JSON.stringify({ merchant_ids: ids });
+    api('settings/map-merchant-filter', { method: 'PUT', body })
+      .catch(() => api('user-preferences/map-merchant-filter', { method: 'PUT', body }).catch(() => {}));
   }, 450);
 }
 
@@ -64,17 +65,42 @@ export function saveMapMerchantFilterToSession(ids, opts = {}) {
   } catch (_) {}
 }
 
-/** Load global merchant filter from server (any admin; overwrites local when the server has a value). */
+/** Load global merchant filter from API (shared for all admins). Tries both URL paths for older servers/bundles. */
 export async function hydrateMapMerchantFilterFromServer() {
   if (!getToken()) return;
-  try {
-    const data = await api('settings/map-merchant-filter');
-    if (data && Array.isArray(data.merchant_ids)) {
-      saveMapMerchantFilterToSession(data.merchant_ids, { skipServerPut: true });
+  for (const path of HYDRATE_PATHS) {
+    try {
+      const data = await api(path);
+      if (data && Array.isArray(data.merchant_ids)) {
+        saveMapMerchantFilterToSession(data.merchant_ids, { skipServerPut: true });
+        return;
+      }
+      if (data && data.merchant_ids === null) return;
+    } catch {
+      /* try next path */
     }
-  } catch (_) {
-    /* offline — keep local cache */
   }
+}
+
+let hydrateDebounce = null;
+
+/** Re-fetch filter when the user returns to the tab / window (fixes missed first load or stale cache). */
+export function setupMapMerchantFilterServerListeners() {
+  const schedule = () => {
+    if (!getToken()) return;
+    clearTimeout(hydrateDebounce);
+    hydrateDebounce = setTimeout(() => hydrateMapMerchantFilterFromServer(), 280);
+  };
+  const onVis = () => {
+    if (document.visibilityState === 'visible') schedule();
+  };
+  window.addEventListener('focus', schedule);
+  document.addEventListener('visibilitychange', onVis);
+  return () => {
+    clearTimeout(hydrateDebounce);
+    window.removeEventListener('focus', schedule);
+    document.removeEventListener('visibilitychange', onVis);
+  };
 }
 
 export { FILTER_CHANGED };
