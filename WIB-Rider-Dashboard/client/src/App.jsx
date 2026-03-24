@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { Routes, Route, useNavigate, useLocation, Navigate } from 'react-router-dom';
 import { isAuthenticated } from './auth';
+import { hydrateMapMerchantFilterFromServer } from './utils/mapMerchantFilterPrefs';
 import { TeamFilterProvider } from './context/TeamFilterContext';
 import Sidebar from './components/Sidebar';
 import MainHeader from './components/MainHeader';
@@ -23,6 +24,13 @@ import SmsLogs from './pages/SmsLogs';
 import EmailLogs from './pages/EmailLogs';
 import MapApiLogs from './pages/MapApiLogs';
 import Merchants from './pages/Merchants';
+
+function MapMerchantFilterServerSync() {
+  useEffect(() => {
+    hydrateMapMerchantFilterFromServer();
+  }, []);
+  return null;
+}
 
 export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -58,6 +66,7 @@ export default function App() {
       <Sidebar isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} />
       <div className="main-wrap">
         <TeamFilterProvider>
+          <MapMerchantFilterServerSync />
           <MainHeader onMenuClick={() => setSidebarOpen(true)} onOpenNewTask={() => setShowNewTaskModal(true)} />
           <main className="main">
           {showNewTaskModal &&

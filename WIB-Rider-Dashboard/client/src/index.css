@@ -1888,7 +1888,7 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
   flex-direction: column;
 }
 
-/* Merchant filter (Settings → Map settings; session-only, drives dashboard map) */
+/* Merchant filter (Settings → Map settings; shared for all admins + local cache, drives dashboard map) */
 .map-merchant-filter {
   padding: 0.65rem 0.75rem;
   background: var(--bg-page);

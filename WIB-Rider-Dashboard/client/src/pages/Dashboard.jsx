@@ -123,7 +123,8 @@ export default function Dashboard() {
     const allowed = new Set(selectedMapMerchantIds.map(String));
     return locationsForMapActiveRiders.filter((loc) => {
       const mid = loc.active_merchant_id;
-      if (mid == null || mid === '') return false;
+      /* Riders with no in-progress task (active_merchant_id null) stay visible; only hide when busy for a merchant outside the filter. */
+      if (mid == null || mid === '') return true;
       return allowed.has(String(mid));
     });
   }, [locationsForMapActiveRiders, selectedMapMerchantIds]);

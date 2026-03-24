@@ -406,6 +406,66 @@ router.get('/auth/me', requireDashboardToken, (req, res) => {
 
 router.use(adminAuth);
 
+/** Shared by all dashboard admins — stored in `settings` or `mt_option` like other site options. */
+const DASHBOARD_MAP_MERCHANT_FILTER_KEY = 'dashboard_map_merchant_filter_ids';
+
+async function upsertGlobalSettingKey(strValue, key) {
+  const v = strValue === null || strValue === undefined ? '' : String(strValue);
+  try {
+    const [existing] = await pool.query('SELECT 1 FROM settings WHERE `key` = ? LIMIT 1', [key]);
+    if (existing.length) {
+      await pool.query('UPDATE settings SET value = ? WHERE `key` = ?', [v, key]);
+    } else {
+      await pool.query('INSERT INTO settings (`key`, value) VALUES (?, ?)', [key, v]);
+    }
+  } catch (tableErr) {
+    if (tableErr.code === 'ER_NO_SUCH_TABLE' || String(tableErr.message || '').includes('settings')) {
+      const [existing] = await pool.query('SELECT 1 FROM mt_option WHERE option_name = ? LIMIT 1', [key]);
+      if (existing.length) {
+        await pool.query('UPDATE mt_option SET option_value = ? WHERE option_name = ?', [v, key]);
+      } else {
+        await pool.query('INSERT INTO mt_option (merchant_id, option_name, option_value) VALUES (0, ?, ?)', [key, v]);
+      }
+    } else throw tableErr;
+  }
+}
+
+// ---- Global dashboard map merchant filter (all admins, all devices) ----
+router.get('/settings/map-merchant-filter', async (req, res) => {
+  try {
+    const map = await getSettingsMap();
+    const raw = map[DASHBOARD_MAP_MERCHANT_FILTER_KEY];
+    if (raw == null || String(raw).trim() === '') {
+      return res.json({ merchant_ids: null });
+    }
+    let parsed;
+    try {
+      parsed = JSON.parse(raw);
+    } catch (_) {
+      return res.json({ merchant_ids: null });
+    }
+    const out = Array.isArray(parsed) ? parsed.map((x) => String(x)).filter(Boolean) : [];
+    return res.json({ merchant_ids: out });
+  } catch (e) {
+    return res.status(500).json({ error: e.message || 'Failed to load map merchant filter' });
+  }
+});
+
+router.put('/settings/map-merchant-filter', async (req, res) => {
+  const raw = req.body?.merchant_ids;
+  if (!Array.isArray(raw)) {
+    return res.status(400).json({ error: 'merchant_ids must be an array' });
+  }
+  const normalized = raw.map((x) => String(x).trim()).filter(Boolean);
+  const jsonStr = JSON.stringify(normalized);
+  try {
+    await upsertGlobalSettingKey(jsonStr, DASHBOARD_MAP_MERCHANT_FILTER_KEY);
+    return res.json({ ok: true, merchant_ids: normalized });
+  } catch (e) {
+    return res.status(500).json({ error: e.message || 'Failed to save map merchant filter' });
+  }
+});
+
 // ---- Settings (General) - uses `settings` table (key, value) from init-db; fallback to mt_option if present ----
 async function getSettingsMap() {
   try {

@@ -1025,7 +1025,7 @@ export default function TaskDetailsModal({ taskId, onClose, onAssignDriver, onTa
                       <div className="task-detail-section-split">
                         <div className="task-detail-col">
                           <div className="task-detail-row"><span className="task-detail-label">Customer name</span><span className="task-detail-value">{customerName}</span></div>
-                          <div className="task-detail-row"><span className="task-detail-label">Telephone</span><span className="task-detail-value">{merchant?.restaurant_phone ?? '—'}</span></div>
+                          <div className="task-detail-row"><span className="task-detail-label">Merchant Telephone</span><span className="task-detail-value">{merchant?.restaurant_phone ?? '—'}</span></div>
                         </div>
                         <div className="task-detail-col">
                           <div className="task-detail-row"><span className="task-detail-label">Merchant name</span><span className="task-detail-value">{merchantName}</span></div>

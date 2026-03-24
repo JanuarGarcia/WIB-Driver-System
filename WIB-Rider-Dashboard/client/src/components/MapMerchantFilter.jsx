@@ -1,50 +1,13 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { sanitizeMerchantDisplayName } from '../utils/displayText';
+import {
+  MAP_MERCHANT_FILTER_STORAGE_KEY,
+  FILTER_CHANGED,
+  loadMapMerchantFilterFromSession,
+  saveMapMerchantFilterToSession,
+} from '../utils/mapMerchantFilterPrefs';
 
-export const MAP_MERCHANT_FILTER_STORAGE_KEY = 'wib-map-merchant-filter-ids';
-
-/** Read raw JSON array from localStorage; one-time migrate from legacy sessionStorage. */
-function readMerchantFilterRaw() {
-  try {
-    let raw = localStorage.getItem(MAP_MERCHANT_FILTER_STORAGE_KEY);
-    if (raw == null || raw === '') {
-      const legacy = sessionStorage.getItem(MAP_MERCHANT_FILTER_STORAGE_KEY);
-      if (legacy) {
-        localStorage.setItem(MAP_MERCHANT_FILTER_STORAGE_KEY, legacy);
-        sessionStorage.removeItem(MAP_MERCHANT_FILTER_STORAGE_KEY);
-        raw = legacy;
-      }
-    }
-    return raw;
-  } catch (_) {
-    return null;
-  }
-}
-
-export function loadMapMerchantFilterFromSession() {
-  try {
-    const raw = readMerchantFilterRaw();
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed.map((x) => String(x)).filter(Boolean) : [];
-  } catch (_) {
-    return [];
-  }
-}
-
-const FILTER_CHANGED = 'wib-map-merchant-filter-changed';
-
-export function saveMapMerchantFilterToSession(ids) {
-  const normalized = Array.isArray(ids) ? ids.map((x) => String(x)).filter(Boolean) : [];
-  try {
-    if (normalized.length === 0) localStorage.removeItem(MAP_MERCHANT_FILTER_STORAGE_KEY);
-    else localStorage.setItem(MAP_MERCHANT_FILTER_STORAGE_KEY, JSON.stringify(normalized));
-    sessionStorage.removeItem(MAP_MERCHANT_FILTER_STORAGE_KEY);
-  } catch (_) {}
-  try {
-    window.dispatchEvent(new CustomEvent(FILTER_CHANGED, { detail: { ids: normalized } }));
-  } catch (_) {}
-}
+export { MAP_MERCHANT_FILTER_STORAGE_KEY } from '../utils/mapMerchantFilterPrefs';
 
 /** Subscribe to dashboard map merchant filter (localStorage + cross-tab). */
 export function useMapMerchantFilterSelection() {
@@ -53,7 +16,7 @@ export function useMapMerchantFilterSelection() {
     const sync = () => setIds(loadMapMerchantFilterFromSession());
     window.addEventListener(FILTER_CHANGED, sync);
     const onStorage = (e) => {
-      if (e.key === MAP_MERCHANT_FILTER_STORAGE_KEY) sync();
+      if (e.key && e.key.startsWith(MAP_MERCHANT_FILTER_STORAGE_KEY)) sync();
     };
     window.addEventListener('storage', onStorage);
     return () => {
@@ -75,11 +38,10 @@ function merchantLabel(m) {
 }
 
 /**
- * Chips + searchable multi-select. Persists to localStorage (survives closing the browser); dashboard reads via `useMapMerchantFilterSelection`.
+ * Chips + searchable multi-select. Persists globally for all admins (server) plus local cache.
  * @param {{ options: Array<{ merchant_id?: number, id?: number, restaurant_name?: string }>, className?: string }} props
  */
 function refocusSearchInput(inputRef) {
-  /* After picking a row, layout can shift (new tags) and mouseup lands outside the input — refocus after paint. */
   requestAnimationFrame(() => {
     requestAnimationFrame(() => {
       const el = inputRef.current;
@@ -89,24 +51,11 @@ function refocusSearchInput(inputRef) {
 }
 
 export default function MapMerchantFilter({ options = [], className = '' }) {
-  const [selectedIds, setSelectedIds] = useState(loadMapMerchantFilterFromSession);
+  const selectedIds = useMapMerchantFilterSelection();
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
   const containerRef = useRef(null);
   const inputRef = useRef(null);
-
-  useEffect(() => {
-    const sync = () => setSelectedIds(loadMapMerchantFilterFromSession());
-    const onStorage = (e) => {
-      if (e.key === MAP_MERCHANT_FILTER_STORAGE_KEY) sync();
-    };
-    window.addEventListener(FILTER_CHANGED, sync);
-    window.addEventListener('storage', onStorage);
-    return () => {
-      window.removeEventListener(FILTER_CHANGED, sync);
-      window.removeEventListener('storage', onStorage);
-    };
-  }, []);
 
   const selectedSet = useMemo(() => new Set((selectedIds || []).map((x) => String(x))), [selectedIds]);
 
@@ -148,7 +97,6 @@ export default function MapMerchantFilter({ options = [], className = '' }) {
       const s = String(id).trim();
       if (!s || selectedSet.has(s)) return;
       const next = [...selectedIds, s];
-      setSelectedIds(next);
       saveMapMerchantFilterToSession(next);
       setQuery('');
       setOpen(false);
@@ -161,7 +109,6 @@ export default function MapMerchantFilter({ options = [], className = '' }) {
     (id) => {
       const s = String(id);
       const next = selectedIds.filter((x) => String(x) !== s);
-      setSelectedIds(next);
       saveMapMerchantFilterToSession(next);
       refocusSearchInput(inputRef);
     },
@@ -169,7 +116,6 @@ export default function MapMerchantFilter({ options = [], className = '' }) {
   );
 
   const clearAll = useCallback(() => {
-    setSelectedIds([]);
     saveMapMerchantFilterToSession([]);
     setQuery('');
     setOpen(false);
