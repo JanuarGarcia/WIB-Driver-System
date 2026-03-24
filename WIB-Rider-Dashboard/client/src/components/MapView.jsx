@@ -131,42 +131,27 @@ const BAGUIO_VIEW = { longitude: 120.596, latitude: 16.4023, zoom: 13 };
 const MAP_STYLE = { width: '100%', height: '100%', minHeight: 400 };
 /** Metro framing for a lone pin (matches typical Baguio dashboard load). */
 const DASHBOARD_SINGLE_MARKER_ZOOM = 14;
-const FIT_BOUNDS_PADDING_PX = 52;
+const FIT_BOUNDS_PADDING_PX = 64;
 
-function markerEnvelopeFromPoints(points) {
-  if (!points.length) return null;
-  const lats = points.map((p) => p[0]);
-  const lngs = points.map((p) => p[1]);
-  return {
-    minLat: Math.min(...lats),
-    maxLat: Math.max(...lats),
-    minLng: Math.min(...lngs),
-    maxLng: Math.max(...lngs),
-  };
+/**
+ * Fingerprint of all pin coordinates. Any added/removed/moved marker changes the string.
+ * (Bounding-box–only checks miss refits when the hull grows in a way still “inside” the old box
+ * after a partial first load — e.g. tasks first, then distant riders.)
+ */
+function pointsSignatureFromLatLngArrays(points) {
+  if (!points.length) return '';
+  const sorted = [...points].sort((a, b) => {
+    const d = a[0] - b[0];
+    if (d !== 0) return d;
+    return a[1] - b[1];
+  });
+  return sorted.map(([la, ln]) => `${Number(la).toFixed(5)},${Number(ln).toFixed(5)}`).join(';');
 }
 
-function markerEnvelopeFromLatLngObjs(pts) {
-  if (!pts.length) return null;
-  const lats = pts.map((p) => Number(p.lat));
-  const lngs = pts.map((p) => Number(p.lng));
-  return {
-    minLat: Math.min(...lats),
-    maxLat: Math.max(...lats),
-    minLng: Math.min(...lngs),
-    maxLng: Math.max(...lngs),
-  };
-}
-
-/** True if outer's axis-aligned box fully contains inner's (float-tolerant). */
-function envelopeContainsOuter(outer, inner) {
-  if (!outer || !inner) return false;
-  const ε = 1e-5;
-  return (
-    outer.minLat <= inner.minLat + ε &&
-    outer.maxLat + ε >= inner.maxLat &&
-    outer.minLng <= inner.minLng + ε &&
-    outer.maxLng + ε >= inner.maxLng
-  );
+function pointsSignatureFromLatLngObjs(pts) {
+  if (!pts.length) return '';
+  const pairs = pts.map((p) => [Number(p.lat), Number(p.lng)]);
+  return pointsSignatureFromLatLngArrays(pairs);
 }
 
 function merchantMapTitle(restaurantName) {
@@ -323,27 +308,26 @@ function LeafletFitBounds({ locations, merchants, taskMarkers, disabled, mapResi
     });
     return out;
   }, [locations, merchants, taskMarkers, disabled]);
-  const prevEnvelopeRef = useRef(null);
+  const pointsSig = useMemo(() => pointsSignatureFromLatLngArrays(points), [points]);
+  const lastPointsSigRef = useRef('');
   const lastResizeTriggerRef = useRef(mapResizeTrigger);
 
   useEffect(() => {
     if (disabled) {
-      prevEnvelopeRef.current = null;
+      lastPointsSigRef.current = '';
       return;
     }
     if (points.length === 0) {
-      prevEnvelopeRef.current = null;
+      lastPointsSigRef.current = '';
       return;
     }
 
-    const env = markerEnvelopeFromPoints(points);
     const resizeBump = mapResizeTrigger !== lastResizeTriggerRef.current;
     lastResizeTriggerRef.current = mapResizeTrigger;
-    const prev = prevEnvelopeRef.current;
-    const shouldFit = resizeBump || prev == null || !envelopeContainsOuter(prev, env);
-    if (!shouldFit) return;
+    const markersChanged = pointsSig !== lastPointsSigRef.current;
+    if (!resizeBump && !markersChanged) return;
 
-    const animate = prev != null && !resizeBump;
+    const animate = lastPointsSigRef.current !== '' && !resizeBump;
 
     const run = () => {
       try {
@@ -357,18 +341,14 @@ function LeafletFitBounds({ locations, merchants, taskMarkers, disabled, mapResi
             animate,
           });
         }
-        prevEnvelopeRef.current = env;
+        lastPointsSigRef.current = pointsSig;
       } catch (_) {}
     };
 
-    if (resizeBump) {
-      requestAnimationFrame(() => {
-        requestAnimationFrame(run);
-      });
-    } else {
-      run();
-    }
-  }, [map, points, disabled, mapResizeTrigger]);
+    requestAnimationFrame(() => {
+      requestAnimationFrame(run);
+    });
+  }, [map, points, pointsSig, disabled, mapResizeTrigger]);
   return null;
 }
 
@@ -654,10 +634,11 @@ function GoogleMapResizeSync({ resizeTrigger = 0 }) {
   return null;
 }
 
-/** Dashboard-style auto framing: fit all pins on load; re-fit when the marker hull grows (new distant task/rider). */
+/** Dashboard-style auto framing: fit all pins on load; re-fit when the marker set changes (coordinates). */
 function GoogleMapAutoFit({ points, mapResizeTrigger = 0, onViewCommitted }) {
   const map = useGoogleMap();
-  const prevEnvelopeRef = useRef(null);
+  const pointsSig = useMemo(() => pointsSignatureFromLatLngObjs(points), [points]);
+  const lastPointsSigRef = useRef('');
   const lastResizeTriggerRef = useRef(mapResizeTrigger);
   const onCommittedRef = useRef(onViewCommitted);
   onCommittedRef.current = onViewCommitted;
@@ -665,16 +646,14 @@ function GoogleMapAutoFit({ points, mapResizeTrigger = 0, onViewCommitted }) {
   useEffect(() => {
     if (!map || typeof window === 'undefined' || !window.google?.maps) return;
     if (points.length === 0) {
-      prevEnvelopeRef.current = null;
+      lastPointsSigRef.current = '';
       return;
     }
 
-    const env = markerEnvelopeFromLatLngObjs(points);
     const resizeBump = mapResizeTrigger !== lastResizeTriggerRef.current;
     lastResizeTriggerRef.current = mapResizeTrigger;
-    const prev = prevEnvelopeRef.current;
-    const shouldFit = resizeBump || prev == null || !envelopeContainsOuter(prev, env);
-    if (!shouldFit) return;
+    const markersChanged = pointsSig !== lastPointsSigRef.current;
+    if (!resizeBump && !markersChanged) return;
 
     const run = () => {
       try {
@@ -693,20 +672,16 @@ function GoogleMapAutoFit({ points, mapResizeTrigger = 0, onViewCommitted }) {
           const z = map.getZoom();
           if (typeof z === 'number' && z > 15) map.setZoom(15);
         }
-        prevEnvelopeRef.current = env;
+        lastPointsSigRef.current = pointsSig;
         const c = map.getCenter();
         onCommittedRef.current?.({ lat: c.lat(), lng: c.lng() }, map.getZoom());
       } catch (_) {}
     };
 
-    if (resizeBump) {
-      requestAnimationFrame(() => {
-        requestAnimationFrame(run);
-      });
-    } else {
-      run();
-    }
-  }, [map, points, mapResizeTrigger]);
+    requestAnimationFrame(() => {
+      requestAnimationFrame(run);
+    });
+  }, [map, points, pointsSig, mapResizeTrigger]);
 
   return null;
 }

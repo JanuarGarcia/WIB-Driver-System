@@ -57,7 +57,7 @@ export default function Dashboard() {
   const [googleMapStyle, setGoogleMapStyle] = useState('');
   const [tasksMapDateStr, setTasksMapDateStr] = useState(() => readDashboardTasksMapDateFromStorage() || todayDateStrLocal());
   const [rawMapTasks, setRawMapTasks] = useState([]);
-  /** null = not loaded yet; map shows no rider pins until set. Matches Agent panel "Active" tab roster. */
+  /** null = agent roster still loading (map shows all rider GPS pins); then filtered to Active panel roster. */
   const [activePanelDriverIdSet, setActivePanelDriverIdSet] = useState(null);
 
   const driversLocationsUrl = selectedTeamId
@@ -65,16 +65,30 @@ export default function Dashboard() {
     : 'drivers/locations';
 
   useEffect(() => {
-    api(driversLocationsUrl)
-      .then(setLocations)
-      .catch(() => setLocations([]));
-  }, [driversLocationsUrl]);
-
-  useEffect(() => {
-    api('merchants/locations')
-      .then(setMerchants)
-      .catch(() => setMerchants([]));
-  }, []);
+    let cancelled = false;
+    (async () => {
+      try {
+        const [loc, mer, taskList] = await Promise.all([
+          api(driversLocationsUrl).catch(() => []),
+          api('merchants/locations').catch(() => []),
+          api(`tasks?date=${encodeURIComponent(tasksMapDateStr)}`).catch(() => []),
+        ]);
+        if (cancelled) return;
+        setLocations(Array.isArray(loc) ? loc : []);
+        setMerchants(Array.isArray(mer) ? mer : []);
+        setRawMapTasks(Array.isArray(taskList) ? taskList : []);
+      } catch {
+        if (!cancelled) {
+          setLocations([]);
+          setMerchants([]);
+          setRawMapTasks([]);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [driversLocationsUrl, tasksMapDateStr, taskListRevision]);
 
   const refreshActivePanelDriverIds = useCallback(async () => {
     const params = new URLSearchParams();
@@ -159,12 +173,6 @@ export default function Dashboard() {
     window.addEventListener(DASHBOARD_TASKS_MAP_DATE_EVENT, sync);
     return () => window.removeEventListener(DASHBOARD_TASKS_MAP_DATE_EVENT, sync);
   }, []);
-
-  useEffect(() => {
-    api(`tasks?date=${encodeURIComponent(tasksMapDateStr)}`)
-      .then((list) => setRawMapTasks(Array.isArray(list) ? list : []))
-      .catch(() => setRawMapTasks([]));
-  }, [tasksMapDateStr, taskListRevision]);
 
   const mapShowsNoMarkers =
     filteredLocationsForMap.length === 0 && filteredMerchantsForMap.length === 0 && filteredMapTasks.length === 0;
