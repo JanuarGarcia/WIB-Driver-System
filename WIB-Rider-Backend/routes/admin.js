@@ -409,6 +409,39 @@ router.use(adminAuth);
 /** Shared by all dashboard admins — stored in `settings` or `mt_option` like other site options. */
 const DASHBOARD_MAP_MERCHANT_FILTER_KEY = 'dashboard_map_merchant_filter_ids';
 
+/** Normalize stored filter to string IDs; drops null/undefined/empty and literal "null"/"undefined". */
+function normalizeDashboardMapMerchantIdsInput(raw) {
+  const list = Array.isArray(raw) ? raw : [];
+  const out = [];
+  const seen = new Set();
+  for (const x of list) {
+    if (x == null) continue;
+    const s = String(x).trim();
+    if (!s || s === 'null' || s === 'undefined') continue;
+    if (seen.has(s)) continue;
+    seen.add(s);
+    out.push(s);
+  }
+  return out;
+}
+
+/** Parse DB value: string JSON, or driver may return object/array for JSON columns. */
+function parseDashboardMapMerchantIdsStored(raw) {
+  if (raw == null || raw === '') return null;
+  let parsed = raw;
+  if (typeof raw === 'string') {
+    const t = raw.trim();
+    if (!t) return null;
+    try {
+      parsed = JSON.parse(t);
+    } catch (_) {
+      return null;
+    }
+  }
+  if (!Array.isArray(parsed)) return null;
+  return normalizeDashboardMapMerchantIdsInput(parsed);
+}
+
 async function upsertGlobalSettingKey(strValue, key) {
   const v = strValue === null || strValue === undefined ? '' : String(strValue);
   try {
@@ -453,16 +486,16 @@ async function handleGetDashboardMapMerchantFilter(_req, res) {
   try {
     const map = await getSettingsMap();
     const raw = map[DASHBOARD_MAP_MERCHANT_FILTER_KEY];
-    if (raw == null || String(raw).trim() === '') {
+    if (raw == null || (typeof raw === 'string' && raw.trim() === '')) {
       return res.json({ merchant_ids: null });
     }
-    let parsed;
-    try {
-      parsed = JSON.parse(raw);
-    } catch (_) {
+    const out = parseDashboardMapMerchantIdsStored(raw);
+    if (out == null) {
       return res.json({ merchant_ids: null });
     }
-    const out = Array.isArray(parsed) ? parsed.map((x) => String(x)).filter(Boolean) : [];
+    if (out.length === 0) {
+      return res.json({ merchant_ids: [] });
+    }
     return res.json({ merchant_ids: out });
   } catch (e) {
     return res.status(500).json({ error: e.message || 'Failed to load map merchant filter' });
@@ -474,7 +507,7 @@ async function handlePutDashboardMapMerchantFilter(req, res) {
   if (!Array.isArray(raw)) {
     return res.status(400).json({ error: 'merchant_ids must be an array' });
   }
-  const normalized = raw.map((x) => String(x).trim()).filter(Boolean);
+  const normalized = normalizeDashboardMapMerchantIdsInput(raw);
   const jsonStr = JSON.stringify(normalized);
   try {
     await upsertGlobalSettingKey(jsonStr, DASHBOARD_MAP_MERCHANT_FILTER_KEY);

@@ -7,6 +7,21 @@ const FILTER_CHANGED = 'wib-map-merchant-filter-changed';
 
 const HYDRATE_PATHS = ['settings/map-merchant-filter', 'user-preferences/map-merchant-filter'];
 
+export function normalizeMapMerchantFilterIds(ids) {
+  if (!Array.isArray(ids)) return [];
+  const out = [];
+  const seen = new Set();
+  for (const x of ids) {
+    if (x == null) continue;
+    const s = String(x).trim();
+    if (!s || s === 'null' || s === 'undefined') continue;
+    if (seen.has(s)) continue;
+    seen.add(s);
+    out.push(s);
+  }
+  return out;
+}
+
 /** Read raw JSON array from localStorage; one-time migrate from legacy sessionStorage. */
 function readMerchantFilterRaw() {
   try {
@@ -30,7 +45,7 @@ export function loadMapMerchantFilterFromSession() {
     const raw = readMerchantFilterRaw();
     if (!raw) return [];
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed.map((x) => String(x)).filter(Boolean) : [];
+    return normalizeMapMerchantFilterIds(parsed);
   } catch (_) {
     return [];
   }
@@ -53,7 +68,7 @@ function persistMapMerchantFilterToServer(ids) {
  * @param {{ skipServerPut?: boolean }} [opts]
  */
 export function saveMapMerchantFilterToSession(ids, opts = {}) {
-  const normalized = Array.isArray(ids) ? ids.map((x) => String(x)).filter(Boolean) : [];
+  const normalized = normalizeMapMerchantFilterIds(ids);
   try {
     if (normalized.length === 0) localStorage.removeItem(MAP_MERCHANT_FILTER_STORAGE_KEY);
     else localStorage.setItem(MAP_MERCHANT_FILTER_STORAGE_KEY, JSON.stringify(normalized));
@@ -72,7 +87,8 @@ export async function hydrateMapMerchantFilterFromServer() {
     try {
       const data = await api(path);
       if (data && Array.isArray(data.merchant_ids)) {
-        saveMapMerchantFilterToSession(data.merchant_ids, { skipServerPut: true });
+        const cleaned = normalizeMapMerchantFilterIds(data.merchant_ids);
+        saveMapMerchantFilterToSession(cleaned, { skipServerPut: true });
         return;
       }
       if (data && data.merchant_ids === null) return;
