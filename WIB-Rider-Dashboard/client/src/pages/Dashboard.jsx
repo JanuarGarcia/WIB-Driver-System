@@ -1,11 +1,24 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef, lazy, Suspense } from 'react';
 import { createPortal } from 'react-dom';
 import { useLocation, useNavigate } from 'react-router-dom';
 import TaskPanel from '../components/TaskPanel';
-import TaskDetailsModal from '../components/TaskDetailsModal';
-import ActivityTimelineToastStack from '../components/ActivityTimelineToastStack';
-import MapView from '../components/MapView';
 import MapErrorBoundary from '../components/MapErrorBoundary';
+
+const MapView = lazy(() => import('../components/MapView'));
+const TaskDetailsModal = lazy(() => import('../components/TaskDetailsModal'));
+const ActivityTimelineToastStack = lazy(() => import('../components/ActivityTimelineToastStack'));
+
+/** Matches MapView MAP_STYLE so layout does not jump while the map chunk loads. */
+const MAP_CHUNK_FALLBACK_STYLE = {
+  width: '100%',
+  height: '100%',
+  minHeight: 400,
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  background: '#e8e8e8',
+  color: '#666',
+};
 import AgentPanel from '../components/AgentPanel';
 import { useMapMerchantFilterSelection } from '../components/MapMerchantFilter';
 import { hydrateMapMerchantFilterFromServer } from '../utils/mapMerchantFilterPrefs';
@@ -348,23 +361,25 @@ export default function Dashboard() {
       </div>
       {taskDetailsId != null &&
         createPortal(
-          <TaskDetailsModal
-            taskId={taskDetailsId}
-            initialTab={taskDetailsInitialTab}
-            onClose={() => {
-              setTaskDetailsId(null);
-              setTaskDetailsInitialTab('details');
-            }}
-            onAssignDriver={(id) => { setTaskDetailsId(null); navigate(`/tasks?highlight=${id}`); }}
-            onTaskListInvalidate={bumpTaskLists}
-            onTaskDeleted={() => setTaskDetailsId(null)}
-            directionsMapSettings={{
-              mapProvider,
-              mapboxToken,
-              googleApiKey,
-              googleMapStyle,
-            }}
-          />,
+          <Suspense fallback={null}>
+            <TaskDetailsModal
+              taskId={taskDetailsId}
+              initialTab={taskDetailsInitialTab}
+              onClose={() => {
+                setTaskDetailsId(null);
+                setTaskDetailsInitialTab('details');
+              }}
+              onAssignDriver={(id) => { setTaskDetailsId(null); navigate(`/tasks?highlight=${id}`); }}
+              onTaskListInvalidate={bumpTaskLists}
+              onTaskDeleted={() => setTaskDetailsId(null)}
+              directionsMapSettings={{
+                mapProvider,
+                mapboxToken,
+                googleApiKey,
+                googleMapStyle,
+              }}
+            />
+          </Suspense>,
           document.body
         )}
       <div className="dashboard-layout-panel dashboard-layout-map">
@@ -379,23 +394,31 @@ export default function Dashboard() {
               </div>
             )}
           >
-            <MapView
-              locations={filteredLocationsForMap}
-              merchants={filteredMerchantsForMap}
-              taskMarkers={filteredMapTasks}
-              showLegend
-              driverQueueCount={driverQueueCount}
-              onViewDriverQueue={handleViewDriverQueueFromMap}
-              mapProvider={mapProvider}
-              apiKey={googleApiKey}
-              mapboxToken={mapboxToken}
-              center={mapShowsNoMarkers ? defaultMapCenter : undefined}
-              zoom={mapShowsNoMarkers ? defaultMapZoom : undefined}
-              googleMapStyle={googleMapStyle}
-              mapResizeTrigger={mapResizeTrigger}
-              focusTaskRequest={mapTaskFocusRequest}
-              onResetMapView={handleResetMapView}
-            />
+            <Suspense
+              fallback={
+                <div className="map-container" style={MAP_CHUNK_FALLBACK_STYLE} aria-busy="true">
+                  Loading map…
+                </div>
+              }
+            >
+              <MapView
+                locations={filteredLocationsForMap}
+                merchants={filteredMerchantsForMap}
+                taskMarkers={filteredMapTasks}
+                showLegend
+                driverQueueCount={driverQueueCount}
+                onViewDriverQueue={handleViewDriverQueueFromMap}
+                mapProvider={mapProvider}
+                apiKey={googleApiKey}
+                mapboxToken={mapboxToken}
+                center={mapShowsNoMarkers ? defaultMapCenter : undefined}
+                zoom={mapShowsNoMarkers ? defaultMapZoom : undefined}
+                googleMapStyle={googleMapStyle}
+                mapResizeTrigger={mapResizeTrigger}
+                focusTaskRequest={mapTaskFocusRequest}
+                onResetMapView={handleResetMapView}
+              />
+            </Suspense>
           </MapErrorBoundary>
         </div>
       </div>
@@ -411,10 +434,12 @@ export default function Dashboard() {
         />
       </div>
     </div>
-    <ActivityTimelineToastStack
-      dateStr={tasksMapDateStr}
-      onOpenTaskTimeline={(id) => openTaskDetails(id, { initialTab: 'timeline' })}
-    />
+    <Suspense fallback={null}>
+      <ActivityTimelineToastStack
+        dateStr={tasksMapDateStr}
+        onOpenTaskTimeline={(id) => openTaskDetails(id, { initialTab: 'timeline' })}
+      />
+    </Suspense>
     </>
   );
 }

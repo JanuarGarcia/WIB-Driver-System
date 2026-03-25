@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, lazy, Suspense } from 'react';
 import { createPortal } from 'react-dom';
 import { Routes, Route, useNavigate, useLocation, Navigate } from 'react-router-dom';
 import { isAuthenticated } from './auth';
@@ -9,24 +9,45 @@ import {
 import { TeamFilterProvider } from './context/TeamFilterContext';
 import Sidebar from './components/Sidebar';
 import MainHeader from './components/MainHeader';
-import NewTaskModal from './components/NewTaskModal';
 import Login from './pages/Login';
-import Dashboard from './pages/Dashboard';
-import Tasks from './pages/Tasks';
-import Drivers from './pages/Drivers';
-import NewTask from './pages/NewTask';
-import Settings from './pages/Settings';
-import Teams from './pages/Teams';
-import PushLogs from './pages/PushLogs';
-import BroadcastLogs from './pages/BroadcastLogs';
-import DriverTrackback from './pages/DriverTrackback';
-import Assignment from './pages/Assignment';
-import Notifications from './pages/Notifications';
-import Reports from './pages/Reports';
-import SmsLogs from './pages/SmsLogs';
-import EmailLogs from './pages/EmailLogs';
-import MapApiLogs from './pages/MapApiLogs';
-import Merchants from './pages/Merchants';
+
+const NewTaskModal = lazy(() => import('./components/NewTaskModal'));
+const Dashboard = lazy(() => import('./pages/Dashboard'));
+const Tasks = lazy(() => import('./pages/Tasks'));
+const Drivers = lazy(() => import('./pages/Drivers'));
+const NewTask = lazy(() => import('./pages/NewTask'));
+const Settings = lazy(() => import('./pages/Settings'));
+const Teams = lazy(() => import('./pages/Teams'));
+const PushLogs = lazy(() => import('./pages/PushLogs'));
+const BroadcastLogs = lazy(() => import('./pages/BroadcastLogs'));
+const DriverTrackback = lazy(() => import('./pages/DriverTrackback'));
+const Assignment = lazy(() => import('./pages/Assignment'));
+const Notifications = lazy(() => import('./pages/Notifications'));
+const Reports = lazy(() => import('./pages/Reports'));
+const SmsLogs = lazy(() => import('./pages/SmsLogs'));
+const EmailLogs = lazy(() => import('./pages/EmailLogs'));
+const MapApiLogs = lazy(() => import('./pages/MapApiLogs'));
+const Merchants = lazy(() => import('./pages/Merchants'));
+
+function AppRouteFallback() {
+  return (
+    <div
+      className="app-route-fallback"
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        minHeight: '40vh',
+        color: 'var(--text-muted, #888)',
+        fontSize: '0.95rem',
+      }}
+      aria-busy="true"
+      aria-live="polite"
+    >
+      Loading…
+    </div>
+  );
+}
 
 function MapMerchantFilterServerSync() {
   useEffect(() => {
@@ -88,28 +109,48 @@ export default function App() {
                 onClick={(e) => e.target === e.currentTarget && closeNewTaskModal()}
                 onKeyDown={(e) => e.key === 'Escape' && closeNewTaskModal()}
               >
-                <NewTaskModal onClose={closeNewTaskModal} onSuccess={onNewTaskSuccess} />
+                <Suspense
+                  fallback={
+                    <div
+                      style={{
+                        background: 'var(--panel-bg, #fff)',
+                        borderRadius: 8,
+                        padding: '2rem 2.5rem',
+                        maxWidth: 360,
+                        margin: 'auto',
+                        textAlign: 'center',
+                        color: 'var(--text-muted, #888)',
+                      }}
+                    >
+                      Loading…
+                    </div>
+                  }
+                >
+                  <NewTaskModal onClose={closeNewTaskModal} onSuccess={onNewTaskSuccess} />
+                </Suspense>
               </div>,
               document.body
             )}
-          <Routes>
-            <Route path="/" element={<Dashboard />} />
-            <Route path="/tasks" element={<Tasks />} />
-            <Route path="/drivers" element={<Drivers />} />
-            <Route path="/new-task" element={<NewTask />} />
-            <Route path="/settings" element={<Settings />} />
-            <Route path="/teams" element={<Teams />} />
-            <Route path="/push-logs" element={<PushLogs />} />
-            <Route path="/broadcast-logs" element={<BroadcastLogs />} />
-            <Route path="/driver-trackback" element={<DriverTrackback />} />
-            <Route path="/assignment" element={<Assignment />} />
-            <Route path="/notifications" element={<Notifications />} />
-            <Route path="/reports" element={<Reports />} />
-            <Route path="/sms-logs" element={<SmsLogs />} />
-            <Route path="/email-logs" element={<EmailLogs />} />
-            <Route path="/map-api-logs" element={<MapApiLogs />} />
-            <Route path="/merchants" element={<Merchants />} />
-          </Routes>
+          <Suspense fallback={<AppRouteFallback />}>
+            <Routes>
+              <Route path="/" element={<Dashboard />} />
+              <Route path="/tasks" element={<Tasks />} />
+              <Route path="/drivers" element={<Drivers />} />
+              <Route path="/new-task" element={<NewTask />} />
+              <Route path="/settings" element={<Settings />} />
+              <Route path="/teams" element={<Teams />} />
+              <Route path="/push-logs" element={<PushLogs />} />
+              <Route path="/broadcast-logs" element={<BroadcastLogs />} />
+              <Route path="/driver-trackback" element={<DriverTrackback />} />
+              <Route path="/assignment" element={<Assignment />} />
+              <Route path="/notifications" element={<Notifications />} />
+              <Route path="/reports" element={<Reports />} />
+              <Route path="/sms-logs" element={<SmsLogs />} />
+              <Route path="/email-logs" element={<EmailLogs />} />
+              <Route path="/map-api-logs" element={<MapApiLogs />} />
+              <Route path="/merchants" element={<Merchants />} />
+            </Routes>
+          </Suspense>
           </main>
         </TeamFilterProvider>
       </div>
