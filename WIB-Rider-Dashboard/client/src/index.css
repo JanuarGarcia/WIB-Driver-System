@@ -3183,12 +3183,12 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
   width: 22px;
   height: 22px;
 }
-/* Anchor to the icon’s right edge so the pill sits outside the glyph (no overlap). */
+/* Anchor to the icon’s right edge; offset tuned so the pill sits near the corner without crowding the glyph. */
 .agent-panel-queue-badge {
   position: absolute;
   left: 100%;
   top: 0;
-  transform: translate(8px, -12px);
+  transform: translate(3px, -9px);
   min-width: 18px;
   height: 18px;
   padding: 0 6px;
