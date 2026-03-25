@@ -223,11 +223,22 @@ export default function Dashboard() {
     filteredLocationsForMap.length === 0 && filteredMerchantsForMap.length === 0 && filteredMapTasks.length === 0;
 
   const refreshMapData = useCallback(() => {
-    api(driversLocationsUrl).then(setLocations).catch(() => setLocations([]));
-    api('merchants/locations').then(setMerchants).catch(() => setMerchants([]));
-    api(`tasks?date=${encodeURIComponent(tasksMapDateStr)}`)
-      .then((list) => setRawMapTasks(Array.isArray(list) ? list : []))
-      .catch(() => setRawMapTasks([]));
+    (async () => {
+      try {
+        const [loc, mer, taskList] = await Promise.all([
+          api(driversLocationsUrl).catch(() => []),
+          api('merchants/locations').catch(() => []),
+          api(`tasks?date=${encodeURIComponent(tasksMapDateStr)}`).catch(() => []),
+        ]);
+        setLocations(Array.isArray(loc) ? loc : []);
+        setMerchants(Array.isArray(mer) ? mer : []);
+        setRawMapTasks(Array.isArray(taskList) ? taskList : []);
+      } catch {
+        setLocations([]);
+        setMerchants([]);
+        setRawMapTasks([]);
+      }
+    })();
     refreshActivePanelDriverIds();
   }, [driversLocationsUrl, tasksMapDateStr, refreshActivePanelDriverIds]);
 
@@ -252,10 +263,6 @@ export default function Dashboard() {
   };
 
   useEffect(() => {
-    refreshMapSettings();
-  }, []);
-
-  useEffect(() => {
     hydrateMapMerchantFilterFromServer();
   }, []);
 
@@ -264,9 +271,15 @@ export default function Dashboard() {
     refreshMapSettings();
   }, [location.pathname]);
 
+  const lastWindowFocusRefreshRef = useRef(0);
   useEffect(() => {
-    if (location.pathname !== '/') return;
-    const onFocus = () => { refreshMapSettings(); refreshMapData(); };
+    if (location.pathname !== '/') return undefined;
+    const onFocus = () => {
+      const now = Date.now();
+      if (now - lastWindowFocusRefreshRef.current < 20000) return;
+      lastWindowFocusRefreshRef.current = now;
+      refreshMapData();
+    };
     window.addEventListener('focus', onFocus);
     return () => window.removeEventListener('focus', onFocus);
   }, [location.pathname, refreshMapData]);

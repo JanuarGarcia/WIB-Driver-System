@@ -9,7 +9,7 @@ import { getAdvanceOrderLines } from '../utils/advanceOrder';
 import { isLiveConnection, isOnDuty, isAgentPanelOnline } from '../utils/agentPanelRiders';
 
 const TABS = ['active', 'offline', 'total'];
-const AGENT_REFRESH_INTERVAL_MS = 5000;
+const AGENT_REFRESH_INTERVAL_MS = 8000;
 const DRIVER_STATUS_UPDATED_EVENT = 'wib:driver-status-updated';
 const DRIVER_STATUS_UPDATED_AT_KEY = 'wib-driver-status-updated-at';
 

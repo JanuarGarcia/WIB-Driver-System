@@ -35,30 +35,52 @@ export function resolveUploadUrl(path) {
   return origin ? `${origin}${rel}` : rel;
 }
 
+/** Coalesce concurrent identical GETs (e.g. dashboard map + task list share `tasks?date=…`). */
+const inFlightGetByKey = new Map();
+
 export async function api(path, options = {}) {
   const base = API.replace(/\/$/, '');
   const url = API.startsWith('http')
     ? (path.startsWith('/') ? base + path : `${base}/${path}`)
     : (path.startsWith('/') ? path : `${API}/${path}`);
+  const method = String(options.method || 'GET').toUpperCase();
   const headers = { 'Content-Type': 'application/json', ...options.headers };
   const token = getToken();
   if (token) headers['x-dashboard-token'] = token;
-  const res = await fetch(url, {
-    ...options,
-    headers,
-  });
-  const text = await res.text();
-  let data;
-  try {
-    data = text ? JSON.parse(text) : {};
-  } catch (e) {
-    if (text.trimStart().startsWith('<!')) {
-      throw { error: 'Server returned HTML instead of JSON. Is the backend running on port 3000?' };
+
+  const runFetch = async () => {
+    const res = await fetch(url, {
+      ...options,
+      headers,
+    });
+    const text = await res.text();
+    let data;
+    try {
+      data = text ? JSON.parse(text) : {};
+    } catch (e) {
+      if (text.trimStart().startsWith('<!')) {
+        throw { error: 'Server returned HTML instead of JSON. Is the backend running on port 3000?' };
+      }
+      throw { error: 'Invalid response from server', message: e.message };
     }
-    throw { error: 'Invalid response from server', message: e.message };
+    if (!res.ok) throw data;
+    return data;
+  };
+
+  if (method === 'GET' && !options.body && !options.skipDedupe) {
+    const dedupeKey = `${token || ''}|${url}`;
+    const existing = inFlightGetByKey.get(dedupeKey);
+    if (existing) return existing;
+    const p = runFetch().finally(() => {
+      queueMicrotask(() => {
+        if (inFlightGetByKey.get(dedupeKey) === p) inFlightGetByKey.delete(dedupeKey);
+      });
+    });
+    inFlightGetByKey.set(dedupeKey, p);
+    return p;
   }
-  if (!res.ok) throw data;
-  return data;
+
+  return runFetch();
 }
 
 export function formatDate(d) {

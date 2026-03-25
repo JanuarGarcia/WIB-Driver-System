@@ -195,7 +195,8 @@ export default function TaskPanel({ onOpenTaskDetails, onFocusTaskOnMap, listRev
   const [activityRefreshIntervalMs, setActivityRefreshIntervalMs] = useState(30000);
   const [taskCriticalEnabled, setTaskCriticalEnabled] = useState(false);
   const [taskCriticalMinutes, setTaskCriticalMinutes] = useState(5);
-  const [liveTime, setLiveTime] = useState(() => new Date());
+  /** Bumps on an interval so header time + “waiting” minutes refresh without 1s full-panel re-renders. */
+  const [panelTimeTick, setPanelTimeTick] = useState(0);
   const calendarRef = useRef(null);
   const sortRef = useRef(null);
 
@@ -363,52 +364,57 @@ export default function TaskPanel({ onOpenTaskDetails, onFocusTaskOnMap, listRev
   }, [listRevision, fetchTasks]);
 
   useEffect(() => {
-    const tick = () => setLiveTime(new Date());
-    const id = setInterval(tick, 1000);
+    const id = setInterval(() => setPanelTimeTick((n) => n + 1), 30000);
     return () => clearInterval(id);
   }, []);
 
   useTableAutoRefresh(fetchTasks, activityRefreshIntervalMs);
 
   const normStatus = (status) => (status || '').toLowerCase().replace(/\s+/g, '').replace(/_/g, '');
-  const filteredByTab = tasks.filter((t) => {
-    const s = normStatus(t.status);
-    if (activeTab === 'unassigned') return s === 'unassigned';
-    if (activeTab === 'assigned') return ['assigned', 'acknowledged', 'started', 'inprogress'].includes(s);
-    return ['completed', 'delivered', 'successful'].includes(s);
-  });
 
-  const filteredByProblem = tasks.filter((t) => {
-    const s = normStatus(t.status);
-    if (problemTaskFilter === 'cancelled') return s === 'cancelled' || s === 'canceled';
-    if (problemTaskFilter === 'declined') return s === 'declined';
-    return s === 'failed';
-  });
+  const filteredByTab = useMemo(() => {
+    return tasks.filter((t) => {
+      const s = normStatus(t.status);
+      if (activeTab === 'unassigned') return s === 'unassigned';
+      if (activeTab === 'assigned') return ['assigned', 'acknowledged', 'started', 'inprogress'].includes(s);
+      return ['completed', 'delivered', 'successful'].includes(s);
+    });
+  }, [tasks, activeTab]);
+
+  const filteredByProblem = useMemo(() => {
+    return tasks.filter((t) => {
+      const s = normStatus(t.status);
+      if (problemTaskFilter === 'cancelled') return s === 'cancelled' || s === 'canceled';
+      if (problemTaskFilter === 'declined') return s === 'declined';
+      return s === 'failed';
+    });
+  }, [tasks, problemTaskFilter]);
 
   const scheduledTasksAll = useMemo(() => (tasks || []).filter(isAdvanceOrderDisplay), [tasks]);
   const scheduledCount = scheduledTasksAll.length;
 
-  const filteredByMode =
-    taskMode === 'problem'
-      ? filteredByProblem
-      : scheduledOrdersOnly
-        ? scheduledTasksAll
-        : filteredByTab;
+  const filteredByMode = useMemo(() => {
+    if (taskMode === 'problem') return filteredByProblem;
+    if (scheduledOrdersOnly) return scheduledTasksAll;
+    return filteredByTab;
+  }, [taskMode, scheduledOrdersOnly, filteredByProblem, filteredByTab, scheduledTasksAll]);
 
-  const filtered = [...filteredByMode].sort((a, b) => {
-    const dateA = a.date_created ? new Date(a.date_created).getTime() : 0;
-    const dateB = b.date_created ? new Date(b.date_created).getTime() : 0;
-    const dirA = (getDirectionFromTask(a) || '').toLowerCase();
-    const dirB = (getDirectionFromTask(b) || '').toLowerCase();
-    const orderA = a.order_id ?? a.task_id ?? 0;
-    const orderB = b.order_id ?? b.task_id ?? 0;
-    let cmp = 0;
-    if (sortOrder === 'rfp') cmp = Number(orderA) - Number(orderB);
-    else if (sortOrder === 'manual') cmp = dateA - dateB;
-    else if (sortOrder === 'direction') cmp = dirA.localeCompare(dirB);
-    else cmp = dateA - dateB;
-    return sortDirection === 'latest' ? -cmp : cmp;
-  });
+  const filtered = useMemo(() => {
+    return [...filteredByMode].sort((a, b) => {
+      const dateA = a.date_created ? new Date(a.date_created).getTime() : 0;
+      const dateB = b.date_created ? new Date(b.date_created).getTime() : 0;
+      const dirA = (getDirectionFromTask(a) || '').toLowerCase();
+      const dirB = (getDirectionFromTask(b) || '').toLowerCase();
+      const orderA = a.order_id ?? a.task_id ?? 0;
+      const orderB = b.order_id ?? b.task_id ?? 0;
+      let cmp = 0;
+      if (sortOrder === 'rfp') cmp = Number(orderA) - Number(orderB);
+      else if (sortOrder === 'manual') cmp = dateA - dateB;
+      else if (sortOrder === 'direction') cmp = dirA.localeCompare(dirB);
+      else cmp = dateA - dateB;
+      return sortDirection === 'latest' ? -cmp : cmp;
+    });
+  }, [filteredByMode, sortOrder, sortDirection]);
 
   const statItems = [
     { key: 'unassigned', label: 'Unassigned', count: counts.unassigned ?? 0, highlight: activeTab === 'unassigned' && !scheduledOrdersOnly, icon: 'clock' },
@@ -439,11 +445,14 @@ export default function TaskPanel({ onOpenTaskDetails, onFocusTaskOnMap, listRev
             aria-label="Select date and time"
             title="Choose which day’s tasks to show (and time for scheduling)"
             aria-expanded={calendarOpen}
+            data-panel-clock={panelTimeTick}
           >
             <span className="panel-header-date-icon" aria-hidden="true">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M19 4h-1V2h-2v2H8V2H6v2H5c-1.11 0-1.99.9-1.99 2L3 20c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 16H5V9h14v11z"/></svg>
             </span>
-            <span className="tasks-panel-date-text">{toDisplayDateLong(selectedDateTime)} {toDisplayTime12h(liveTime)}</span>
+            <span className="tasks-panel-date-text">
+              {toDisplayDateLong(selectedDateTime)} {toDisplayTime12h(new Date())}
+            </span>
           </button>
           {calendarOpen && createPortal(
             <div
