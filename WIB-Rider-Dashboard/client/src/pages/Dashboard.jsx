@@ -19,6 +19,7 @@ import {
   todayDateStrLocal,
   tasksWithMapCoordinates,
   taskDropoffLatLng,
+  riderGpsFromLocations,
 } from '../utils/mapTasks';
 
 function nextMapTaskFocus(prev, lat, lng) {
@@ -60,6 +61,7 @@ export default function Dashboard() {
       setMobileSection('map');
     }
   }, []);
+
   const [locations, setLocations] = useState([]);
   const [merchants, setMerchants] = useState([]);
   const selectedMapMerchantIds = useMapMerchantFilterSelection();
@@ -75,6 +77,18 @@ export default function Dashboard() {
   const [rawMapTasks, setRawMapTasks] = useState([]);
   /** null = agent roster still loading (map shows all rider GPS pins); then filtered to Active panel roster. */
   const [activePanelDriverIdSet, setActivePanelDriverIdSet] = useState(null);
+
+  const handleFocusRiderOnMap = useCallback(
+    (driver) => {
+      const p = riderGpsFromLocations(driver, locations);
+      if (!p) return;
+      setMapTaskFocusRequest((prev) => nextMapTaskFocus(prev, p.lat, p.lng));
+      if (typeof window !== 'undefined' && window.matchMedia(MOBILE_DASHBOARD_MQ).matches) {
+        setMobileSection('map');
+      }
+    },
+    [locations]
+  );
 
   const driversLocationsUrl = selectedTeamId
     ? `drivers/locations?team_id=${encodeURIComponent(selectedTeamId)}`
@@ -353,7 +367,11 @@ export default function Dashboard() {
       </div>
       </div>
       <div className="dashboard-layout-panel dashboard-layout-agents">
-        <AgentPanel onOpenTaskDetails={handleOpenTaskDetailsFromPanel} listRevision={taskListRevision} />
+        <AgentPanel
+          onOpenTaskDetails={handleOpenTaskDetailsFromPanel}
+          onFocusRiderOnMap={handleFocusRiderOnMap}
+          listRevision={taskListRevision}
+        />
       </div>
     </div>
     <ActivityTimelineToastStack

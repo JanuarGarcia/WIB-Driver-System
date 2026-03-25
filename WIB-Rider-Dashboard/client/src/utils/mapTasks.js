@@ -42,6 +42,19 @@ export function taskDropoffLatLng(t) {
   return { lat, lng };
 }
 
+/** Match agent-panel driver row to `drivers/locations` entry (`driver_id`, `lat`, `lng`). */
+export function riderGpsFromLocations(driver, locations) {
+  if (!driver || typeof driver !== 'object' || !Array.isArray(locations)) return null;
+  const did = String(driver.driver_id ?? driver.id ?? '').trim();
+  if (!did) return null;
+  const loc = locations.find((l) => String(l.driver_id ?? '') === did);
+  if (!loc) return null;
+  const lat = loc.lat != null ? Number(loc.lat) : NaN;
+  const lng = loc.lng != null ? Number(loc.lng) : NaN;
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  return { lat, lng };
+}
+
 /**
  * Tasks that can be drawn on the map (delivery coordinates).
  * @param {Array<Record<string, unknown>>|null|undefined} tasks

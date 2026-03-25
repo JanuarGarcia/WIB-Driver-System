@@ -131,6 +131,8 @@ const BAGUIO_VIEW = { longitude: 120.596, latitude: 16.4023, zoom: 13 };
 const MAP_STYLE = { width: '100%', height: '100%', minHeight: 400 };
 /** Metro framing for a lone pin (matches typical Baguio dashboard load). */
 const DASHBOARD_SINGLE_MARKER_ZOOM = 14;
+/** Tighter zoom when focusing a task from the task panel so the drop-off pin is easy to spot. */
+const DASHBOARD_TASK_CARD_FOCUS_ZOOM = 17;
 const FIT_BOUNDS_PADDING_PX = 64;
 
 /**
@@ -258,7 +260,7 @@ function LeafletFlyToTaskFocus({ focusTaskRequest }) {
     const ln = Number(focusTaskRequest.lng);
     if (!Number.isFinite(la) || !Number.isFinite(ln)) return;
     try {
-      map.flyTo([la, ln], DASHBOARD_SINGLE_MARKER_ZOOM, { duration: 0.75 });
+      map.flyTo([la, ln], DASHBOARD_TASK_CARD_FOCUS_ZOOM, { duration: 0.75 });
     } catch (_) {}
   }, [map, nonce, focusTaskRequest]);
   return null;
@@ -726,8 +728,8 @@ function GoogleMapFlyToTask({ focusTaskRequest, onCommitted }) {
     if (!Number.isFinite(la) || !Number.isFinite(ln)) return;
     try {
       map.panTo({ lat: la, lng: ln });
-      map.setZoom(DASHBOARD_SINGLE_MARKER_ZOOM);
-      onCommittedRef.current?.({ lat: la, lng: ln }, DASHBOARD_SINGLE_MARKER_ZOOM);
+      map.setZoom(DASHBOARD_TASK_CARD_FOCUS_ZOOM);
+      onCommittedRef.current?.({ lat: la, lng: ln }, DASHBOARD_TASK_CARD_FOCUS_ZOOM);
     } catch (_) {}
   }, [map, nonce, focusTaskRequest]);
   return null;

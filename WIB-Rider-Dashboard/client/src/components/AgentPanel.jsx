@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { api, statusClass, statusLabel } from '../api';
+import { api, statusClass, statusLabel, resolveUploadUrl } from '../api';
 import DriverDetailsModal from './DriverDetailsModal';
 import { useTeamFilter } from '../context/TeamFilterContext';
 import { sanitizeLocationDisplayName } from '../utils/displayText';
@@ -72,6 +72,13 @@ function directionArrowRotation(dir) {
   return map[v] ?? 135;
 }
 
+/** Rider photo from task list join (`driver_profile_photo`) or resolved URL. */
+function taskDriverAvatarUrl(t) {
+  const raw = t?.driver_profile_photo ?? t?.profile_photo;
+  if (raw == null || String(raw).trim() === '') return null;
+  return resolveUploadUrl(String(raw).trim());
+}
+
 function directionDisplayLabel(dir) {
   if (!dir || typeof dir !== 'string' || !dir.trim()) return '—';
   const v = dir.trim().toLowerCase().replace(/\s+/g, ' ');
@@ -121,7 +128,7 @@ function formatQueueWaiting(joinedAt) {
   return `${d} day${d === 1 ? '' : 's'}`;
 }
 
-export default function AgentPanel({ onOpenTaskDetails, listRevision = 0 }) {
+export default function AgentPanel({ onOpenTaskDetails, onFocusRiderOnMap, listRevision = 0 }) {
   const navigate = useNavigate();
   const { selectedTeamId } = useTeamFilter();
   const [details, setDetails] = useState({ active: [], offline: [], total: [] });
@@ -606,9 +613,15 @@ export default function AgentPanel({ onOpenTaskDetails, listRevision = 0 }) {
                   const created = t.date_created ? new Date(t.date_created) : null;
                   const minsWaiting = created ? Math.max(0, Math.floor((Date.now() - created.getTime()) / 60000)) : null;
                   const waitingMins = minsWaiting !== null ? (minsWaiting >= 60 ? `${Math.floor(minsWaiting / 60)} hr ${minsWaiting % 60} mins` : `${minsWaiting}mins`) : null;
-                  const customerName = t.customer_name || '—';
-                  const initial = (String(customerName).match(/\b\w/g) || [customerName[0] || '?']).slice(0, 2).join('').toUpperCase();
-                  const avatarUrl = t.customer_photo || t.customer_image || t.driver_photo || null;
+                  const riderName = (t.driver_name || '').trim() || (t.driver_id != null ? `Driver #${t.driver_id}` : '—');
+                  const initial = (() => {
+                    if (riderName === '—') return '?';
+                    const m = String(riderName).match(/\b\w/g);
+                    if (m && m.length) return m.slice(0, 2).join('').toUpperCase();
+                    const c = String(riderName).charAt(0);
+                    return c ? c.toUpperCase() : '?';
+                  })();
+                  const avatarUrl = taskDriverAvatarUrl(t);
                   const rawLocation = t.delivery_address || t.restaurant_name || (t.dropoff_merchant && !/^\d+$/.test(String(t.dropoff_merchant).trim()) ? t.dropoff_merchant : null) || '';
                   const location = sanitizeLocationDisplayName(rawLocation) || '—';
                   const locationShort = location.length > 50 ? `${location.slice(0, 50)}…` : location;
@@ -658,16 +671,17 @@ export default function AgentPanel({ onOpenTaskDetails, listRevision = 0 }) {
                                 </svg>
                               </span>
                               <span className="task-card-all-tasks-waiting-text">
-                                <span className="task-card-all-tasks-waiting-mins">{waitingMins}</span> waiting ni cx
+                                <span className="task-card-all-tasks-waiting-mins task-card-all-tasks-waiting-mins--blink">{waitingMins}</span>{' '}
+                                waiting ni cx
                               </span>
                             </div>
                           )}
-                          <div className="task-card-all-tasks-name">{customerName}</div>
+                          <div className="task-card-all-tasks-name">{riderName}</div>
                           <button
                             type="button"
                             className="task-card-all-tasks-details"
                             onClick={() => onOpenTaskDetails ? onOpenTaskDetails(t.task_id) : navigate(`/tasks?highlight=${t.task_id}`)}
-                            aria-label={`View details for order ${t.order_id ?? t.task_id}`}
+                            aria-label={`View details for task ${t.task_id}${riderName !== '—' ? `, rider ${riderName}` : ''}`}
                           >
                             Details
                           </button>
@@ -688,7 +702,12 @@ export default function AgentPanel({ onOpenTaskDetails, listRevision = 0 }) {
               const lastSeen = d.last_seen ?? d.last_activity ?? 'Moments ago';
               const device = (d.device ?? d.platform ?? 'android').toString().toLowerCase();
               return (
-                <li key={d.id} className="agent-detail-card agent-active-detail-row">
+                <li
+                  key={d.id}
+                  className="agent-detail-card agent-active-detail-row"
+                  style={onFocusRiderOnMap ? { cursor: 'pointer' } : undefined}
+                  onClick={onFocusRiderOnMap ? () => onFocusRiderOnMap(d) : undefined}
+                >
                   <div className="agent-active-detail-left">
                     <span className="agent-active-detail-dot" aria-hidden="true" />
                     <div className="agent-active-detail-info">
@@ -718,7 +737,16 @@ export default function AgentPanel({ onOpenTaskDetails, listRevision = 0 }) {
                           Details
                         </button>
                         <span className="agent-detail-card-link-sep"> </span>
-                        <button type="button" className="agent-detail-card-link" onClick={() => navigate('/broadcast-logs')}>Send Push</button>
+                        <button
+                          type="button"
+                          className="agent-detail-card-link"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            navigate('/broadcast-logs');
+                          }}
+                        >
+                          Send Push
+                        </button>
                       </div>
                     </div>
                   </div>
@@ -744,7 +772,12 @@ export default function AgentPanel({ onOpenTaskDetails, listRevision = 0 }) {
               const phone = d.phone ? String(d.phone) : null;
               const dutyOn = isOnDuty(d);
               return (
-                <li key={d.id} className="agent-detail-card">
+                <li
+                  key={d.id}
+                  className="agent-detail-card"
+                  style={onFocusRiderOnMap ? { cursor: 'pointer' } : undefined}
+                  onClick={onFocusRiderOnMap ? () => onFocusRiderOnMap(d) : undefined}
+                >
                   <div className="agent-detail-card-header">
                     <span className="agent-detail-card-name">{name}</span>
                     <span className="agent-detail-card-duty">
@@ -776,7 +809,16 @@ export default function AgentPanel({ onOpenTaskDetails, listRevision = 0 }) {
                       Details
                     </button>
                     <span className="agent-detail-card-link-sep"> </span>
-                    <button type="button" className="agent-detail-card-link" onClick={() => navigate('/broadcast-logs')}>Send Push</button>
+                    <button
+                      type="button"
+                      className="agent-detail-card-link"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        navigate('/broadcast-logs');
+                      }}
+                    >
+                      Send Push
+                    </button>
                   </div>
                 </li>
               );

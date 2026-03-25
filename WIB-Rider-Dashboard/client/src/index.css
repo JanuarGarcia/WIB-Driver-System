@@ -3389,9 +3389,9 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
 }
-/* When showing All tasks (task cards), match Tasks panel design; no side/top/bottom padding so cards use full space */
+/* All tasks: same inset as Tasks panel so cards aren’t flush to panel edges */
 .panel.agent-panel.agent-panel--all-tasks .panel-body {
-  padding: 0;
+  padding: 0.55rem 0.85rem 0.85rem;
   background: #ebebe8;
 }
 [data-theme="dark"] .panel.agent-panel.agent-panel--all-tasks .panel-body {
@@ -3896,9 +3896,10 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
   padding: 0;
   width: 100%;
   min-width: 0;
+  box-sizing: border-box;
 }
 .task-card-all-tasks {
-  padding: 0.75rem 0;
+  padding: 0.75rem 0.35rem;
   margin: 0;
   list-style: none;
   border-bottom: 1px solid var(--border-soft);
@@ -4043,6 +4044,24 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
 .task-card-all-tasks-waiting-mins {
   color: var(--color-danger);
   font-weight: 600;
+}
+@keyframes task-all-tasks-waiting-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+.task-card-all-tasks-waiting-mins--blink {
+  animation: task-all-tasks-waiting-blink 1.15s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .task-card-all-tasks-waiting-mins--blink {
+    animation: none;
+    opacity: 1;
+  }
 }
 .task-card-all-tasks-driver {
   font-size: 0.8125rem;
@@ -6289,11 +6308,53 @@ tr:hover { background: var(--bg-hover) !important; }
   border-color: var(--border-medium);
   box-shadow: 0 24px 56px rgba(0, 0, 0, 0.45);
 }
+[data-theme="dark"] .directions-modal-map {
+  background: var(--bg-surface-2);
+}
+[data-theme="dark"] .directions-modal-title {
+  color: var(--text-dark);
+}
+[data-theme="dark"] .directions-modal-header-close {
+  color: var(--text-muted);
+}
+[data-theme="dark"] .directions-modal-header-close:hover {
+  color: var(--text-dark);
+  background: var(--bg-hover);
+}
+[data-theme="dark"] .directions-modal-close-link:hover {
+  color: var(--text-secondary);
+}
+[data-theme="dark"] .directions-modal-loading,
+[data-theme="dark"] .directions-modal-error {
+  color: var(--text-muted-strong);
+}
+[data-theme="dark"] .directions-modal-summary {
+  color: var(--text-dark);
+}
+[data-theme="dark"] .directions-modal-addresses {
+  color: var(--text-secondary);
+}
+[data-theme="dark"] .directions-modal-address-label {
+  color: var(--text-muted-strong);
+}
 [data-theme="dark"] .directions-modal-steps {
   border-top-color: var(--border-medium);
 }
 [data-theme="dark"] .directions-modal-step {
   border-bottom-color: var(--border-medium);
+}
+[data-theme="dark"] .directions-step-icon {
+  color: var(--text-dark);
+}
+[data-theme="dark"] .directions-modal-step-text {
+  color: var(--text-dark);
+}
+[data-theme="dark"] .directions-modal-step-dist {
+  color: var(--text-muted);
+}
+[data-theme="dark"] .directions-modal-footer {
+  background: var(--bg-card);
+  border-top-color: var(--border-medium);
 }
 
 .task-delete-overlay {

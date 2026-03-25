@@ -1793,6 +1793,7 @@ router.get('/tasks', async (req, res) => {
   const statusNormSql =
     "LOWER(REPLACE(REPLACE(TRIM(COALESCE(t.status,'')), ' ', ''), '_', ''))";
   let sql = `SELECT t.*, CONCAT(COALESCE(d.first_name,''), ' ', COALESCE(d.last_name,'')) AS driver_name,
+    d.profile_photo AS driver_profile_photo,
     d.location_lat AS driver_lat, d.location_lng AS driver_lng,
     COALESCE(m.restaurant_name, m2.restaurant_name) AS restaurant_name,
     o.status AS order_status,
