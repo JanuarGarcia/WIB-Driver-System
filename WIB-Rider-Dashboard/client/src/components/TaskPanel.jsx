@@ -5,7 +5,22 @@ import { api, statusClass, statusLabel } from '../api';
 import { sanitizeLocationDisplayName, sanitizeMerchantDisplayName, shortTaskOrderDigits } from '../utils/displayText';
 import { getAdvanceOrderLines, isAdvanceOrderDisplay } from '../utils/advanceOrder';
 import { useTableAutoRefresh } from '../hooks/useTableAutoRefresh';
-import { DASHBOARD_TASKS_MAP_DATE_KEY, notifyDashboardTasksMapDateChanged, taskDropoffLatLng } from '../utils/mapTasks';
+import {
+  DASHBOARD_TASKS_MAP_DATE_KEY,
+  notifyDashboardTasksMapDateChanged,
+  readDashboardTasksMapDateFromStorage,
+  todayDateStrLocal,
+  taskDropoffLatLng,
+} from '../utils/mapTasks';
+
+/** Match dashboard map `tasks?date=` on first paint so GET dedupe shares one request with Dashboard. */
+function initialTaskPanelSelectedDate() {
+  const ymd = readDashboardTasksMapDateFromStorage() || todayDateStrLocal();
+  const parts = ymd.split('-').map(Number);
+  const [y, m, d] = parts;
+  if (!Number.isFinite(y) || !Number.isFinite(m) || !Number.isFinite(d)) return new Date();
+  return new Date(y, m - 1, d, 12, 0, 0);
+}
 
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const MONTH_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -182,7 +197,7 @@ export default function TaskPanel({ onOpenTaskDetails, onFocusTaskOnMap, listRev
   const [problemTaskFilter, setProblemTaskFilter] = useState(readStoredProblemFilter);
   const [activeTab, setActiveTab] = useState('unassigned');
   const [loading, setLoading] = useState(true);
-  const [selectedDateTime, setSelectedDateTime] = useState(() => new Date());
+  const [selectedDateTime, setSelectedDateTime] = useState(() => initialTaskPanelSelectedDate());
   const [calendarOpen, setCalendarOpen] = useState(false);
   const [viewMonth, setViewMonth] = useState(() => new Date().getMonth() + 1);
   const [viewYear, setViewYear] = useState(() => new Date().getFullYear());
@@ -318,8 +333,9 @@ export default function TaskPanel({ onOpenTaskDetails, onFocusTaskOnMap, listRev
     } catch (_) {}
   }, []);
 
-  const fetchTasks = useCallback(() => {
-    setLoading(true);
+  const fetchTasks = useCallback((opts = {}) => {
+    const quiet = opts.quiet === true;
+    if (!quiet) setLoading(true);
     const dateStr = toDateString(selectedDateTime);
     let url = `tasks?date=${encodeURIComponent(dateStr)}`;
     if (taskMode === 'problem') {
@@ -351,7 +367,9 @@ export default function TaskPanel({ onOpenTaskDetails, onFocusTaskOnMap, listRev
           setProblemCounts({ cancelled: 0, declined: 0, failed: 0 });
         }
       })
-      .finally(() => setLoading(false));
+      .finally(() => {
+        if (!quiet) setLoading(false);
+      });
   }, [selectedDateTime, taskMode]);
 
   useEffect(() => {
@@ -360,7 +378,7 @@ export default function TaskPanel({ onOpenTaskDetails, onFocusTaskOnMap, listRev
 
   useEffect(() => {
     if (listRevision < 1) return;
-    fetchTasks();
+    fetchTasks({ quiet: true });
   }, [listRevision, fetchTasks]);
 
   useEffect(() => {
@@ -368,7 +386,8 @@ export default function TaskPanel({ onOpenTaskDetails, onFocusTaskOnMap, listRev
     return () => clearInterval(id);
   }, []);
 
-  useTableAutoRefresh(fetchTasks, activityRefreshIntervalMs);
+  const fetchTasksQuiet = useCallback(() => fetchTasks({ quiet: true }), [fetchTasks]);
+  useTableAutoRefresh(fetchTasksQuiet, activityRefreshIntervalMs);
 
   const normStatus = (status) => (status || '').toLowerCase().replace(/\s+/g, '').replace(/_/g, '');
 
