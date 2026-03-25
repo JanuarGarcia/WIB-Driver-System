@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { sanitizeMerchantDisplayName } from '../utils/displayText';
+import { DASHBOARD_ADMIN_ID_EVENT } from '../auth';
 import {
   MAP_MERCHANT_FILTER_STORAGE_KEY,
   FILTER_CHANGED,
@@ -15,12 +16,14 @@ export function useMapMerchantFilterSelection() {
   useEffect(() => {
     const sync = () => setIds(loadMapMerchantFilterFromSession());
     window.addEventListener(FILTER_CHANGED, sync);
+    window.addEventListener(DASHBOARD_ADMIN_ID_EVENT, sync);
     const onStorage = (e) => {
       if (e.key && e.key.startsWith(MAP_MERCHANT_FILTER_STORAGE_KEY)) sync();
     };
     window.addEventListener('storage', onStorage);
     return () => {
       window.removeEventListener(FILTER_CHANGED, sync);
+      window.removeEventListener(DASHBOARD_ADMIN_ID_EVENT, sync);
       window.removeEventListener('storage', onStorage);
     };
   }, []);
@@ -38,7 +41,7 @@ function merchantLabel(m) {
 }
 
 /**
- * Chips + searchable multi-select. Persists globally for all admins (server) plus local cache.
+ * Chips + searchable multi-select. Persists per signed-in admin (server) plus local cache per account.
  * @param {{ options: Array<{ merchant_id?: number, id?: number, restaurant_name?: string }>, className?: string }} props
  */
 function refocusSearchInput(inputRef) {

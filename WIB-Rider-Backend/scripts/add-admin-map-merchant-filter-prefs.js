@@ -1,9 +1,9 @@
 /**
- * Legacy: map merchant filter is stored globally under option key
- * `dashboard_map_merchant_filter_ids` in `settings` or `mt_option` (created on first save from the dashboard).
+ * Ensures `mt_admin_user_preferences` exists for per-admin dashboard map merchant filter.
+ * The filter is stored in `map_merchant_filter_ids` per `admin_id` (also auto-created on first API use).
  *
- * This script only ensures mt_admin_user_preferences exists if you still use it elsewhere; it is NOT required
- * for the shared dashboard map merchant filter.
+ * Legacy: `dashboard_map_merchant_filter_ids` in `settings` / `mt_option` is still read once per admin
+ * to migrate their first load if they had the old shared filter.
  *
  * Run: node -r dotenv/config scripts/add-admin-map-merchant-filter-prefs.js
  */
@@ -17,8 +17,7 @@ async function main() {
       map_merchant_filter_ids TEXT NULL
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `);
-  console.log('Ensured mt_admin_user_preferences exists (optional legacy table).');
-  console.log('Map filter uses settings key: dashboard_map_merchant_filter_ids');
+  console.log('Ensured mt_admin_user_preferences (per-admin map merchant filter).');
   await pool.end();
   console.log('Done.');
 }

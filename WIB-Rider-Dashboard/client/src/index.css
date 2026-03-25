@@ -2021,7 +2021,7 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
   padding-left: 0.15rem;
 }
 
-/* Merchant filter (Settings → Map settings; shared for all admins + local cache, drives dashboard map) */
+/* Merchant filter (Settings → Map settings; per admin account + local cache per account, drives dashboard map) */
 .map-merchant-filter {
   padding: 0.65rem 0.75rem;
   background: var(--bg-page);

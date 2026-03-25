@@ -1180,7 +1180,7 @@ export default function Settings() {
                 <div className="settings-field">
                   <MapMerchantFilter options={merchants} className="map-merchant-filter--settings" />
                   <p className="settings-helper">
-                    Limits merchant pins and task pins on the Dashboard map. On-duty riders always appear when they have a location; riders on a task for a merchant outside this list are hidden. One shared list for every dashboard admin—changes here apply to all accounts and devices after sync. This browser also keeps a local copy.
+                    Limits merchant pins and task pins on the Dashboard map. On-duty riders always appear when they have a location; riders on a task for a merchant outside this list are hidden. Saved for your dashboard account—after sync, the same filter applies on any device where you sign in. This browser keeps a local copy per account.
                   </p>
                 </div>
               </div>

@@ -406,8 +406,21 @@ router.get('/auth/me', requireDashboardToken, (req, res) => {
 
 router.use(adminAuth);
 
-/** Shared by all dashboard admins — stored in `settings` or `mt_option` like other site options. */
+/** Legacy global key (pre–per-admin prefs). Still read for lazy migration and for admin-key-only API access. */
 const DASHBOARD_MAP_MERCHANT_FILTER_KEY = 'dashboard_map_merchant_filter_ids';
+
+let adminUserPreferencesTableEnsured = false;
+
+async function ensureAdminUserPreferencesTable() {
+  if (adminUserPreferencesTableEnsured) return;
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS mt_admin_user_preferences (
+      admin_id INT NOT NULL PRIMARY KEY,
+      map_merchant_filter_ids TEXT NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+  adminUserPreferencesTableEnsured = true;
+}
 
 /** Normalize stored filter to string IDs; drops null/undefined/empty and literal "null"/"undefined". */
 function normalizeDashboardMapMerchantIdsInput(raw) {
@@ -482,8 +495,38 @@ async function getSettingsMap() {
   return fromOption;
 }
 
-async function handleGetDashboardMapMerchantFilter(_req, res) {
+async function handleGetDashboardMapMerchantFilter(req, res) {
   try {
+    const adminId = req.adminUser?.admin_id;
+    if (adminId != null && adminId !== '') {
+      await ensureAdminUserPreferencesTable();
+      const [rows] = await pool.query(
+        'SELECT map_merchant_filter_ids FROM mt_admin_user_preferences WHERE admin_id = ? LIMIT 1',
+        [adminId]
+      );
+      const row = rows && rows[0];
+      if (row && row.map_merchant_filter_ids != null && String(row.map_merchant_filter_ids).trim() !== '') {
+        const out = parseDashboardMapMerchantIdsStored(row.map_merchant_filter_ids);
+        if (out != null) {
+          if (out.length === 0) return res.json({ merchant_ids: [] });
+          return res.json({ merchant_ids: out });
+        }
+      }
+      const map = await getSettingsMap();
+      const legacyRaw = map[DASHBOARD_MAP_MERCHANT_FILTER_KEY];
+      if (legacyRaw != null && String(legacyRaw).trim() !== '') {
+        const migrated = parseDashboardMapMerchantIdsStored(legacyRaw);
+        if (migrated != null && migrated.length > 0) {
+          await pool.query(
+            `INSERT INTO mt_admin_user_preferences (admin_id, map_merchant_filter_ids) VALUES (?, ?)
+             ON DUPLICATE KEY UPDATE map_merchant_filter_ids = VALUES(map_merchant_filter_ids)`,
+            [adminId, JSON.stringify(migrated)]
+          );
+          return res.json({ merchant_ids: migrated });
+        }
+      }
+      return res.json({ merchant_ids: null });
+    }
     const map = await getSettingsMap();
     const raw = map[DASHBOARD_MAP_MERCHANT_FILTER_KEY];
     if (raw == null || (typeof raw === 'string' && raw.trim() === '')) {
@@ -510,6 +553,16 @@ async function handlePutDashboardMapMerchantFilter(req, res) {
   const normalized = normalizeDashboardMapMerchantIdsInput(raw);
   const jsonStr = JSON.stringify(normalized);
   try {
+    const adminId = req.adminUser?.admin_id;
+    if (adminId != null && adminId !== '') {
+      await ensureAdminUserPreferencesTable();
+      await pool.query(
+        `INSERT INTO mt_admin_user_preferences (admin_id, map_merchant_filter_ids) VALUES (?, ?)
+         ON DUPLICATE KEY UPDATE map_merchant_filter_ids = VALUES(map_merchant_filter_ids)`,
+        [adminId, jsonStr]
+      );
+      return res.json({ ok: true, merchant_ids: normalized });
+    }
     await upsertGlobalSettingKey(jsonStr, DASHBOARD_MAP_MERCHANT_FILTER_KEY);
     return res.json({ ok: true, merchant_ids: normalized });
   } catch (e) {
@@ -517,7 +570,7 @@ async function handlePutDashboardMapMerchantFilter(req, res) {
   }
 }
 
-// ---- Global dashboard map merchant filter (all admins, all devices) ----
+// ---- Per-dashboard-admin map merchant filter (syncs across devices for that account) ----
 router.get('/settings/map-merchant-filter', handleGetDashboardMapMerchantFilter);
 router.put('/settings/map-merchant-filter', handlePutDashboardMapMerchantFilter);
 /** Same handler — older dashboard bundles may call this path. */

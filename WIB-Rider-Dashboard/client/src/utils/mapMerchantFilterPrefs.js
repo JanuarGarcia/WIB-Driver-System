@@ -1,11 +1,61 @@
 import { api } from '../api';
-import { getToken } from '../auth';
+import {
+  getToken,
+  getDashboardAdminId,
+  setDashboardAdminId,
+  notifyDashboardAdminIdChanged,
+} from '../auth';
 
+/** Prefix for localStorage keys: exact legacy key, or `${prefix}:${adminId}` per account. */
 export const MAP_MERCHANT_FILTER_STORAGE_KEY = 'wib-map-merchant-filter-ids';
 
 const FILTER_CHANGED = 'wib-map-merchant-filter-changed';
 
 const HYDRATE_PATHS = ['settings/map-merchant-filter', 'user-preferences/map-merchant-filter'];
+
+export function getMapMerchantFilterStorageKey() {
+  const id = getDashboardAdminId();
+  return id ? `${MAP_MERCHANT_FILTER_STORAGE_KEY}:${id}` : MAP_MERCHANT_FILTER_STORAGE_KEY;
+}
+
+export async function ensureDashboardAdminId() {
+  if (!getToken()) return null;
+  const existing = getDashboardAdminId();
+  if (existing) return existing;
+  try {
+    const me = await api('auth/me');
+    const aid = me?.admin_id;
+    if (aid != null && String(aid).trim() !== '') {
+      const s = String(aid).trim();
+      setDashboardAdminId(s, { skipEvent: true });
+      migrateLegacyMapMerchantFilterLocalStorage();
+      notifyDashboardAdminIdChanged();
+      return s;
+    }
+  } catch (_) {}
+  return null;
+}
+
+/** Copy unscoped legacy cache into the current account key after login. */
+export function migrateLegacyMapMerchantFilterLocalStorage() {
+  try {
+    const id = getDashboardAdminId();
+    if (!id) return;
+    const scoped = `${MAP_MERCHANT_FILTER_STORAGE_KEY}:${id}`;
+    if (localStorage.getItem(scoped) != null) return;
+    const raw = localStorage.getItem(MAP_MERCHANT_FILTER_STORAGE_KEY);
+    if (raw == null || raw === '') return;
+    localStorage.setItem(scoped, raw);
+    localStorage.removeItem(MAP_MERCHANT_FILTER_STORAGE_KEY);
+    try {
+      const parsed = JSON.parse(raw);
+      const normalized = normalizeMapMerchantFilterIds(parsed);
+      window.dispatchEvent(new CustomEvent(FILTER_CHANGED, { detail: { ids: normalized } }));
+    } catch (_) {
+      window.dispatchEvent(new CustomEvent(FILTER_CHANGED, { detail: { ids: [] } }));
+    }
+  } catch (_) {}
+}
 
 export function normalizeMapMerchantFilterIds(ids) {
   if (!Array.isArray(ids)) return [];
@@ -22,16 +72,19 @@ export function normalizeMapMerchantFilterIds(ids) {
   return out;
 }
 
-/** Read raw JSON array from localStorage; one-time migrate from legacy sessionStorage. */
+/** Read raw JSON array from localStorage; one-time migrate from legacy sessionStorage (unscoped only). */
 function readMerchantFilterRaw() {
   try {
-    let raw = localStorage.getItem(MAP_MERCHANT_FILTER_STORAGE_KEY);
+    const key = getMapMerchantFilterStorageKey();
+    let raw = localStorage.getItem(key);
     if (raw == null || raw === '') {
-      const legacy = sessionStorage.getItem(MAP_MERCHANT_FILTER_STORAGE_KEY);
-      if (legacy) {
-        localStorage.setItem(MAP_MERCHANT_FILTER_STORAGE_KEY, legacy);
-        sessionStorage.removeItem(MAP_MERCHANT_FILTER_STORAGE_KEY);
-        raw = legacy;
+      if (key === MAP_MERCHANT_FILTER_STORAGE_KEY) {
+        const legacy = sessionStorage.getItem(MAP_MERCHANT_FILTER_STORAGE_KEY);
+        if (legacy) {
+          localStorage.setItem(MAP_MERCHANT_FILTER_STORAGE_KEY, legacy);
+          sessionStorage.removeItem(MAP_MERCHANT_FILTER_STORAGE_KEY);
+          raw = legacy;
+        }
       }
     }
     return raw;
@@ -70,9 +123,12 @@ function persistMapMerchantFilterToServer(ids) {
 export function saveMapMerchantFilterToSession(ids, opts = {}) {
   const normalized = normalizeMapMerchantFilterIds(ids);
   try {
-    if (normalized.length === 0) localStorage.removeItem(MAP_MERCHANT_FILTER_STORAGE_KEY);
-    else localStorage.setItem(MAP_MERCHANT_FILTER_STORAGE_KEY, JSON.stringify(normalized));
-    sessionStorage.removeItem(MAP_MERCHANT_FILTER_STORAGE_KEY);
+    const key = getMapMerchantFilterStorageKey();
+    if (normalized.length === 0) localStorage.removeItem(key);
+    else localStorage.setItem(key, JSON.stringify(normalized));
+    if (key === MAP_MERCHANT_FILTER_STORAGE_KEY) {
+      sessionStorage.removeItem(MAP_MERCHANT_FILTER_STORAGE_KEY);
+    }
   } catch (_) {}
   if (!opts.skipServerPut) persistMapMerchantFilterToServer(normalized);
   try {
@@ -80,8 +136,10 @@ export function saveMapMerchantFilterToSession(ids, opts = {}) {
   } catch (_) {}
 }
 
-/** Load global merchant filter from API (shared for all admins). Tries both URL paths for older servers/bundles. */
+/** Load merchant filter for the signed-in admin from API; updates local cache. */
 export async function hydrateMapMerchantFilterFromServer() {
+  await ensureDashboardAdminId();
+  migrateLegacyMapMerchantFilterLocalStorage();
   if (!getToken()) return;
   for (const path of HYDRATE_PATHS) {
     try {

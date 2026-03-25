@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { setToken } from '../auth';
+import { setToken, setDashboardAdminId, notifyDashboardAdminIdChanged } from '../auth';
+import { migrateLegacyMapMerchantFilterLocalStorage } from '../utils/mapMerchantFilterPrefs';
 
 const API = import.meta.env.DEV ? 'http://localhost:3000/admin/api' : '/api';
 const LOGO_IMG = '/when-in-baguio-logo.png';
@@ -76,6 +77,11 @@ export default function Login() {
         return;
       }
       setToken(data.token || '', rememberMe);
+      if (data.user?.admin_id != null) {
+        setDashboardAdminId(data.user.admin_id, { skipEvent: true });
+        migrateLegacyMapMerchantFilterLocalStorage();
+        notifyDashboardAdminIdChanged();
+      }
       navigate(from, { replace: true });
     } catch (err) {
       setError('Invalid credentials.');
