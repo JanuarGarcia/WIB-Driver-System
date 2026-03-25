@@ -38,6 +38,47 @@ function todayRaw() {
   return Math.floor(Date.now() / 1000).toString();
 }
 
+/** mt_order.payment_status may be absent on older DBs; retry without it once. */
+let mtOrderPaymentStatusColumn = true;
+
+/**
+ * Rider task rows with payment fields from mt_order (same shape for list + detail).
+ * @param {string} whereSql SQL after JOIN, starting with WHERE
+ * @param {unknown[]} params
+ * @returns {Promise<Record<string, unknown>[]>}
+ */
+async function queryRiderTaskRows(whereSql, params) {
+  const payStatusExpr = mtOrderPaymentStatusColumn ? 'o.payment_status AS payment_status' : 'NULL AS payment_status';
+  const sql = `SELECT t.task_id, t.order_id, t.task_description, t.trans_type AS trans_type_raw, t.contact_number, t.email_address, t.customer_name, t.delivery_date,
+      NULL AS delivery_time, t.delivery_address, t.task_lat, t.task_lng,
+      COALESCE(NULLIF(TRIM(m.restaurant_name), ''), NULLIF(TRIM(m2.restaurant_name), ''), t.dropoff_merchant) AS merchant_name,
+      t.drop_address AS merchant_address,
+      t.status, t.status AS status_raw, NULL AS order_status,
+      o.payment_type AS payment_type,
+      ${payStatusExpr},
+      CAST(COALESCE(o.total_w_tax, o.sub_total) AS CHAR) AS order_total_amount,
+      t.date_created
+    FROM mt_driver_task t
+    LEFT JOIN mt_order o ON o.order_id = t.order_id
+    LEFT JOIN mt_merchant m ON o.merchant_id = m.merchant_id
+    LEFT JOIN mt_merchant m2 ON t.dropoff_merchant REGEXP '^[0-9]+$' AND m2.merchant_id = t.dropoff_merchant
+    ${whereSql}`;
+  try {
+    const [rows] = await pool.query(sql, params);
+    return rows || [];
+  } catch (e) {
+    if (
+      mtOrderPaymentStatusColumn &&
+      e.code === 'ER_BAD_FIELD_ERROR' &&
+      /payment_status/i.test(String(e.sqlMessage || ''))
+    ) {
+      mtOrderPaymentStatusColumn = false;
+      return queryRiderTaskRows(whereSql, params);
+    }
+    throw e;
+  }
+}
+
 // ---- Public (api_key only) ----
 router.post('/Login', validateApiKey, async (req, res) => {
   const { username, password, device_id, device_platform } = req.body;
@@ -303,12 +344,8 @@ router.post('/UpdateVehicle', validateApiKey, resolveDriver, async (req, res) =>
 
 router.post('/GetTaskByDate', validateApiKey, resolveDriver, async (req, res) => {
   const date = req.body.date || todayStr();
-  const [rows] = await pool.query(
-    `SELECT task_id, order_id, task_description, trans_type AS trans_type_raw, contact_number, email_address, customer_name, delivery_date,
-      NULL AS delivery_time, delivery_address, task_lat, task_lng, dropoff_merchant AS merchant_name, drop_address AS merchant_address,
-      status, status AS status_raw, NULL AS order_status, NULL AS payment_type, NULL AS order_total_amount, date_created
-     FROM mt_driver_task
-     WHERE (delivery_date = ? OR DATE(delivery_date) = ?) AND (driver_id IS NULL OR driver_id = ?) ORDER BY task_id`,
+  const rows = await queryRiderTaskRows(
+    'WHERE (t.delivery_date = ? OR DATE(t.delivery_date) = ?) AND (t.driver_id IS NULL OR t.driver_id = ?) ORDER BY t.task_id',
     [date, date, req.driver.id]
   );
   const data = rows.map((r) => ({
@@ -321,13 +358,8 @@ router.post('/GetTaskByDate', validateApiKey, resolveDriver, async (req, res) =>
 router.post('/GetTaskDetails', validateApiKey, resolveDriver, async (req, res) => {
   const taskId = parseInt(req.body.task_id, 10);
   if (!taskId) return error(res, 'task_id required');
-  const [[r]] = await pool.query(
-    `SELECT task_id, order_id, task_description, trans_type AS trans_type_raw, contact_number, email_address, customer_name, delivery_date,
-      NULL AS delivery_time, delivery_address, task_lat, task_lng, dropoff_merchant AS merchant_name, drop_address AS merchant_address,
-      status, status AS status_raw, NULL AS order_status, NULL AS payment_type, NULL AS order_total_amount, date_created
-     FROM mt_driver_task WHERE task_id = ?`,
-    [taskId]
-  );
+  const rows = await queryRiderTaskRows('WHERE t.task_id = ? LIMIT 1', [taskId]);
+  const r = rows[0];
   if (!r) return error(res, 'Task not found');
   r.date_created = r.date_created ? new Date(r.date_created).toISOString() : null;
   return success(res, r);

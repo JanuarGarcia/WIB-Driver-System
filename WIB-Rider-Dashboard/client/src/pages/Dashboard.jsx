@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { useLocation, useNavigate } from 'react-router-dom';
 import TaskPanel from '../components/TaskPanel';
@@ -36,6 +36,16 @@ export default function Dashboard() {
   /** Bumped when task details modal mutates tasks so TaskPanel + AgentPanel refetch immediately. */
   const [taskListRevision, setTaskListRevision] = useState(0);
   const bumpTaskLists = useCallback(() => setTaskListRevision((n) => n + 1), []);
+
+  const agentPanelRef = useRef(null);
+  const [driverQueueCount, setDriverQueueCount] = useState(0);
+
+  const handleViewDriverQueueFromMap = useCallback(() => {
+    if (typeof window !== 'undefined' && window.matchMedia(MOBILE_DASHBOARD_MQ).matches) {
+      setMobileSection('agents');
+    }
+    agentPanelRef.current?.openDriverQueue?.();
+  }, []);
 
   const openTaskDetails = useCallback((id, opts) => {
     const tab =
@@ -353,6 +363,8 @@ export default function Dashboard() {
               merchants={filteredMerchantsForMap}
               taskMarkers={filteredMapTasks}
               showLegend
+              driverQueueCount={driverQueueCount}
+              onViewDriverQueue={handleViewDriverQueueFromMap}
               mapProvider={mapProvider}
               apiKey={googleApiKey}
               mapboxToken={mapboxToken}
@@ -368,10 +380,12 @@ export default function Dashboard() {
       </div>
       <div className="dashboard-layout-panel dashboard-layout-agents">
         <AgentPanel
+          ref={agentPanelRef}
           onOpenTaskDetails={handleOpenTaskDetailsFromPanel}
           onFocusRiderOnMap={handleFocusRiderOnMap}
           listRevision={taskListRevision}
           onTaskListInvalidate={bumpTaskLists}
+          onQueueCountChange={setDriverQueueCount}
         />
       </div>
     </div>

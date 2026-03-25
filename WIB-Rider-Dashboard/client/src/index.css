@@ -5520,6 +5520,83 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
   color: var(--color-info);
 }
 
+/* View queue pill + map legend (stacked, dashboard map) */
+.map-legend-stack {
+  position: absolute;
+  z-index: 400;
+  bottom: 10px;
+  right: 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.45rem;
+  max-width: min(220px, calc(100% - 24px));
+  pointer-events: none;
+}
+.map-legend-stack > * {
+  pointer-events: auto;
+}
+.leaflet-mapbox-wrap .map-legend-stack {
+  bottom: 26px;
+}
+.map-legend-stack .map-legend,
+.map-legend-stack .map-legend-reveal {
+  position: relative;
+  bottom: auto;
+  right: auto;
+}
+.map-view-queue-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: nowrap;
+  padding: 0.35rem 0.65rem;
+  font-size: 0.7rem;
+  font-weight: 700;
+  font-family: inherit;
+  letter-spacing: 0.02em;
+  color: var(--text-dark);
+  background: var(--bg-card);
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.12);
+  cursor: pointer;
+}
+.map-view-queue-pill:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+.map-view-queue-pill-label {
+  white-space: nowrap;
+}
+.map-view-queue-pill-badge {
+  min-width: 18px;
+  height: 18px;
+  padding: 0 6px;
+  box-sizing: border-box;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  color: #fff;
+  background: var(--color-danger);
+  border: 2px solid var(--agent-queue-badge-ring);
+  box-shadow: var(--agent-queue-badge-shadow);
+}
+[data-theme="dark"] .map-view-queue-pill {
+  background: var(--bg-surface-2);
+  border-color: var(--border-medium);
+  color: var(--text-dark);
+}
+[data-theme="dark"] .map-view-queue-pill:hover {
+  border-color: var(--color-primary);
+}
+
 /* Dashboard map legend */
 .map-legend {
   position: absolute;
@@ -5683,6 +5760,15 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
 }
 
 @media (max-width: 768px) {
+  .map-legend-stack {
+    bottom: 8px;
+    right: 8px;
+    max-width: min(200px, calc(100% - 20px));
+    gap: 0.35rem;
+  }
+  .leaflet-mapbox-wrap .map-legend-stack {
+    bottom: 22px;
+  }
   .map-legend {
     bottom: 8px;
     right: 8px;

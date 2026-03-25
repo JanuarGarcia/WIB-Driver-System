@@ -1619,6 +1619,69 @@ router.get('/order-history/feed', async (req, res) => {
   }
 });
 
+/** Prefer explicit *_id columns before generic names that may be varchar (e.g. payment_type-style). */
+const MT_ORDER_PAYMENT_PROVIDER_FK_CANDIDATES = [
+  'payment_provider_id',
+  'pyr_payment_provider_id',
+  'pyr_provider_id',
+  'payment_id',
+  'card_id',
+  'payment_provider',
+];
+
+let mtOrderPaymentProviderFkColumn;
+
+async function resolveMtOrderPaymentProviderFkColumn() {
+  if (mtOrderPaymentProviderFkColumn !== undefined) return mtOrderPaymentProviderFkColumn;
+  try {
+    const ph = MT_ORDER_PAYMENT_PROVIDER_FK_CANDIDATES.map(() => '?').join(',');
+    const fieldArgs = MT_ORDER_PAYMENT_PROVIDER_FK_CANDIDATES.map(() => '?').join(',');
+    const [rows] = await pool.query(
+      `SELECT COLUMN_NAME FROM information_schema.COLUMNS
+       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'mt_order'
+       AND COLUMN_NAME IN (${ph})
+       ORDER BY FIELD(COLUMN_NAME, ${fieldArgs})
+       LIMIT 1`,
+      [...MT_ORDER_PAYMENT_PROVIDER_FK_CANDIDATES, ...MT_ORDER_PAYMENT_PROVIDER_FK_CANDIDATES]
+    );
+    mtOrderPaymentProviderFkColumn = rows[0]?.COLUMN_NAME || null;
+  } catch {
+    mtOrderPaymentProviderFkColumn = null;
+  }
+  return mtOrderPaymentProviderFkColumn;
+}
+
+/** mt_order row plus payment_card_label from mt_payment_provider.payment_name (legacy UI "Card#"). */
+async function selectOrderRowWithPaymentProvider(orderId) {
+  const fk = await resolveMtOrderPaymentProviderFkColumn();
+  if (!fk) {
+    const [orderRows] = await pool.query('SELECT * FROM mt_order WHERE order_id = ? LIMIT 1', [orderId]);
+    return orderRows[0] || null;
+  }
+  const fkEsc = `\`${String(fk).replace(/`/g, '')}\``;
+  try {
+    const [orderRows] = await pool.query(
+      `SELECT o.*, pp.payment_name AS payment_card_label
+       FROM mt_order o
+       LEFT JOIN mt_payment_provider pp ON pp.id = o.${fkEsc}
+       WHERE o.order_id = ? LIMIT 1`,
+      [orderId]
+    );
+    return orderRows[0] || null;
+  } catch (e) {
+    if (e.code === 'ER_NO_SUCH_TABLE' && /mt_payment_provider/i.test(String(e.sqlMessage || ''))) {
+      const [orderRows] = await pool.query('SELECT * FROM mt_order WHERE order_id = ? LIMIT 1', [orderId]);
+      return orderRows[0] || null;
+    }
+    if (e.code === 'ER_BAD_FIELD_ERROR') {
+      mtOrderPaymentProviderFkColumn = null;
+      const [orderRows] = await pool.query('SELECT * FROM mt_order WHERE order_id = ? LIMIT 1', [orderId]);
+      return orderRows[0] || null;
+    }
+    throw e;
+  }
+}
+
 // ---- Single task (for task details) ----
 router.get('/tasks/:id', async (req, res) => {
   const id = parseInt(req.params.id, 10);
@@ -1646,8 +1709,7 @@ router.get('/tasks/:id', async (req, res) => {
   const orderId = task.order_id;
   if (orderId) {
     try {
-      const [orderRows] = await pool.query('SELECT * FROM mt_order WHERE order_id = ? LIMIT 1', [orderId]);
-      result.order = orderRows.length ? orderRows[0] : null;
+      result.order = await selectOrderRowWithPaymentProvider(orderId);
       if (result.order) {
         const [detailRows] = await pool.query('SELECT * FROM mt_order_details WHERE order_id = ? ORDER BY id', [orderId]);
         const merchantId = result.order.merchant_id;

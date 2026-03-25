@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, forwardRef, useImperativeHandle } from 'react';
 import { createPortal } from 'react-dom';
 import { Link, useNavigate } from 'react-router-dom';
 import { api, statusClass, statusLabel, resolveUploadUrl } from '../api';
@@ -161,12 +161,16 @@ function formatQueueWaiting(joinedAt) {
   return `${d} day${d === 1 ? '' : 's'}`;
 }
 
-export default function AgentPanel({
-  onOpenTaskDetails,
-  onFocusRiderOnMap,
-  listRevision = 0,
-  onTaskListInvalidate,
-}) {
+const AgentPanel = forwardRef(function AgentPanel(
+  {
+    onOpenTaskDetails,
+    onFocusRiderOnMap,
+    listRevision = 0,
+    onTaskListInvalidate,
+    onQueueCountChange,
+  },
+  ref
+) {
   const navigate = useNavigate();
   const { selectedTeamId } = useTeamFilter();
   const [details, setDetails] = useState({ active: [], offline: [], total: [] });
@@ -243,6 +247,23 @@ export default function AgentPanel({
     }, QUEUE_POLL_MS);
     return () => clearInterval(id);
   }, [loadQueue]);
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      openDriverQueue: () => {
+        setPanelMode('queue');
+        setSearchOpen(false);
+        setFilterDropdownOpen(false);
+        loadQueue();
+      },
+    }),
+    [loadQueue]
+  );
+
+  useEffect(() => {
+    if (typeof onQueueCountChange === 'function') onQueueCountChange(queueList.length);
+  }, [queueList.length, onQueueCountChange]);
 
   useEffect(() => {
     if (panelMode !== 'queue') return undefined;
@@ -1159,4 +1180,6 @@ export default function AgentPanel({
       )}
     </div>
   );
-}
+});
+
+export default AgentPanel;

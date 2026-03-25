@@ -92,6 +92,39 @@ function MapLegend() {
   );
 }
 
+/** Stacked above map legend: opens driver queue from dashboard; count when riders are queued. */
+function MapLegendStack({ showLegend, driverQueueCount = 0, onViewDriverQueue }) {
+  const showQueue = typeof onViewDriverQueue === 'function';
+  if (!showLegend && !showQueue) return null;
+  const n = Number(driverQueueCount) || 0;
+  const badgeText = n > 99 ? '99+' : String(n);
+  const queueLabel =
+    n > 0
+      ? `View driver queue, ${n} rider${n === 1 ? '' : 's'} waiting`
+      : 'View driver queue';
+  return (
+    <div className="map-legend-stack" aria-label="Map overlays">
+      {showQueue ? (
+        <button
+          type="button"
+          className="map-view-queue-pill"
+          onClick={onViewDriverQueue}
+          aria-label={queueLabel}
+          title={n > 0 ? `Driver queue (${n} waiting)` : 'Open driver queue'}
+        >
+          <span className="map-view-queue-pill-label">View queue</span>
+          {n > 0 ? (
+            <span className="map-view-queue-pill-badge" aria-hidden="true">
+              {badgeText}
+            </span>
+          ) : null}
+        </button>
+      ) : null}
+      {showLegend ? <MapLegend /> : null}
+    </div>
+  );
+}
+
 /** Orange delivery pin for Google Maps (distinct from default red pin + rider/merchant styling). */
 const GOOGLE_TASK_PIN_ICON = (() => {
   const svg =
@@ -498,6 +531,8 @@ function LeafletMapboxView({
   zoom,
   routeGeojson,
   showLegend = false,
+  driverQueueCount = 0,
+  onViewDriverQueue,
   mapResizeTrigger = 0,
   focusTaskRequest = null,
 }) {
@@ -543,7 +578,11 @@ function LeafletMapboxView({
         <LeafletMapboxMarkersLayer riderMarkers={riderMarkers} merchantMarkers={merchantMarkers} taskMapMarkers={taskMapMarkers} />
         <LeafletFlyToTaskFocus focusTaskRequest={focusTaskRequest} />
       </MapContainer>
-      {showLegend ? <MapLegend /> : null}
+      <MapLegendStack
+        showLegend={showLegend}
+        driverQueueCount={driverQueueCount}
+        onViewDriverQueue={onViewDriverQueue}
+      />
     </div>
   );
 }
@@ -745,6 +784,9 @@ function GoogleMapView({
   googleMapStyle,
   directionsRequest,
   onDirections,
+  showLegend = false,
+  driverQueueCount = 0,
+  onViewDriverQueue,
   mapResizeTrigger = 0,
   focusTaskRequest = null,
 }) {
@@ -817,6 +859,7 @@ function GoogleMapView({
       onError={() => setLoadError('Failed to load Google Maps')}
       loadingElement={<div className="map-container" style={{ ...MAP_STYLE, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#e8e8e8' }}>Loading map…</div>}
     >
+      <div className="map-container google-map-legend-wrap" style={{ position: 'relative', ...MAP_STYLE }}>
       {loadError ? (
         <div className="map-container" style={{ ...MAP_STYLE, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#e8e8e8', color: '#b33' }}>{loadError}</div>
       ) : (
@@ -896,6 +939,12 @@ function GoogleMapView({
           ))}
         </GoogleMap>
       )}
+      <MapLegendStack
+        showLegend={showLegend}
+        driverQueueCount={driverQueueCount}
+        onViewDriverQueue={onViewDriverQueue}
+      />
+      </div>
     </LoadScript>
   );
 }
@@ -914,6 +963,10 @@ export default function MapView({
   mapboxRouteGeojson,
   onGoogleDirections,
   showLegend = false,
+  /** Driver queue size for map “View queue” badge (dashboard). */
+  driverQueueCount = 0,
+  /** Opens agent panel driver queue (dashboard). */
+  onViewDriverQueue,
   /** Bump when the map container becomes visible or resizes (e.g. mobile tab switch). */
   mapResizeTrigger = 0,
   /** `{ nonce, lat, lng }` from dashboard task-card click — flies map to drop-off. */
@@ -950,6 +1003,8 @@ export default function MapView({
         zoom={zoom}
         routeGeojson={mapboxRouteGeojson}
         showLegend={showLegend}
+        driverQueueCount={driverQueueCount}
+        onViewDriverQueue={onViewDriverQueue}
         mapResizeTrigger={mapResizeTrigger}
         focusTaskRequest={focusTaskRequest}
       />
@@ -967,6 +1022,9 @@ export default function MapView({
         googleMapStyle={googleMapStyle}
         directionsRequest={directionsRequest}
         onDirections={onGoogleDirections}
+        showLegend={showLegend}
+        driverQueueCount={driverQueueCount}
+        onViewDriverQueue={onViewDriverQueue}
         mapResizeTrigger={mapResizeTrigger}
         focusTaskRequest={focusTaskRequest}
       />
