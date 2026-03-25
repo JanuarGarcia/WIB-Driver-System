@@ -4055,6 +4055,12 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
   color: var(--task-advance-text);
   font-size: 0.78rem;
 }
+.task-card-v2-advance-note {
+  font-weight: 600;
+  color: var(--task-advance-text);
+  font-size: 0.78rem;
+  font-style: italic;
+}
 
 .task-card-all-tasks-advance {
   margin-top: 0.35rem;
@@ -4086,6 +4092,14 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
   font-size: 0.8125rem;
   font-weight: 600;
   color: var(--task-advance-text);
+}
+.task-detail-advance-banner-line--note {
+  margin-top: 0.35rem;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  font-style: italic;
+  color: var(--task-advance-text);
+  line-height: 1.4;
 }
 
 .task-card-v2-address {

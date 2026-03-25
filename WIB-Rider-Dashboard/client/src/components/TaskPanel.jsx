@@ -835,6 +835,9 @@ export default function TaskPanel({ onOpenTaskDetails, onFocusTaskOnMap, listRev
                       {advanceLines.orderedLine ? (
                         <span className="task-card-v2-advance-line">{advanceLines.orderedLine}</span>
                       ) : null}
+                      {advanceLines.noteLine ? (
+                        <span className="task-card-v2-advance-line task-card-v2-advance-note">{advanceLines.noteLine}</span>
+                      ) : null}
                     </div>
                   )}
                   {isUnassigned && waitingMins && (

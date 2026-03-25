@@ -948,7 +948,9 @@ export default function TaskDetailsModal({
       : order?.delivery_date
         ? formatDateOnly(order.delivery_date)
         : formatDateOnly(task?.delivery_date);
-  const advanceLinesModal = order ? getAdvanceOrderLines(order, task?.date_created) : null;
+  const advanceLinesModal = order
+    ? getAdvanceOrderLines({ ...order, advance_order_note: task?.advance_order_note }, task?.date_created)
+    : null;
 
   const filteredTimeline = timeline.filter(Boolean);
   const hasProofPhotoTimelineItem = filteredTimeline.some((e) => e.type === 'photo');
@@ -998,6 +1000,11 @@ export default function TaskDetailsModal({
                         {advanceLinesModal.orderedLine ? (
                           <div className="task-detail-advance-banner-line task-detail-advance-banner-line--secondary">
                             {advanceLinesModal.orderedLine}
+                          </div>
+                        ) : null}
+                        {advanceLinesModal.noteLine ? (
+                          <div className="task-detail-advance-banner-line task-detail-advance-banner-line--note">
+                            {displaySanitized(advanceLinesModal.noteLine) || advanceLinesModal.noteLine}
                           </div>
                         ) : null}
                       </div>

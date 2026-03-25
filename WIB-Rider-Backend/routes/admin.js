@@ -1504,6 +1504,37 @@ async function fetchMergedTaskOrderHistory(pool, taskId, orderId) {
   }
 }
 
+/**
+ * Latest remarks/notes from mt_order_history where status is "Advance Order" (admin timeline note).
+ * Same task/order linking as fetchMergedTaskOrderHistory.
+ */
+async function fetchLatestAdvanceOrderNoteForTask(pool, taskId, orderId) {
+  try {
+    const oid = orderId != null && String(orderId).trim() !== '' && String(orderId).trim() !== '0' ? orderId : null;
+    const [rows] = await pool.query(
+      `SELECT COALESCE(NULLIF(TRIM(h.remarks), ''), NULLIF(TRIM(h.notes), ''), NULLIF(TRIM(h.remarks2), '')) AS note
+       FROM mt_order_history h
+       WHERE (
+         (h.task_id IS NOT NULL AND CAST(h.task_id AS UNSIGNED) > 0 AND h.task_id = ?)
+         OR (
+           ? IS NOT NULL
+           AND (h.task_id IS NULL OR CAST(h.task_id AS UNSIGNED) = 0)
+           AND h.order_id = ?
+         )
+       )
+       AND LOWER(REPLACE(REPLACE(TRIM(COALESCE(h.status,'')), ' ', ''), '_', '')) = 'advanceorder'
+       ORDER BY h.date_created DESC, h.id DESC
+       LIMIT 1`,
+      [taskId, oid, oid]
+    );
+    const n = rows && rows[0] && rows[0].note != null ? String(rows[0].note).trim() : '';
+    return n || null;
+  } catch (e) {
+    if (e.code === 'ER_NO_SUCH_TABLE' || e.code === 'ER_BAD_FIELD_ERROR') return null;
+    throw e;
+  }
+}
+
 // ---- Task order history (for activity timeline; client may call when details omit it) ----
 router.get('/tasks/:id/order-history', async (req, res) => {
   const id = parseInt(req.params.id, 10);
@@ -1807,6 +1838,11 @@ router.get('/tasks/:id', async (req, res) => {
     }
   }
 
+  try {
+    const advNote = await fetchLatestAdvanceOrderNoteForTask(pool, id, task.order_id);
+    if (advNote) result.task.advance_order_note = advNote;
+  } catch (_) {}
+
   // Proof of delivery: mt_driver_task_photo for this task (+ proof_urls for timeline)
   const { task_photos, proof_images } = await fetchTaskProofPhotosWithUrls(pool, id);
   result.task_photos = task_photos;
@@ -1915,7 +1951,22 @@ router.get('/tasks', async (req, res) => {
     o.delivery_time AS order_delivery_time,
     o.delivery_date AS order_delivery_date,
     o.date_created AS order_placed_at,
-    del_addr.delivery_location_name, del_addr.delivery_google_lat, del_addr.delivery_google_lng
+    del_addr.delivery_location_name, del_addr.delivery_google_lat, del_addr.delivery_google_lng,
+    (
+      SELECT COALESCE(NULLIF(TRIM(h.remarks), ''), NULLIF(TRIM(h.notes), ''), NULLIF(TRIM(h.remarks2), ''))
+      FROM mt_order_history h
+      WHERE (
+        h.task_id = t.task_id
+        OR (
+          t.order_id IS NOT NULL AND CAST(t.order_id AS UNSIGNED) > 0
+          AND h.order_id = t.order_id
+          AND (h.task_id IS NULL OR CAST(h.task_id AS UNSIGNED) = 0)
+        )
+      )
+      AND LOWER(REPLACE(REPLACE(TRIM(COALESCE(h.status,'')), ' ', ''), '_', '')) = 'advanceorder'
+      ORDER BY h.date_created DESC, h.id DESC
+      LIMIT 1
+    ) AS advance_order_note
     FROM mt_driver_task t
     LEFT JOIN mt_driver d ON t.driver_id = d.driver_id
     LEFT JOIN mt_order o ON t.order_id = o.order_id
@@ -1997,6 +2048,9 @@ router.get('/tasks', async (req, res) => {
       } else {
         out.direction = null;
       }
+      const advNote = r.advance_order_note != null ? String(r.advance_order_note).trim() : '';
+      if (advNote) out.advance_order_note = advNote;
+      else delete out.advance_order_note;
       return out;
     });
     return res.json(rows);

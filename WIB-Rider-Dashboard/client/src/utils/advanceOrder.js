@@ -78,7 +78,7 @@ function formatOrderedTime12h(raw) {
 }
 
 /**
- * @returns {{ deliveryLine: string, orderedLine: string | null } | null}
+ * @returns {{ deliveryLine: string, orderedLine: string | null, noteLine: string | null } | null}
  */
 export function getAdvanceOrderLines(input, taskDateCreatedFallback) {
   if (!isAdvanceOrderDisplay(input)) return null;
@@ -96,5 +96,8 @@ export function getAdvanceOrderLines(input, taskDateCreatedFallback) {
   const orderedAt = formatOrderedTime12h(placedRaw);
   const orderedLine = orderedAt ? `Ordered time ${orderedAt}` : null;
 
-  return { deliveryLine, orderedLine };
+  const noteRaw = input.advance_order_note != null ? String(input.advance_order_note).trim() : '';
+  const noteLine = noteRaw || null;
+
+  return { deliveryLine, orderedLine, noteLine };
 }
