@@ -3124,6 +3124,7 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
   align-items: center;
   gap: 0.35rem;
   min-width: 0;
+  overflow: visible;
 }
 .panel.agent-panel .panel-header.agent-header .agent-header-leading .panel-header-title-wrap {
   min-width: 0;
@@ -3167,6 +3168,42 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
 }
 .panel.agent-panel .panel-header.agent-header .agent-panel-queue-toggle {
   margin-left: 0.1rem;
+  overflow: visible;
+}
+.agent-panel-queue-toggle-inner {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+}
+.agent-panel-queue-badge {
+  position: absolute;
+  top: -6px;
+  right: -9px;
+  min-width: 17px;
+  height: 17px;
+  padding: 0 5px;
+  box-sizing: border-box;
+  border-radius: 999px;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 13px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  letter-spacing: -0.02em;
+  color: #fff;
+  background: var(--color-danger);
+  border: 2px solid var(--color-primary);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+  pointer-events: none;
+}
+[data-theme="dark"] .agent-panel-queue-badge {
+  border-color: var(--color-primary);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
 }
 /* Agent ↔ Queue: same right panel, alternate view */
 .agent-panel-mode-pane {
@@ -3369,21 +3406,6 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
   gap: 0.35rem;
   align-self: center;
 }
-.driver-queue-assign {
-  font-size: 0.72rem;
-  padding: 0.28rem 0.5rem;
-  border-radius: 6px;
-  border: 1px solid var(--color-primary, #16a34a);
-  background: transparent;
-  color: var(--color-primary, #16a34a);
-  font-weight: 600;
-}
-.driver-queue-assign:hover:not(:disabled) {
-  background: rgba(22, 163, 74, 0.12);
-}
-.driver-queue-assign:disabled {
-  opacity: 0.55;
-}
 .driver-queue-remove {
   flex-shrink: 0;
   font-size: 0.72rem;
@@ -3497,13 +3519,6 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
 }
 [data-theme="dark"] .driver-queue-assign-row {
   background: var(--bg-card, #1f2937);
-}
-[data-theme="dark"] .driver-queue-assign {
-  color: var(--color-primary, #4ade80);
-  border-color: rgba(74, 222, 128, 0.45);
-}
-[data-theme="dark"] .driver-queue-assign:hover:not(:disabled) {
-  background: rgba(74, 222, 128, 0.1);
 }
 [data-theme="dark"] .driver-queue-summary-value,
 [data-theme="dark"] .driver-queue-row-name {
@@ -5785,6 +5800,48 @@ tr:hover { background: var(--bg-hover) !important; }
 .btn-sm { padding: 0.35rem 0.65rem; font-size: 0.8125rem; font-weight: 400; }
 .link { color: var(--color-primary); text-decoration: none; cursor: pointer; }
 .link:hover { text-decoration: underline; color: var(--color-primary-hover); }
+/* Driver queue “Assign task”: after .btn so it wins the cascade (generic .btn resets border/background). */
+.btn.driver-queue-assign {
+  border: none;
+  background: transparent;
+  color: var(--color-primary);
+  font-weight: 700;
+  font-size: 0.8125rem;
+  line-height: 1.25;
+  letter-spacing: 0.02em;
+  text-decoration: underline;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 4px;
+  text-decoration-color: var(--color-primary-light);
+  padding: 0.4rem 0.2rem;
+  min-height: auto;
+  box-shadow: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.btn.driver-queue-assign:hover:not(:disabled) {
+  color: var(--color-primary-hover);
+  background: var(--color-primary-tint);
+  text-decoration-color: var(--color-primary-hover);
+}
+.btn.driver-queue-assign:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+.btn.driver-queue-assign:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  text-decoration: none;
+}
+[data-theme="dark"] .btn.driver-queue-assign {
+  color: var(--color-primary-light);
+  text-decoration-color: var(--color-primary);
+}
+[data-theme="dark"] .btn.driver-queue-assign:hover:not(:disabled) {
+  color: var(--color-primary-hover);
+  background: var(--color-primary-tint-strong);
+  text-decoration-color: var(--color-primary-hover);
+}
 .err { color: var(--color-danger); font-size: 0.875rem; }
 .loading { text-align: center; padding: 2rem; color: var(--text-muted); font-size: 0.9375rem; font-weight: 400; }
 

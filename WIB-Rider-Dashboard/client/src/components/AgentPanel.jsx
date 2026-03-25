@@ -235,13 +235,14 @@ export default function AgentPanel({
     }
   }, []);
 
+  /* Keep queue list in sync for the open queue view and the header badge while on Agent. */
   useEffect(() => {
-    if (panelMode !== 'queue') return undefined;
+    loadQueue({ silent: true });
     const id = setInterval(() => {
       loadQueue({ silent: true });
     }, QUEUE_POLL_MS);
     return () => clearInterval(id);
-  }, [panelMode, loadQueue]);
+  }, [loadQueue]);
 
   useEffect(() => {
     if (panelMode !== 'queue') return undefined;
@@ -541,6 +542,7 @@ export default function AgentPanel({
   };
 
   const totalQueued = queueList.length;
+  const queueBadgeText = totalQueued > 99 ? '99+' : String(totalQueued);
   const nextInLine = totalQueued > 0 ? queueList[0] : null;
 
   return (
@@ -571,17 +573,26 @@ export default function AgentPanel({
               <button
                 type="button"
                 className="panel-header-icon-btn agent-panel-queue-toggle"
-                aria-label="Open driver queue"
+                aria-label={
+                  totalQueued > 0
+                    ? `Open driver queue, ${totalQueued} rider${totalQueued === 1 ? '' : 's'} waiting`
+                    : 'Open driver queue'
+                }
                 aria-pressed={false}
                 onClick={openQueueView}
-                title="Driver queue"
+                title={totalQueued > 0 ? `Driver queue (${totalQueued} waiting)` : 'Driver queue'}
               >
-                <svg className="agent-header-leading-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <circle cx="6" cy="6" r="2.25" fill="currentColor" stroke="none" />
-                  <circle cx="6" cy="12" r="2.25" fill="currentColor" stroke="none" opacity="0.85" />
-                  <circle cx="6" cy="18" r="2.25" fill="currentColor" stroke="none" opacity="0.65" />
-                  <path d="M11 6h9M11 12h9M11 18h6" />
-                </svg>
+                <span className="agent-panel-queue-toggle-inner">
+                  <svg className="agent-header-leading-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <circle cx="6" cy="6" r="2.25" fill="currentColor" stroke="none" />
+                    <circle cx="6" cy="12" r="2.25" fill="currentColor" stroke="none" opacity="0.85" />
+                    <circle cx="6" cy="18" r="2.25" fill="currentColor" stroke="none" opacity="0.65" />
+                    <path d="M11 6h9M11 12h9M11 18h6" />
+                  </svg>
+                  {totalQueued > 0 && (
+                    <span className="agent-panel-queue-badge">{queueBadgeText}</span>
+                  )}
+                </span>
               </button>
             </>
           )}
