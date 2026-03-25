@@ -5671,6 +5671,14 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
   bottom: 26px;
   right: 10px;
 }
+/* Stack: leaflet corner offsets must not apply — they pull legend over “View queue”. */
+.leaflet-mapbox-wrap .map-legend-stack .map-legend,
+.leaflet-mapbox-wrap .map-legend-stack .map-legend-reveal {
+  bottom: auto;
+  right: auto;
+  left: auto;
+  top: auto;
+}
 .map-legend-list {
   list-style: none;
   margin: 0;
@@ -5784,6 +5792,13 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
   }
   .leaflet-mapbox-wrap .map-legend-reveal {
     bottom: 22px;
+  }
+  .leaflet-mapbox-wrap .map-legend-stack .map-legend,
+  .leaflet-mapbox-wrap .map-legend-stack .map-legend-reveal {
+    bottom: auto;
+    right: auto;
+    left: auto;
+    top: auto;
   }
 }
 
