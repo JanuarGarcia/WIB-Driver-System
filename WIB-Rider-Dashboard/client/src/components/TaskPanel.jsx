@@ -437,6 +437,7 @@ export default function TaskPanel({ onOpenTaskDetails, onFocusTaskOnMap, listRev
             className="panel-header-date tasks-panel-header-date tasks-panel-date-trigger"
             onClick={() => (calendarOpen ? setCalendarOpen(false) : openCalendar())}
             aria-label="Select date and time"
+            title="Choose which day’s tasks to show (and time for scheduling)"
             aria-expanded={calendarOpen}
           >
             <span className="panel-header-date-icon" aria-hidden="true">
@@ -561,6 +562,7 @@ export default function TaskPanel({ onOpenTaskDetails, onFocusTaskOnMap, listRev
               role="tab"
               aria-selected={taskMode === 'active'}
               className={`tasks-panel-view-switch-seg ${taskMode === 'active' ? 'is-active' : ''}`}
+              title="Normal workflow: unassigned, assigned, and completed tasks"
               onClick={() => {
                 setTaskMode('active');
                 setScheduledOrdersOnly(false);
@@ -573,6 +575,7 @@ export default function TaskPanel({ onOpenTaskDetails, onFocusTaskOnMap, listRev
               role="tab"
               aria-selected={taskMode === 'problem'}
               className={`tasks-panel-view-switch-seg ${taskMode === 'problem' ? 'is-active' : ''}`}
+              title="Cancelled, declined, or failed tasks that need attention"
               onClick={() => {
                 setTaskMode('problem');
                 setScheduledOrdersOnly(false);
@@ -586,6 +589,7 @@ export default function TaskPanel({ onOpenTaskDetails, onFocusTaskOnMap, listRev
               type="button"
               className={`tasks-panel-header-icon tasks-panel-sort-menu-trigger ${sortDropdownOpen ? 'active' : ''}`}
               aria-label="Sort list: order and direction"
+              title="Change task sort (e.g. RFP, latest vs oldest)"
               aria-expanded={sortDropdownOpen}
               onClick={() => setSortDropdownOpen((o) => !o)}
             >
@@ -650,6 +654,11 @@ export default function TaskPanel({ onOpenTaskDetails, onFocusTaskOnMap, listRev
               onClick={() => setScheduledOrdersOnly((v) => !v)}
               aria-pressed={scheduledOrdersOnly}
               aria-label={scheduledOrdersOnly ? 'Exit scheduled orders view, show status tab list' : `Show scheduled orders${scheduledCount ? `, ${scheduledCount} on this date` : ''}`}
+              title={
+                scheduledOrdersOnly
+                  ? 'Return to unassigned / assigned / completed tabs'
+                  : `Show only future scheduled orders for this date${scheduledCount ? ` (${scheduledCount})` : ''}`
+              }
             >
               Scheduled Orders
               {scheduledCount > 0 ? (
@@ -673,6 +682,13 @@ export default function TaskPanel({ onOpenTaskDetails, onFocusTaskOnMap, listRev
               }}
               aria-pressed={activeTab === key && !scheduledOrdersOnly}
               aria-label={`${label}: ${count}`}
+              title={
+                key === 'unassigned'
+                  ? 'Tasks not yet assigned to a rider'
+                  : key === 'assigned'
+                    ? 'Tasks accepted or in progress with a rider'
+                    : 'Delivered or completed tasks for this date'
+              }
             >
               <span className="panel-stats-icon" aria-hidden="true">
                 {icon === 'clock' && (
@@ -698,6 +714,13 @@ export default function TaskPanel({ onOpenTaskDetails, onFocusTaskOnMap, listRev
               onClick={() => persistProblemFilter(key)}
               aria-pressed={problemTaskFilter === key}
               aria-label={`${label}: ${count}`}
+              title={
+                key === 'cancelled'
+                  ? 'Orders cancelled before or during delivery'
+                  : key === 'declined'
+                    ? 'Tasks the rider declined'
+                    : 'Tasks that could not be completed'
+              }
             >
               <span className="panel-stats-icon" aria-hidden="true">
                 {icon === 'ban' && (

@@ -392,13 +392,6 @@ const AgentPanel = forwardRef(function AgentPanel(
     else handleRefresh();
   };
 
-  const openQueueView = () => {
-    setPanelMode('queue');
-    setSearchOpen(false);
-    setFilterDropdownOpen(false);
-    loadQueue();
-  };
-
   const closeQueueView = () => {
     setPanelMode('agents');
     setQueueError(null);
@@ -563,7 +556,6 @@ const AgentPanel = forwardRef(function AgentPanel(
   };
 
   const totalQueued = queueList.length;
-  const queueBadgeText = totalQueued > 99 ? '99+' : String(totalQueued);
   const nextInLine = totalQueued > 0 ? queueList[0] : null;
 
   return (
@@ -589,33 +581,7 @@ const AgentPanel = forwardRef(function AgentPanel(
               <span className="panel-header-title-wrap">Driver Queue</span>
             </>
           ) : (
-            <>
-              <span className="panel-header-title-wrap">Agent</span>
-              <button
-                type="button"
-                className="panel-header-icon-btn agent-panel-queue-toggle"
-                aria-label={
-                  totalQueued > 0
-                    ? `Open driver queue, ${totalQueued} rider${totalQueued === 1 ? '' : 's'} waiting`
-                    : 'Open driver queue'
-                }
-                aria-pressed={false}
-                onClick={openQueueView}
-                title={totalQueued > 0 ? `Driver queue (${totalQueued} waiting)` : 'Driver queue'}
-              >
-                <span className="agent-panel-queue-toggle-inner">
-                  <svg className="agent-header-leading-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                    <circle cx="6" cy="6" r="2.25" fill="currentColor" stroke="none" />
-                    <circle cx="6" cy="12" r="2.25" fill="currentColor" stroke="none" opacity="0.85" />
-                    <circle cx="6" cy="18" r="2.25" fill="currentColor" stroke="none" opacity="0.65" />
-                    <path d="M11 6h9M11 12h9M11 18h6" />
-                  </svg>
-                  {totalQueued > 0 && (
-                    <span className="agent-panel-queue-badge">{queueBadgeText}</span>
-                  )}
-                </span>
-              </button>
-            </>
+            <span className="panel-header-title-wrap">Agent</span>
           )}
         </div>
         <div className="panel-header-actions agent-header-icons">
@@ -638,6 +604,7 @@ const AgentPanel = forwardRef(function AgentPanel(
               type="button"
               className="panel-header-icon-btn"
               aria-label="Filter / Sort"
+              title="Sort agents (name A–Z, Z–A, or by status)"
               aria-expanded={filterDropdownOpen}
               onClick={() => setFilterDropdownOpen((o) => !o)}
             >
@@ -662,7 +629,13 @@ const AgentPanel = forwardRef(function AgentPanel(
               </div>
             )}
           </div>
-          <button type="button" className="panel-header-icon-btn" aria-label="Send / Broadcast" onClick={handleSendClick}>
+          <button
+            type="button"
+            className="panel-header-icon-btn"
+            aria-label="Send / Broadcast"
+            title="Open broadcast logs — send push messages to riders"
+            onClick={handleSendClick}
+          >
             <svg width="25" height="25" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
           </button>
           <div className="agent-header-search-wrap">
@@ -670,6 +643,7 @@ const AgentPanel = forwardRef(function AgentPanel(
               type="button"
               className={`panel-header-icon-btn ${searchOpen ? 'active' : ''}`}
               aria-label="Search agents"
+              title="Search agents by name, location, or phone"
               aria-expanded={searchOpen}
               onClick={() => setSearchOpen((o) => !o)}
             >
@@ -698,7 +672,7 @@ const AgentPanel = forwardRef(function AgentPanel(
       {panelMode === 'agents' && (
       <div className="agent-panel-mode-pane agent-panel-mode-pane--agents" key="agents-mode">
       <div className={`panel-all-task-wrap ${allTasksView ? 'panel-all-task-wrap--active' : ''}`}>
-        <label className="btn-all-task btn-all-task-toggle">
+        <label className="btn-all-task btn-all-task-toggle" title="Show every rider’s assigned tasks in one list">
           <input
             type="checkbox"
             checked={allTasksView}
@@ -729,6 +703,13 @@ const AgentPanel = forwardRef(function AgentPanel(
             }}
             aria-pressed={activeTab === key}
             aria-label={`${label}: ${count}`}
+            title={
+              key === 'active'
+                ? 'Show riders who are connected and on duty'
+                : key === 'offline'
+                  ? 'Show riders who are offline or not on duty'
+                  : 'Show full rider roster (all statuses)'
+            }
           >
             <span className="panel-stats-icon" aria-hidden="true">
               {icon === 'active' && (

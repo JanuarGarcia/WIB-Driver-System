@@ -52,7 +52,13 @@ function MapLegend() {
   };
   if (!expanded) {
     return (
-      <button type="button" className="map-legend-reveal" onClick={expand} aria-label="Show map legend">
+      <button
+        type="button"
+        className="map-legend-reveal"
+        onClick={expand}
+        aria-label="Show map legend"
+        title="Explain rider, merchant, and task pins on the map"
+      >
         Map legend
       </button>
     );
@@ -61,7 +67,13 @@ function MapLegend() {
     <div className="map-legend" aria-label="Map legend">
       <div className="map-legend-header">
         <div className="map-legend-title">Map legend</div>
-        <button type="button" className="map-legend-hide" onClick={collapse} aria-label="Hide map legend">
+        <button
+          type="button"
+          className="map-legend-hide"
+          onClick={collapse}
+          aria-label="Hide map legend"
+          title="Hide the legend"
+        >
           Hide
         </button>
       </div>
@@ -110,7 +122,11 @@ function MapLegendStack({ showLegend, driverQueueCount = 0, onViewDriverQueue })
           className="map-view-queue-pill"
           onClick={onViewDriverQueue}
           aria-label={queueLabel}
-          title={n > 0 ? `Driver queue (${n} waiting)` : 'Open driver queue'}
+          title={
+            n > 0
+              ? `Open the driver waiting line in the Agent panel (${n} rider${n === 1 ? '' : 's'} queued)`
+              : 'Open the driver waiting line in the Agent panel'
+          }
         >
           <span className="map-view-queue-pill-label">View queue</span>
           {n > 0 ? (

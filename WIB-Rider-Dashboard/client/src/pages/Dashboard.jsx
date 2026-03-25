@@ -298,6 +298,7 @@ export default function Dashboard() {
           className={`dashboard-mobile-tab ${mobileSection === 'tasks' ? 'active' : ''}`}
           onClick={() => setMobileSection('tasks')}
           aria-pressed={mobileSection === 'tasks'}
+          title="Task list and dispatch"
         >
           Tasks
         </button>
@@ -306,6 +307,7 @@ export default function Dashboard() {
           className={`dashboard-mobile-tab ${mobileSection === 'map' ? 'active' : ''}`}
           onClick={() => setMobileSection('map')}
           aria-pressed={mobileSection === 'map'}
+          title="Live map: riders, stores, open tasks"
         >
           Map
         </button>
@@ -314,6 +316,7 @@ export default function Dashboard() {
           className={`dashboard-mobile-tab ${mobileSection === 'agents' ? 'active' : ''}`}
           onClick={() => setMobileSection('agents')}
           aria-pressed={mobileSection === 'agents'}
+          title="Rider roster and driver queue"
         >
           Agents
         </button>

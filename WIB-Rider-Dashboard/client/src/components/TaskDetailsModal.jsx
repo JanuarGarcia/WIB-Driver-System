@@ -1084,7 +1084,7 @@ export default function TaskDetailsModal({
                           <span className="task-detail-value">{task.contact_number ?? order?.contact_number ?? '—'}</span>
                         </div>
                         <div className="task-detail-pickup-item task-detail-pickup-address">
-                          <span className="task-detail-label">Merchat Address</span>
+                          <span className="task-detail-label">Address</span>
                           <span className="task-detail-value">{merchantAddressDisplay}</span>
                         </div>
                       </div>
@@ -1213,7 +1213,7 @@ export default function TaskDetailsModal({
                         </div>
                         <div className="task-detail-col">
                           <div className="task-detail-row"><span className="task-detail-label">Merchant name</span><span className="task-detail-value">{merchantName}</span></div>
-                          <div className="task-detail-row"><span className="task-detail-label">Address</span><span className="task-detail-value">{merchantAddressDisplay}</span></div>
+                          <div className="task-detail-row"><span className="task-detail-label">Merchant Address</span><span className="task-detail-value">{merchantAddressDisplay}</span></div>
                         </div>
                       </div>
                     </div>
@@ -1222,7 +1222,6 @@ export default function TaskDetailsModal({
                       <div className="task-detail-section-row">
                         <div className="task-detail-row"><span className="task-detail-label">TRN type</span><span className="task-detail-value">{order?.trans_type ?? '—'}</span></div>
                         <div className="task-detail-row"><span className="task-detail-label">Payment type</span><span className="task-detail-value">{order?.payment_type ?? task.payment_type ?? '—'}</span></div>
-                        <div className="task-detail-row"><span className="task-detail-label">Card#</span><span className="task-detail-value">{order?.payment_card_label != null && String(order.payment_card_label).trim() !== '' ? order.payment_card_label : '—'}</span></div>
                         <div className="task-detail-row"><span className="task-detail-label">Reference #</span><span className="task-detail-value">{order?.order_id ?? task.order_id ?? '—'}</span></div>
                         <div className="task-detail-row"><span className="task-detail-label">TRN date</span><span className="task-detail-value">{order?.date_created ? formatDate(order.date_created) : '—'}</span></div>
                         <div className="task-detail-row"><span className="task-detail-label">Delivery date</span><span className="task-detail-value">{order?.delivery_date ? formatDateOnly(order.delivery_date) : '—'}</span></div>
