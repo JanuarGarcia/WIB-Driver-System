@@ -1,4 +1,44 @@
 /**
+ * Decode HTML entities (e.g. &amp; → &) for display. Loops for double-encoded strings.
+ * Pure string replace — safe for text nodes; use before any HTML escaping for popups.
+ */
+export function decodeHtmlEntities(raw) {
+  if (raw == null) return '';
+  let s = String(raw);
+  if (!s) return s;
+  for (let pass = 0; pass < 8; pass += 1) {
+    const prev = s;
+    s = s
+      .replace(/&#x([0-9a-f]+);/gi, (_, h) => {
+        const code = parseInt(h, 16);
+        if (!Number.isFinite(code) || code < 0 || code > 0x10ffff) return _;
+        try {
+          return String.fromCodePoint(code);
+        } catch {
+          return _;
+        }
+      })
+      .replace(/&#(\d+);/g, (_, n) => {
+        const code = parseInt(n, 10);
+        if (!Number.isFinite(code) || code < 0 || code > 0x10ffff) return _;
+        try {
+          return String.fromCodePoint(code);
+        } catch {
+          return _;
+        }
+      })
+      .replace(/&quot;/gi, '"')
+      .replace(/&apos;/gi, "'")
+      .replace(/&#0*39;/g, "'")
+      .replace(/&lt;/gi, '<')
+      .replace(/&gt;/gi, '>')
+      .replace(/&amp;/gi, '&');
+    if (s === prev) break;
+  }
+  return s;
+}
+
+/**
  * Clean location / merchant names that were double-escaped in DB or JSON
  * (e.g. Ali\\'s → Ali's, \/ → /). Display-only; does not change stored data.
  */
@@ -6,6 +46,7 @@ export function sanitizeLocationDisplayName(raw) {
   if (raw == null) return '';
   let s = String(raw);
   if (!s) return s;
+  s = decodeHtmlEntities(s);
   for (let i = 0; i < 12; i++) {
     const next = s
       .replace(/\\(["'])/g, '$1')

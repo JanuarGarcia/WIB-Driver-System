@@ -4,7 +4,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { api, statusClass, statusLabel, resolveUploadUrl } from '../api';
 import DriverDetailsModal from './DriverDetailsModal';
 import { useTeamFilter } from '../context/TeamFilterContext';
-import { sanitizeLocationDisplayName, shortTaskOrderDigits } from '../utils/displayText';
+import { sanitizeLocationDisplayName, sanitizeMerchantDisplayName, shortTaskOrderDigits } from '../utils/displayText';
 import { getAdvanceOrderLines } from '../utils/advanceOrder';
 import { isLiveConnection, isOnDuty, isAgentPanelOnline } from '../utils/agentPanelRiders';
 
@@ -138,7 +138,7 @@ function queueAssignTaskLines(t) {
   const merchRaw =
     t.restaurant_name ||
     (t.dropoff_merchant && !/^\d+$/.test(String(t.dropoff_merchant).trim()) ? t.dropoff_merchant : null);
-  const merch = sanitizeLocationDisplayName(merchRaw || '') || '';
+  const merch = sanitizeMerchantDisplayName(merchRaw || '') || '';
   const title = `Task #${t.task_id}${orderBits && orderBits !== '—' ? ` · …${orderBits}` : ''}`;
   const sub = merch ? `${cust} · ${merch}` : cust;
   return { title, sub };

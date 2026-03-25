@@ -6,6 +6,7 @@ import { useTablePagination, PAGE_SIZE_OPTIONS } from '../hooks/useTablePaginati
 import { useTableSort } from '../hooks/useTableSort';
 import TablePaginationControls from '../components/TablePaginationControls';
 import TableSortControls from '../components/TableSortControls';
+import { sanitizeMerchantDisplayName } from '../utils/displayText';
 
 function sectionDate() {
   const d = new Date();
@@ -14,7 +15,16 @@ function sectionDate() {
 
 const MERCHANT_SORT_OPTIONS = [
   { key: 'merchant_id', label: 'Merchant ID', compare: (a, b) => String(a.merchant_id ?? '').localeCompare(b.merchant_id ?? '') },
-  { key: 'restaurant_name', label: 'Restaurant', compare: (a, b) => String(a.restaurant_name ?? '').localeCompare(b.restaurant_name ?? '') },
+  {
+    key: 'restaurant_name',
+    label: 'Restaurant',
+    compare: (a, b) =>
+      (sanitizeMerchantDisplayName(a.restaurant_name) || '').localeCompare(
+        sanitizeMerchantDisplayName(b.restaurant_name) || '',
+        undefined,
+        { sensitivity: 'base' }
+      ),
+  },
 ];
 
 function logoUrl(logo) {
@@ -131,7 +141,7 @@ export default function Merchants() {
                       </span>
                     </td>
                     <td>{m.merchant_id ?? '—'}</td>
-                    <td>{m.restaurant_name ?? '—'}</td>
+                    <td>{sanitizeMerchantDisplayName(m.restaurant_name) || '—'}</td>
                   </tr>
                 );
               })}

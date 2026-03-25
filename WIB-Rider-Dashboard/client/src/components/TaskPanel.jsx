@@ -2,7 +2,7 @@ import { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo } fr
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { api, statusClass, statusLabel } from '../api';
-import { sanitizeLocationDisplayName, shortTaskOrderDigits } from '../utils/displayText';
+import { sanitizeLocationDisplayName, sanitizeMerchantDisplayName, shortTaskOrderDigits } from '../utils/displayText';
 import { getAdvanceOrderLines, isAdvanceOrderDisplay } from '../utils/advanceOrder';
 import { useTableAutoRefresh } from '../hooks/useTableAutoRefresh';
 import { DASHBOARD_TASKS_MAP_DATE_KEY, notifyDashboardTasksMapDateChanged, taskDropoffLatLng } from '../utils/mapTasks';
@@ -770,7 +770,7 @@ export default function TaskPanel({ onOpenTaskDetails, onFocusTaskOnMap, listRev
                     </span>
                     <span className="task-card-v2-merchant-name">{(() => {
                       const raw = t.restaurant_name || (t.dropoff_merchant && !/^\d+$/.test(String(t.dropoff_merchant).trim()) ? t.dropoff_merchant : null) || '—';
-                      const name = sanitizeLocationDisplayName(raw) || '—';
+                      const name = sanitizeMerchantDisplayName(raw) || '—';
                       const s = String(name).slice(0, 40);
                       return s + (String(name).length > 40 ? '…' : '');
                     })()}</span>

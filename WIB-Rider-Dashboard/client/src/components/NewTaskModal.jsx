@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { api } from '../api';
 import MapView from './MapView';
+import { sanitizeMerchantDisplayName } from '../utils/displayText';
 
 export const COUNTRY_CODES = [
   { code: 'PH', dial: '+63', name: 'Philippines', flag: '🇵🇭' },
@@ -340,9 +341,10 @@ export default function NewTaskModal({ onClose, onSuccess }) {
 
     const selected = (merchants || []).find((m) => String(m.merchant_id ?? m.id) === id);
     if (selected) {
+      const decodedName = sanitizeMerchantDisplayName(selected.restaurant_name);
       setForm((f) => ({
         ...f,
-        pickup_name: (selected.restaurant_name && String(selected.restaurant_name).trim()) || f.pickup_name,
+        pickup_name: decodedName || f.pickup_name,
       }));
     }
 
@@ -353,7 +355,10 @@ export default function NewTaskModal({ onClose, onSuccess }) {
         const phone = (addr.contact_phone && String(addr.contact_phone).trim()) ? String(addr.contact_phone).replace(/^\+/, '') : (addr.restaurant_phone && String(addr.restaurant_phone).trim()) ? String(addr.restaurant_phone).replace(/^\+/, '') : '';
         setForm((f) => ({
           ...f,
-          pickup_name: (addr.restaurant_name && String(addr.restaurant_name).trim()) || (addr.contact_name && String(addr.contact_name).trim()) || f.pickup_name,
+          pickup_name:
+            sanitizeMerchantDisplayName(addr.restaurant_name) ||
+            (addr.contact_name && String(addr.contact_name).trim()) ||
+            f.pickup_name,
           pickup_address: addressStr,
           pickup_address_center: center,
           pickup_contact_number: phone || f.pickup_contact_number,
@@ -511,7 +516,7 @@ export default function NewTaskModal({ onClose, onSuccess }) {
                     <option value="">Select Some Options</option>
                     {(merchants || []).map((m) => (
                       <option key={m.merchant_id ?? m.id} value={m.merchant_id ?? m.id}>
-                        {m.restaurant_name || `Merchant ${m.merchant_id ?? m.id}`}
+                        {sanitizeMerchantDisplayName(m.restaurant_name) || `Merchant ${m.merchant_id ?? m.id}`}
                       </option>
                     ))}
                   </select>
@@ -689,7 +694,7 @@ export default function NewTaskModal({ onClose, onSuccess }) {
                     <option value="">Select Some Options</option>
                     {(merchants || []).map((m) => (
                       <option key={m.merchant_id ?? m.id} value={m.merchant_id ?? m.id}>
-                        {m.restaurant_name || `Merchant ${m.merchant_id ?? m.id}`}
+                        {sanitizeMerchantDisplayName(m.restaurant_name) || `Merchant ${m.merchant_id ?? m.id}`}
                       </option>
                     ))}
                   </select>
