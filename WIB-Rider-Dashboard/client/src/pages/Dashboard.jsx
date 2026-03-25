@@ -18,7 +18,12 @@ import {
   readDashboardTasksMapDateFromStorage,
   todayDateStrLocal,
   tasksWithMapCoordinates,
+  taskDropoffLatLng,
 } from '../utils/mapTasks';
+
+function nextMapTaskFocus(prev, lat, lng) {
+  return { nonce: (prev?.nonce ?? 0) + 1, lat, lng };
+}
 import { buildActivePanelDriverIdSet } from '../utils/agentPanelRiders';
 
 export default function Dashboard() {
@@ -42,8 +47,19 @@ export default function Dashboard() {
     (id) => openTaskDetails(id, { initialTab: 'details' }),
     [openTaskDetails]
   );
+
   const [mobileSection, setMobileSection] = useState('tasks'); // 'tasks' | 'map' | 'agents' for small screens
   const [mapResizeTrigger, setMapResizeTrigger] = useState(0);
+  const [mapTaskFocusRequest, setMapTaskFocusRequest] = useState(null);
+
+  const handleFocusTaskOnMap = useCallback((task) => {
+    const p = taskDropoffLatLng(task);
+    if (!p) return;
+    setMapTaskFocusRequest((prev) => nextMapTaskFocus(prev, p.lat, p.lng));
+    if (typeof window !== 'undefined' && window.matchMedia(MOBILE_DASHBOARD_MQ).matches) {
+      setMobileSection('map');
+    }
+  }, []);
   const [locations, setLocations] = useState([]);
   const [merchants, setMerchants] = useState([]);
   const selectedMapMerchantIds = useMapMerchantFilterSelection();
@@ -279,7 +295,11 @@ export default function Dashboard() {
         </button>
       </nav>
       <div className="dashboard-layout-panel dashboard-layout-tasks">
-        <TaskPanel onOpenTaskDetails={handleOpenTaskDetailsFromPanel} listRevision={taskListRevision} />
+        <TaskPanel
+          onOpenTaskDetails={handleOpenTaskDetailsFromPanel}
+          onFocusTaskOnMap={handleFocusTaskOnMap}
+          listRevision={taskListRevision}
+        />
       </div>
       {taskDetailsId != null &&
         createPortal(
@@ -326,6 +346,7 @@ export default function Dashboard() {
               zoom={mapShowsNoMarkers ? defaultMapZoom : undefined}
               googleMapStyle={googleMapStyle}
               mapResizeTrigger={mapResizeTrigger}
+              focusTaskRequest={mapTaskFocusRequest}
             />
           </MapErrorBoundary>
         </div>

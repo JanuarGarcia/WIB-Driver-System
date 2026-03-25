@@ -33,6 +33,15 @@ export function normalizeTaskStatusKey(status) {
 /** Only these statuses get an orange task pin (excludes delivered/successful/completed and other terminal states). */
 export const TASK_MAP_MARKER_STATUS_SET = new Set(['unassigned', 'inprogress', 'started', 'acknowledged']);
 
+/** Valid drop-off coordinates for a task row (API `task_lat` / `task_lng`), or null. */
+export function taskDropoffLatLng(t) {
+  if (!t || typeof t !== 'object') return null;
+  const lat = t.task_lat != null ? Number(t.task_lat) : NaN;
+  const lng = t.task_lng != null ? Number(t.task_lng) : NaN;
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  return { lat, lng };
+}
+
 /**
  * Tasks that can be drawn on the map (delivery coordinates).
  * @param {Array<Record<string, unknown>>|null|undefined} tasks

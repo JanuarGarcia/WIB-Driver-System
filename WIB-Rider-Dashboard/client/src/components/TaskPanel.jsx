@@ -5,7 +5,7 @@ import { api, statusClass, statusLabel } from '../api';
 import { sanitizeLocationDisplayName, shortTaskOrderDigits } from '../utils/displayText';
 import { getAdvanceOrderLines, isAdvanceOrderDisplay } from '../utils/advanceOrder';
 import { useTableAutoRefresh } from '../hooks/useTableAutoRefresh';
-import { DASHBOARD_TASKS_MAP_DATE_KEY, notifyDashboardTasksMapDateChanged } from '../utils/mapTasks';
+import { DASHBOARD_TASKS_MAP_DATE_KEY, notifyDashboardTasksMapDateChanged, taskDropoffLatLng } from '../utils/mapTasks';
 
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const MONTH_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -172,7 +172,7 @@ function directionDisplayLabel(dir) {
   return map[v] ?? dir.trim().split(/\s+/).map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join('-');
 }
 
-export default function TaskPanel({ onOpenTaskDetails, listRevision = 0 }) {
+export default function TaskPanel({ onOpenTaskDetails, onFocusTaskOnMap, listRevision = 0 }) {
   const navigate = useNavigate();
   const [tasks, setTasks] = useState([]);
   const [counts, setCounts] = useState({ unassigned: 0, assigned: 0, completed: 0 });
@@ -741,8 +741,15 @@ export default function TaskPanel({ onOpenTaskDetails, listRevision = 0 }) {
               const isCritical = taskCriticalEnabled && isUnassigned && minsWaiting !== null && minsWaiting >= taskCriticalMinutes;
               const driverName = (t.driver_name || '').trim();
               const advanceLines = getAdvanceOrderLines(t, t.date_created);
+              const mapFocusCoords = taskDropoffLatLng(t);
+              const canFocusMap = Boolean(mapFocusCoords && onFocusTaskOnMap);
               return (
-                <li key={t.task_id} className={`task-card-v2${isCritical ? ' task-card-v2-critical' : ''}`}>
+                <li
+                  key={t.task_id}
+                  className={`task-card-v2${isCritical ? ' task-card-v2-critical' : ''}`}
+                  style={canFocusMap ? { cursor: 'pointer' } : undefined}
+                  onClick={canFocusMap ? () => onFocusTaskOnMap(t) : undefined}
+                >
                   <div className="task-card-v2-top">
                     <div className="task-card-v2-direction" title="Delivery direction">
                       <span className="task-card-v2-direction-icon" aria-hidden="true">
@@ -771,7 +778,11 @@ export default function TaskPanel({ onOpenTaskDetails, listRevision = 0 }) {
                       <button
                         type="button"
                         className="btn-assign-driver"
-                        onClick={() => (onOpenTaskDetails ? onOpenTaskDetails(t.task_id) : navigate(`/tasks?highlight=${t.task_id}`))}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (onOpenTaskDetails) onOpenTaskDetails(t.task_id);
+                          else navigate(`/tasks?highlight=${t.task_id}`);
+                        }}
                       >
                         Assign Driver
                       </button>
@@ -821,7 +832,11 @@ export default function TaskPanel({ onOpenTaskDetails, listRevision = 0 }) {
                     <button
                       type="button"
                       className="task-card-details"
-                      onClick={() => onOpenTaskDetails ? onOpenTaskDetails(t.task_id) : navigate(`/tasks?highlight=${t.task_id}`)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (onOpenTaskDetails) onOpenTaskDetails(t.task_id);
+                        else navigate(`/tasks?highlight=${t.task_id}`);
+                      }}
                       aria-label={`View details for order ${t.order_id ?? t.task_id}`}
                     >
                       <span>View details</span>

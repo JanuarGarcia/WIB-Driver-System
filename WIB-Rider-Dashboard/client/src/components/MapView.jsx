@@ -248,6 +248,22 @@ function LeafletSetView({ center, zoom }) {
   return null;
 }
 
+/** Dashboard: fly to task drop-off when user clicks a task card (`nonce` bumps each request). */
+function LeafletFlyToTaskFocus({ focusTaskRequest }) {
+  const map = useMap();
+  const nonce = focusTaskRequest?.nonce;
+  useEffect(() => {
+    if (nonce == null || !focusTaskRequest) return;
+    const la = Number(focusTaskRequest.lat);
+    const ln = Number(focusTaskRequest.lng);
+    if (!Number.isFinite(la) || !Number.isFinite(ln)) return;
+    try {
+      map.flyTo([la, ln], DASHBOARD_SINGLE_MARKER_ZOOM, { duration: 0.75 });
+    } catch (_) {}
+  }, [map, nonce, focusTaskRequest]);
+  return null;
+}
+
 /** Leaflet measures the map once at mount; hidden mobile tabs or flex layout changes leave a wrong size until this runs. */
 function LeafletMapSizeSync({ resizeTrigger = 0 }) {
   const map = useMap();
@@ -471,7 +487,18 @@ function LeafletMapboxTileError({ onTileError }) {
   return null;
 }
 
-function LeafletMapboxView({ mapboxToken, locations, merchants, taskMarkers = [], center, zoom, routeGeojson, showLegend = false, mapResizeTrigger = 0 }) {
+function LeafletMapboxView({
+  mapboxToken,
+  locations,
+  merchants,
+  taskMarkers = [],
+  center,
+  zoom,
+  routeGeojson,
+  showLegend = false,
+  mapResizeTrigger = 0,
+  focusTaskRequest = null,
+}) {
   const { riderMarkers, merchantMarkers, taskMapMarkers } = useDashboardMapMarkers(locations, merchants, taskMarkers);
   const mapCenter = center != null && Array.isArray(center) && center.length >= 2 ? center : BAGUIO_CENTER;
   const mapZoom = zoom != null ? zoom : 13;
@@ -512,6 +539,7 @@ function LeafletMapboxView({ mapboxToken, locations, merchants, taskMarkers = []
           mapResizeTrigger={mapResizeTrigger}
         />
         <LeafletMapboxMarkersLayer riderMarkers={riderMarkers} merchantMarkers={merchantMarkers} taskMapMarkers={taskMapMarkers} />
+        <LeafletFlyToTaskFocus focusTaskRequest={focusTaskRequest} />
       </MapContainer>
       {showLegend ? <MapLegend /> : null}
     </div>
@@ -686,7 +714,38 @@ function GoogleMapAutoFit({ points, mapResizeTrigger = 0, onViewCommitted }) {
   return null;
 }
 
-function GoogleMapView({ apiKey, locations, merchants, taskMarkers = [], center: centerProp, zoom: zoomProp, googleMapStyle, directionsRequest, onDirections, mapResizeTrigger = 0 }) {
+function GoogleMapFlyToTask({ focusTaskRequest, onCommitted }) {
+  const map = useGoogleMap();
+  const nonce = focusTaskRequest?.nonce;
+  const onCommittedRef = useRef(onCommitted);
+  onCommittedRef.current = onCommitted;
+  useEffect(() => {
+    if (!map || nonce == null || !focusTaskRequest) return;
+    const la = Number(focusTaskRequest.lat);
+    const ln = Number(focusTaskRequest.lng);
+    if (!Number.isFinite(la) || !Number.isFinite(ln)) return;
+    try {
+      map.panTo({ lat: la, lng: ln });
+      map.setZoom(DASHBOARD_SINGLE_MARKER_ZOOM);
+      onCommittedRef.current?.({ lat: la, lng: ln }, DASHBOARD_SINGLE_MARKER_ZOOM);
+    } catch (_) {}
+  }, [map, nonce, focusTaskRequest]);
+  return null;
+}
+
+function GoogleMapView({
+  apiKey,
+  locations,
+  merchants,
+  taskMarkers = [],
+  center: centerProp,
+  zoom: zoomProp,
+  googleMapStyle,
+  directionsRequest,
+  onDirections,
+  mapResizeTrigger = 0,
+  focusTaskRequest = null,
+}) {
   const [loadError, setLoadError] = useState(null);
   const { riderMarkers, merchantMarkers, taskMapMarkers } = useDashboardMapMarkers(locations, merchants, taskMarkers);
   const [directionsResult, setDirectionsResult] = useState(null);
@@ -768,6 +827,9 @@ function GoogleMapView({ apiKey, locations, merchants, taskMarkers = [], center:
             />
           ) : null}
           <GoogleMapResizeSync resizeTrigger={mapResizeTrigger} />
+          {focusTaskRequest?.nonce != null ? (
+            <GoogleMapFlyToTask focusTaskRequest={focusTaskRequest} onCommitted={commitAutoView} />
+          ) : null}
           {directionsRequest && directionsRequest.destination && (
             <DirectionsService
               options={{
@@ -852,6 +914,8 @@ export default function MapView({
   showLegend = false,
   /** Bump when the map container becomes visible or resizes (e.g. mobile tab switch). */
   mapResizeTrigger = 0,
+  /** `{ nonce, lat, lng }` from dashboard task-card click — flies map to drop-off. */
+  focusTaskRequest = null,
 }) {
   const token = String(mapboxToken || '').trim();
   const useMapbox = mapProvider === 'mapbox' && token.length > 0;
@@ -885,6 +949,7 @@ export default function MapView({
         routeGeojson={mapboxRouteGeojson}
         showLegend={showLegend}
         mapResizeTrigger={mapResizeTrigger}
+        focusTaskRequest={focusTaskRequest}
       />
     );
   }
@@ -901,6 +966,7 @@ export default function MapView({
         directionsRequest={directionsRequest}
         onDirections={onGoogleDirections}
         mapResizeTrigger={mapResizeTrigger}
+        focusTaskRequest={focusTaskRequest}
       />
     );
   }
