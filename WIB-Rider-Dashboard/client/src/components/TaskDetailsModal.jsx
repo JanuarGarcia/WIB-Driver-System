@@ -2,11 +2,12 @@ import { useState, useEffect, useRef } from 'react';
 import {
   api,
   formatDate,
+  formatDateOnly,
   formatActivityTimelineDateTimeShort,
   statusDisplayClass,
 } from '../api';
 import { sanitizeLocationDisplayName, pickLocalizedMenuString } from '../utils/displayText';
-import { getAdvanceOrderLines } from '../utils/advanceOrder';
+import { getAdvanceOrderLines, formatDbTimeTo12h } from '../utils/advanceOrder';
 import MapView from './MapView';
 import LocationPreviewModal from './LocationPreviewModal';
 import DirectionsModal from './DirectionsModal';
@@ -937,9 +938,16 @@ export default function TaskDetailsModal({
   );
   const teamNameDisplay = displaySanitizedOrDash(task?.team_name);
   const driverNameDisplay = displaySanitizedOrDash(task?.driver_name);
-  const completeBefore = order?.delivery_date && order?.delivery_time
-    ? `${formatDate(order.delivery_date)} ${String(order.delivery_time).slice(0, 5)}`
-    : formatDate(task?.delivery_date);
+  const orderDeliveryTimeRaw =
+    order?.delivery_time != null && String(order.delivery_time).trim() !== ''
+      ? order.delivery_time
+      : order?.order_delivery_time;
+  const completeBefore =
+    order?.delivery_date && orderDeliveryTimeRaw
+      ? `${formatDateOnly(order.delivery_date)} ${formatDbTimeTo12h(orderDeliveryTimeRaw)}`
+      : order?.delivery_date
+        ? formatDateOnly(order.delivery_date)
+        : formatDateOnly(task?.delivery_date);
   const advanceLinesModal = order ? getAdvanceOrderLines(order, task?.date_created) : null;
 
   const filteredTimeline = timeline.filter(Boolean);
@@ -1216,7 +1224,8 @@ export default function TaskDetailsModal({
                         <div className="task-detail-row"><span className="task-detail-label">Payment type</span><span className="task-detail-value">{order?.payment_type ?? task.payment_type ?? '—'}</span></div>
                         <div className="task-detail-row"><span className="task-detail-label">Reference #</span><span className="task-detail-value">{order?.order_id ?? task.order_id ?? '—'}</span></div>
                         <div className="task-detail-row"><span className="task-detail-label">TRN date</span><span className="task-detail-value">{order?.date_created ? formatDate(order.date_created) : '—'}</span></div>
-                        <div className="task-detail-row"><span className="task-detail-label">Delivery date</span><span className="task-detail-value">{order?.delivery_date ? formatDate(order.delivery_date) : '—'}</span></div>
+                        <div className="task-detail-row"><span className="task-detail-label">Delivery date</span><span className="task-detail-value">{order?.delivery_date ? formatDateOnly(order.delivery_date) : '—'}</span></div>
+                        <div className="task-detail-row"><span className="task-detail-label">Delivery time</span><span className="task-detail-value">{orderDeliveryTimeRaw ? formatDbTimeTo12h(orderDeliveryTimeRaw) : '—'}</span></div>
                         <div className="task-detail-row"><span className="task-detail-label">Delivery address</span><span className="task-detail-value">{customerDeliveryAddressDisplay}</span></div>
                         <div className="task-detail-row"><span className="task-detail-label">Delivery instruction</span><span className="task-detail-value">{deliveryInstructionDisplay}</span></div>
                         <div className="task-detail-row"><span className="task-detail-label">Landmark</span><span className="task-detail-value">{landmarkDisplay}</span></div>

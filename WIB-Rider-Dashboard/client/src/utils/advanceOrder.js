@@ -1,6 +1,6 @@
 /**
- * Advance orders (mt_order): show scheduled delivery when status is "Advance Order"
- * and delivery_time is set. Used by task list cards and task details.
+ * Advance / scheduled orders (mt_order): show when the order has a scheduled delivery time.
+ * Task list API joins `order_delivery_time`, `order_status`, etc.
  */
 
 function normalizeOrderStatus(raw) {
@@ -10,13 +10,10 @@ function normalizeOrderStatus(raw) {
     .replace(/\s+/g, ' ');
 }
 
-/** True when linked order is an advance order with a scheduled delivery time. */
-export function isAdvanceOrderDisplay(input) {
-  if (!input || typeof input !== 'object') return false;
-  const status = normalizeOrderStatus(input.order_status ?? input.status);
-  const timeRaw = input.order_delivery_time ?? input.delivery_time;
-  if (timeRaw == null || String(timeRaw).trim() === '') return false;
-  return status === 'advance order';
+function rawDeliveryTime(input) {
+  if (!input || typeof input !== 'object') return '';
+  const t = input.order_delivery_time ?? input.delivery_time;
+  return t != null ? String(t).trim() : '';
 }
 
 /**
@@ -41,6 +38,29 @@ export function formatDbTimeTo12h(raw) {
     }
   }
   return s;
+}
+
+/** True when order has a meaningful scheduled wall time (not empty / not ASAP-only). */
+export function isAdvanceOrderDisplay(input) {
+  const timeRaw = rawDeliveryTime(input);
+  if (timeRaw === '') return false;
+  if (/^asap$/i.test(timeRaw)) return false;
+
+  const status = normalizeOrderStatus(input.order_status ?? input.status);
+  if (status === 'advance order') return true;
+
+  const formatted = formatDbTimeTo12h(timeRaw);
+  if (!formatted) return false;
+
+  // TIME 00:00:00 often means "date only" in DB — don't treat as a scheduled slot unless status says advance
+  const m24 = /^(\d{1,2}):(\d{2})(?::\d{2})?$/.exec(timeRaw);
+  if (m24) {
+    const h = parseInt(m24[1], 10);
+    const min = parseInt(m24[2], 10);
+    if (h === 0 && min === 0) return status === 'advance order';
+  }
+
+  return true;
 }
 
 function formatShortDate(raw) {

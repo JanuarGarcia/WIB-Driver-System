@@ -67,6 +67,17 @@ export function formatDate(d) {
   return isNaN(dt.getTime()) ? String(d) : dt.toLocaleString();
 }
 
+/** Calendar date only (no time) — use for order delivery_date, etc. */
+export function formatDateOnly(d) {
+  if (!d) return '—';
+  const dt = new Date(d);
+  if (isNaN(dt.getTime())) {
+    const s = String(d).trim();
+    return s.length >= 10 ? s.slice(0, 10) : s || '—';
+  }
+  return dt.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+}
+
 /** Activity timeline: "March 21, 2026, 2:14 PM" (no seconds). */
 export function formatActivityTimelineDateTime(d) {
   if (!d) return '—';
