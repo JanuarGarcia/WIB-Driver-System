@@ -68,6 +68,9 @@
   --map-pin-merchant-fill: #7c3aed;
   --map-pin-task-fill: #ea580c;
   --map-pin-task-inner: #ffffff;
+  /* Agent panel: queue count on primary-green header (readable in light & dark) */
+  --agent-queue-badge-ring: rgba(255, 255, 255, 0.98);
+  --agent-queue-badge-shadow: 0 1px 3px rgba(0, 0, 0, 0.22), 0 0 0 1px rgba(0, 0, 0, 0.06);
 }
 
 /* Dark theme – same structure, adjusted for contrast and polish */
@@ -128,6 +131,8 @@
   --tasks-header-seg-track: rgba(0, 0, 0, 0.2);
   --tasks-header-seg-track-inset: rgba(255, 255, 255, 0.1);
   --tasks-header-seg-inactive-text: rgba(255, 255, 255, 0.92);
+  --agent-queue-badge-ring: rgba(255, 255, 255, 0.96);
+  --agent-queue-badge-shadow: 0 2px 5px rgba(0, 0, 0, 0.32), 0 0 0 1px rgba(0, 0, 0, 0.12);
   --tasks-header-seg-inactive-hover: rgba(255, 255, 255, 0.16);
   --tasks-header-seg-active-bg: rgba(255, 255, 255, 0.96);
   --tasks-header-seg-active-text: #161c0f;
@@ -3178,32 +3183,32 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
   width: 22px;
   height: 22px;
 }
+/* Anchor to the icon’s right edge so the pill sits outside the glyph (no overlap). */
 .agent-panel-queue-badge {
   position: absolute;
-  top: -6px;
-  right: -9px;
-  min-width: 17px;
-  height: 17px;
-  padding: 0 5px;
+  left: 100%;
+  top: 0;
+  transform: translate(8px, -12px);
+  min-width: 18px;
+  height: 18px;
+  padding: 0 6px;
   box-sizing: border-box;
   border-radius: 999px;
-  font-size: 9px;
+  font-size: 10px;
   font-weight: 700;
-  line-height: 13px;
+  line-height: 1;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   text-align: center;
-  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.03em;
   color: #fff;
   background: var(--color-danger);
-  border: 2px solid var(--color-primary);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+  border: 2px solid var(--agent-queue-badge-ring);
+  box-shadow: var(--agent-queue-badge-shadow);
   pointer-events: none;
-}
-[data-theme="dark"] .agent-panel-queue-badge {
-  border-color: var(--color-primary);
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
+  -webkit-font-smoothing: antialiased;
 }
 /* Agent ↔ Queue: same right panel, alternate view */
 .agent-panel-mode-pane {
@@ -3403,14 +3408,52 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  gap: 0.35rem;
+  gap: 0.45rem;
   align-self: center;
+  min-width: 5.5rem;
 }
 .driver-queue-remove {
   flex-shrink: 0;
   font-size: 0.72rem;
   padding: 0.28rem 0.5rem;
   border-radius: 6px;
+}
+/* Match Assign column width / height; theme-aware neutral secondary (declared after .btn). */
+.btn.driver-queue-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  font-weight: 600;
+  font-size: 0.72rem;
+  line-height: 1.2;
+  letter-spacing: 0.02em;
+  padding: 0.42rem 0.55rem;
+  min-height: 2.05rem;
+  border-radius: 8px;
+  border: 1px solid var(--border-medium);
+  background: var(--bg-card);
+  color: var(--text-primary);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+  transition: background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease, transform 0.12s ease;
+}
+.btn.driver-queue-remove:hover:not(:disabled) {
+  background: var(--bg-hover);
+  border-color: var(--border-soft);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+}
+.btn.driver-queue-remove:active:not(:disabled) {
+  transform: scale(0.98);
+}
+[data-theme="dark"] .btn.driver-queue-remove {
+  background: var(--bg-surface-2);
+  color: var(--text-primary);
+  border-color: var(--border-medium);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+}
+[data-theme="dark"] .btn.driver-queue-remove:hover:not(:disabled) {
+  background: var(--bg-hover);
+  border-color: var(--border-soft);
 }
 .driver-queue-assign-backdrop {
   z-index: 1200;
@@ -3541,10 +3584,13 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
 }
-/* All tasks: same inset as Tasks panel so cards aren’t flush to panel edges */
+/* All tasks: edge-to-edge cards; inner padding stays on .task-card-all-tasks */
 .panel.agent-panel.agent-panel--all-tasks .panel-body {
-  padding: 0.55rem 0.85rem 0.85rem;
+  padding: 0;
   background: #ebebe8;
+}
+.panel.agent-panel.agent-panel--all-tasks .panel-body.empty {
+  padding: 2rem 1rem;
 }
 [data-theme="dark"] .panel.agent-panel.agent-panel--all-tasks .panel-body {
   background: var(--bg-page);
@@ -5800,47 +5846,52 @@ tr:hover { background: var(--bg-hover) !important; }
 .btn-sm { padding: 0.35rem 0.65rem; font-size: 0.8125rem; font-weight: 400; }
 .link { color: var(--color-primary); text-decoration: none; cursor: pointer; }
 .link:hover { text-decoration: underline; color: var(--color-primary-hover); }
-/* Driver queue “Assign task”: after .btn so it wins the cascade (generic .btn resets border/background). */
+/* Driver queue “Assign task”: solid primary button (after .btn for cascade). Light + dark use theme tokens. */
 .btn.driver-queue-assign {
-  border: none;
-  background: transparent;
-  color: var(--color-primary);
-  font-weight: 700;
-  font-size: 0.8125rem;
-  line-height: 1.25;
-  letter-spacing: 0.02em;
-  text-decoration: underline;
-  text-decoration-thickness: 2px;
-  text-underline-offset: 4px;
-  text-decoration-color: var(--color-primary-light);
-  padding: 0.4rem 0.2rem;
-  min-height: auto;
-  box-shadow: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  border: 1px solid var(--color-primary-hover);
+  background: var(--color-primary);
+  color: #fff;
+  font-weight: 600;
+  font-size: 0.72rem;
+  line-height: 1.2;
+  letter-spacing: 0.03em;
+  text-decoration: none;
+  padding: 0.42rem 0.55rem;
+  min-height: 2.05rem;
+  border-radius: 8px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06), inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  transition: background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease, transform 0.12s ease, opacity 0.15s ease;
   -webkit-tap-highlight-color: transparent;
+  white-space: nowrap;
 }
 .btn.driver-queue-assign:hover:not(:disabled) {
-  color: var(--color-primary-hover);
-  background: var(--color-primary-tint);
-  text-decoration-color: var(--color-primary-hover);
+  background: var(--color-primary-hover);
+  border-color: var(--color-primary-dark, var(--color-primary-hover));
+  color: #fff;
+  box-shadow: 0 2px 8px var(--color-primary-tint-strong), inset 0 1px 0 rgba(255, 255, 255, 0.14);
+}
+.btn.driver-queue-assign:active:not(:disabled) {
+  transform: scale(0.98);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 }
 .btn.driver-queue-assign:focus-visible {
-  outline: 2px solid var(--color-primary);
+  outline: 2px solid var(--color-primary-light);
   outline-offset: 2px;
-  border-radius: 4px;
 }
 .btn.driver-queue-assign:disabled {
   opacity: 0.5;
   cursor: not-allowed;
-  text-decoration: none;
+  box-shadow: none;
 }
 [data-theme="dark"] .btn.driver-queue-assign {
-  color: var(--color-primary-light);
-  text-decoration-color: var(--color-primary);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.1);
 }
 [data-theme="dark"] .btn.driver-queue-assign:hover:not(:disabled) {
-  color: var(--color-primary-hover);
-  background: var(--color-primary-tint-strong);
-  text-decoration-color: var(--color-primary-hover);
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.12);
 }
 .err { color: var(--color-danger); font-size: 0.875rem; }
 .loading { text-align: center; padding: 2rem; color: var(--text-muted); font-size: 0.9375rem; font-weight: 400; }
