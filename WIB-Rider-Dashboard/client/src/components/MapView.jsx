@@ -14,7 +14,7 @@ import {
   useGoogleMap,
 } from '@react-google-maps/api';
 import { resolveUploadUrl } from '../api';
-import { sanitizeMerchantDisplayName } from '../utils/displayText';
+import { sanitizeMerchantDisplayName, shortTaskOrderDigits } from '../utils/displayText';
 import { statusLabel } from '../api';
 import {
   riderLeafletPopupHtml,
@@ -161,9 +161,9 @@ function merchantMapTitle(restaurantName) {
 
 function taskMapTitle(t) {
   let base;
-  if (t.order_id != null) base = `Task #${t.order_id}`;
-  else if (t.task_id != null) base = `Task ID ${t.task_id}`;
-  else base = 'Task (delivery)';
+  if (t.order_id != null || t.task_id != null) {
+    base = `Order no. ${shortTaskOrderDigits(t.order_id, t.task_id)}`;
+  } else base = 'Task (delivery)';
   const lm = String(t.landmark || '').trim();
   if (!lm) return base;
   const short = lm.length > 36 ? `${lm.slice(0, 33)}…` : lm;

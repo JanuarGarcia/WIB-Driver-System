@@ -2,7 +2,7 @@ import { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo } fr
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { api, statusClass, statusLabel } from '../api';
-import { sanitizeLocationDisplayName } from '../utils/displayText';
+import { sanitizeLocationDisplayName, shortTaskOrderDigits } from '../utils/displayText';
 import { getAdvanceOrderLines, isAdvanceOrderDisplay } from '../utils/advanceOrder';
 import { useTableAutoRefresh } from '../hooks/useTableAutoRefresh';
 import { DASHBOARD_TASKS_MAP_DATE_KEY, notifyDashboardTasksMapDateChanged } from '../utils/mapTasks';
@@ -754,7 +754,7 @@ export default function TaskPanel({ onOpenTaskDetails, listRevision = 0 }) {
                     </div>
                     <span className="task-card-v2-order">
                       <span className="task-card-v2-order-label">Order No.</span>
-                      <span className="task-card-v2-order-num">{(() => { const raw = String(t.order_id ?? t.task_id ?? ''); return raw.length >= 3 ? raw.slice(-3) : raw || '—'; })()}</span>
+                      <span className="task-card-v2-order-num">{shortTaskOrderDigits(t.order_id, t.task_id)}</span>
                     </span>
                   </div>
                   <div className="task-card-v2-merchant-row">

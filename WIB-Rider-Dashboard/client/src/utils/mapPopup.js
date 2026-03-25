@@ -1,4 +1,4 @@
-import { sanitizeMerchantDisplayName, sanitizeLocationDisplayName } from './displayText';
+import { sanitizeMerchantDisplayName, sanitizeLocationDisplayName, shortTaskOrderDigits } from './displayText';
 
 /** Shared map popup copy + HTML builders (Leaflet bindPopup). */
 
@@ -71,10 +71,9 @@ export function merchantLeafletPopupHtmlStyled(restaurantName) {
 export function taskLeafletPopupHtmlStyled(t, statusLabelFn) {
   const sl = t.status && statusLabelFn ? statusLabelFn(t.status) : '';
   const parts = ['<p class="map-popup-kicker">Delivery task</p>'];
-  if (t.order_id != null) {
-    parts.push(`<p class="map-popup-title">Order #${escapeMapHtml(String(t.order_id))}</p>`);
-  } else if (t.task_id != null) {
-    parts.push(`<p class="map-popup-title">Task ${escapeMapHtml(String(t.task_id))}</p>`);
+  if (t.order_id != null || t.task_id != null) {
+    const ordShort = escapeMapHtml(shortTaskOrderDigits(t.order_id, t.task_id));
+    parts.push(`<p class="map-popup-title">Order no. ${ordShort}</p>`);
   } else {
     parts.push('<p class="map-popup-title">Task</p>');
   }

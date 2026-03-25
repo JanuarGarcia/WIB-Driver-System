@@ -66,3 +66,10 @@ export function pickLocalizedMenuString(raw) {
   }
   return str;
 }
+
+/** Last 3 digits of order_id (or task_id) — matches task panel cards. */
+export function shortTaskOrderDigits(orderId, taskId) {
+  const raw = String(orderId ?? taskId ?? '');
+  if (raw.length >= 3) return raw.slice(-3);
+  return raw || '—';
+}
