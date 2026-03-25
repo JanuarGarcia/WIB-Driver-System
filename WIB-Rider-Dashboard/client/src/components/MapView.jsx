@@ -25,6 +25,10 @@ import {
 
 const MAP_LEGEND_HIDDEN_KEY = 'wib_map_legend_hidden';
 
+/** Inline SVG for “fit all pins” control (stacked under zoom +/−). */
+const MAP_RESET_VIEW_ICON_SVG =
+  '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg>';
+
 function HtmlPopupBody({ html }) {
   return <div className="map-popup-html-root" dangerouslySetInnerHTML={{ __html: html }} />;
 }
@@ -315,6 +319,45 @@ function LeafletFlyToTaskFocus({ focusTaskRequest }) {
   return null;
 }
 
+/** Stacked under default zoom (+/−): clears task fly-to and refits all markers (dashboard). */
+function LeafletMapResetControl({ onResetMapView }) {
+  const map = useMap();
+  const cbRef = useRef(onResetMapView);
+  cbRef.current = onResetMapView;
+
+  useEffect(() => {
+    if (typeof onResetMapView !== 'function') return undefined;
+    let el = null;
+    const attach = () => {
+      if (el) return;
+      const wrap = L.DomUtil.create('div', 'leaflet-control leaflet-bar wib-leaflet-map-reset');
+      const btn = L.DomUtil.create('button', 'wib-leaflet-map-reset-btn', wrap);
+      btn.type = 'button';
+      btn.setAttribute('aria-label', 'Reset map view');
+      btn.title = 'Fit all pins on the map (undo task zoom)';
+      btn.innerHTML = MAP_RESET_VIEW_ICON_SVG;
+      L.DomEvent.disableClickPropagation(wrap);
+      L.DomEvent.disableScrollPropagation(wrap);
+      L.DomEvent.on(btn, 'click', (e) => {
+        L.DomEvent.stop(e);
+        cbRef.current?.();
+      });
+      const corner = map.zoomControl?.getContainer?.()?.parentElement;
+      if (corner) corner.appendChild(wrap);
+      else map.getContainer().querySelector('.leaflet-top.leaflet-left')?.appendChild(wrap);
+      el = wrap;
+    };
+
+    map.whenReady(attach);
+    return () => {
+      if (el?.parentNode) el.parentNode.removeChild(el);
+      el = null;
+    };
+  }, [map, onResetMapView]);
+
+  return null;
+}
+
 /** Leaflet measures the map once at mount; hidden mobile tabs or flex layout changes leave a wrong size until this runs. */
 function LeafletMapSizeSync({ resizeTrigger = 0 }) {
   const map = useMap();
@@ -551,6 +594,7 @@ function LeafletMapboxView({
   onViewDriverQueue,
   mapResizeTrigger = 0,
   focusTaskRequest = null,
+  onResetMapView,
 }) {
   const { riderMarkers, merchantMarkers, taskMapMarkers } = useDashboardMapMarkers(locations, merchants, taskMarkers);
   const mapCenter = center != null && Array.isArray(center) && center.length >= 2 ? center : BAGUIO_CENTER;
@@ -593,6 +637,9 @@ function LeafletMapboxView({
         />
         <LeafletMapboxMarkersLayer riderMarkers={riderMarkers} merchantMarkers={merchantMarkers} taskMapMarkers={taskMapMarkers} />
         <LeafletFlyToTaskFocus focusTaskRequest={focusTaskRequest} />
+        {typeof onResetMapView === 'function' ? (
+          <LeafletMapResetControl onResetMapView={onResetMapView} />
+        ) : null}
       </MapContainer>
       <MapLegendStack
         showLegend={showLegend}
@@ -719,6 +766,48 @@ function GoogleMapResizeSync({ resizeTrigger = 0 }) {
   return null;
 }
 
+/** Below Google’s zoom control: same reset behavior as Leaflet (dashboard). */
+function GoogleMapResetControl({ onResetMapView }) {
+  const map = useGoogleMap();
+  const cbRef = useRef(onResetMapView);
+  cbRef.current = onResetMapView;
+
+  useEffect(() => {
+    if (!map || typeof onResetMapView !== 'function' || typeof window === 'undefined' || !window.google?.maps) {
+      return undefined;
+    }
+    const div = document.createElement('div');
+    div.className = 'wib-gmaps-reset-control';
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'wib-gmaps-reset-btn';
+    btn.setAttribute('aria-label', 'Reset map view');
+    btn.title = 'Fit all pins on the map (undo task zoom)';
+    btn.innerHTML = MAP_RESET_VIEW_ICON_SVG;
+    const onClick = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      cbRef.current?.();
+    };
+    btn.addEventListener('click', onClick);
+    div.appendChild(btn);
+    const pos = window.google.maps.ControlPosition.TOP_LEFT;
+    map.controls[pos].push(div);
+    return () => {
+      btn.removeEventListener('click', onClick);
+      const ctrl = map.controls[pos];
+      for (let i = ctrl.getLength() - 1; i >= 0; i -= 1) {
+        if (ctrl.getAt(i) === div) {
+          ctrl.removeAt(i);
+          break;
+        }
+      }
+    };
+  }, [map, onResetMapView]);
+
+  return null;
+}
+
 /** Dashboard-style auto framing: fit all pins on load; re-fit when the marker set changes (coordinates). */
 function GoogleMapAutoFit({ points, mapResizeTrigger = 0, onViewCommitted }) {
   const map = useGoogleMap();
@@ -805,6 +894,7 @@ function GoogleMapView({
   onViewDriverQueue,
   mapResizeTrigger = 0,
   focusTaskRequest = null,
+  onResetMapView,
 }) {
   const [loadError, setLoadError] = useState(null);
   const { riderMarkers, merchantMarkers, taskMapMarkers } = useDashboardMapMarkers(locations, merchants, taskMarkers);
@@ -888,6 +978,9 @@ function GoogleMapView({
             />
           ) : null}
           <GoogleMapResizeSync resizeTrigger={mapResizeTrigger} />
+          {typeof onResetMapView === 'function' ? (
+            <GoogleMapResetControl onResetMapView={onResetMapView} />
+          ) : null}
           {focusTaskRequest?.nonce != null ? (
             <GoogleMapFlyToTask focusTaskRequest={focusTaskRequest} onCommitted={commitAutoView} />
           ) : null}
@@ -987,6 +1080,8 @@ export default function MapView({
   mapResizeTrigger = 0,
   /** `{ nonce, lat, lng }` from dashboard task-card click — flies map to drop-off. */
   focusTaskRequest = null,
+  /** Clear task zoom and refit all pins (dashboard). */
+  onResetMapView,
 }) {
   const token = String(mapboxToken || '').trim();
   const useMapbox = mapProvider === 'mapbox' && token.length > 0;
@@ -1023,6 +1118,7 @@ export default function MapView({
         onViewDriverQueue={onViewDriverQueue}
         mapResizeTrigger={mapResizeTrigger}
         focusTaskRequest={focusTaskRequest}
+        onResetMapView={onResetMapView}
       />
     );
   }
@@ -1043,6 +1139,7 @@ export default function MapView({
         onViewDriverQueue={onViewDriverQueue}
         mapResizeTrigger={mapResizeTrigger}
         focusTaskRequest={focusTaskRequest}
+        onResetMapView={onResetMapView}
       />
     );
   }

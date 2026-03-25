@@ -72,6 +72,11 @@ export default function Dashboard() {
     }
   }, []);
 
+  const handleResetMapView = useCallback(() => {
+    setMapTaskFocusRequest(null);
+    setMapResizeTrigger((n) => n + 1);
+  }, []);
+
   const [locations, setLocations] = useState([]);
   const [merchants, setMerchants] = useState([]);
   const selectedMapMerchantIds = useMapMerchantFilterSelection();
@@ -376,6 +381,7 @@ export default function Dashboard() {
               googleMapStyle={googleMapStyle}
               mapResizeTrigger={mapResizeTrigger}
               focusTaskRequest={mapTaskFocusRequest}
+              onResetMapView={handleResetMapView}
             />
           </MapErrorBoundary>
         </div>
