@@ -1950,6 +1950,13 @@ router.put('/tasks/:id/assign', express.json(), async (req, res) => {
         throw e;
       }
     }
+    // Rider leaves the FIFO queue once they receive a task; they rejoin only from the app.
+    try {
+      await pool.query(
+        `UPDATE mt_driver_queue SET left_at = NOW(), status = ? WHERE driver_id = ? AND left_at IS NULL`,
+        ['left', driverId]
+      );
+    } catch (_) {}
     try {
       await pool.query(
         `INSERT INTO mt_driver_pushlog (driver_id, push_title, push_message, push_type, task_id, order_id, date_created, date_process, is_read)

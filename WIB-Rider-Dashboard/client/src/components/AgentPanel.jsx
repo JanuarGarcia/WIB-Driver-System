@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { Link, useNavigate } from 'react-router-dom';
 import { api, statusClass, statusLabel, resolveUploadUrl } from '../api';
 import DriverDetailsModal from './DriverDetailsModal';
 import { useTeamFilter } from '../context/TeamFilterContext';
-import { sanitizeLocationDisplayName } from '../utils/displayText';
+import { sanitizeLocationDisplayName, shortTaskOrderDigits } from '../utils/displayText';
 import { getAdvanceOrderLines } from '../utils/advanceOrder';
 import { isLiveConnection, isOnDuty, isAgentPanelOnline } from '../utils/agentPanelRiders';
 
@@ -79,6 +80,26 @@ function taskDriverAvatarUrl(t) {
   return resolveUploadUrl(String(raw).trim());
 }
 
+/** Show rider photo or initials; on broken URL fall back to initials (no broken-image icon). */
+function AllTasksRiderAvatar({ src, initials }) {
+  const [imgFailed, setImgFailed] = useState(false);
+  useEffect(() => {
+    setImgFailed(false);
+  }, [src]);
+  if (!src || imgFailed) {
+    return <span className="task-card-all-tasks-avatar-initials">{initials}</span>;
+  }
+  return (
+    <img
+      src={src}
+      alt=""
+      loading="lazy"
+      decoding="async"
+      onError={() => setImgFailed(true)}
+    />
+  );
+}
+
 function directionDisplayLabel(dir) {
   if (!dir || typeof dir !== 'string' || !dir.trim()) return '—';
   const v = dir.trim().toLowerCase().replace(/\s+/g, ' ');
@@ -111,6 +132,18 @@ function normStatus(status) {
 
 const QUEUE_POLL_MS = 8000;
 
+function queueAssignTaskLines(t) {
+  const orderBits = shortTaskOrderDigits(t.order_id, t.task_id);
+  const cust = sanitizeLocationDisplayName(t.customer_name || '') || '—';
+  const merchRaw =
+    t.restaurant_name ||
+    (t.dropoff_merchant && !/^\d+$/.test(String(t.dropoff_merchant).trim()) ? t.dropoff_merchant : null);
+  const merch = sanitizeLocationDisplayName(merchRaw || '') || '';
+  const title = `Task #${t.task_id}${orderBits && orderBits !== '—' ? ` · …${orderBits}` : ''}`;
+  const sub = merch ? `${cust} · ${merch}` : cust;
+  return { title, sub };
+}
+
 /** Human-readable waiting duration since joined_at (dispatch scan). */
 function formatQueueWaiting(joinedAt) {
   if (!joinedAt) return '—';
@@ -128,7 +161,12 @@ function formatQueueWaiting(joinedAt) {
   return `${d} day${d === 1 ? '' : 's'}`;
 }
 
-export default function AgentPanel({ onOpenTaskDetails, onFocusRiderOnMap, listRevision = 0 }) {
+export default function AgentPanel({
+  onOpenTaskDetails,
+  onFocusRiderOnMap,
+  listRevision = 0,
+  onTaskListInvalidate,
+}) {
   const navigate = useNavigate();
   const { selectedTeamId } = useTeamFilter();
   const [details, setDetails] = useState({ active: [], offline: [], total: [] });
@@ -148,6 +186,11 @@ export default function AgentPanel({ onOpenTaskDetails, onFocusRiderOnMap, listR
   const [queueLoading, setQueueLoading] = useState(false);
   const [queueError, setQueueError] = useState(null);
   const [queueRemovingId, setQueueRemovingId] = useState(null);
+  const [queueAssignDriver, setQueueAssignDriver] = useState(null);
+  const [queueAssignTasks, setQueueAssignTasks] = useState([]);
+  const [queueAssignLoading, setQueueAssignLoading] = useState(false);
+  const [queueAssignError, setQueueAssignError] = useState(null);
+  const [queueAssignSubmitting, setQueueAssignSubmitting] = useState(false);
   const searchInputRef = useRef(null);
   const filterRef = useRef(null);
 
@@ -203,11 +246,21 @@ export default function AgentPanel({ onOpenTaskDetails, onFocusRiderOnMap, listR
   useEffect(() => {
     if (panelMode !== 'queue') return undefined;
     const onKey = (e) => {
-      if (e.key === 'Escape') setPanelMode('agents');
+      if (e.key !== 'Escape') return;
+      if (queueAssignDriver) {
+        e.preventDefault();
+        if (!queueAssignSubmitting) {
+          setQueueAssignDriver(null);
+          setQueueAssignTasks([]);
+          setQueueAssignError(null);
+        }
+        return;
+      }
+      setPanelMode('agents');
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [panelMode]);
+  }, [panelMode, queueAssignDriver, queueAssignSubmitting]);
 
   const loadAgents = useCallback(async (opts = {}) => {
     const silent = opts.silent === true;
@@ -342,6 +395,68 @@ export default function AgentPanel({ onOpenTaskDetails, onFocusRiderOnMap, listR
       setQueueRemovingId(null);
     }
   };
+
+  const openQueueAssignModal = useCallback((row) => {
+    setQueueAssignDriver(row);
+    setQueueAssignTasks([]);
+    setQueueAssignLoading(true);
+    setQueueAssignError(null);
+    const dateStr = todayStr();
+    api(`tasks?date=${encodeURIComponent(dateStr)}`)
+      .then((list) => {
+        const raw = Array.isArray(list) ? list : [];
+        const unassigned = raw.filter((t) => normStatus(t.status) === 'unassigned');
+        unassigned.sort((a, b) => (Number(b.task_id) || 0) - (Number(a.task_id) || 0));
+        setQueueAssignTasks(unassigned);
+      })
+      .catch((err) => {
+        setQueueAssignError(err?.error || err?.message || 'Failed to load tasks');
+      })
+      .finally(() => setQueueAssignLoading(false));
+  }, []);
+
+  const closeQueueAssignModal = useCallback(() => {
+    if (queueAssignSubmitting) return;
+    setQueueAssignDriver(null);
+    setQueueAssignTasks([]);
+    setQueueAssignError(null);
+  }, [queueAssignSubmitting]);
+
+  const submitQueueAssign = useCallback(
+    async (taskId) => {
+      if (!queueAssignDriver || queueAssignSubmitting) return;
+      const driver_id = Number(queueAssignDriver.driver_id);
+      if (!Number.isFinite(driver_id)) return;
+      const rawTeam = queueAssignDriver.team_id;
+      const parsedTeam = rawTeam != null && rawTeam !== '' ? parseInt(rawTeam, 10) : NaN;
+      const team_id = Number.isFinite(parsedTeam) && parsedTeam > 0 ? parsedTeam : undefined;
+      setQueueAssignSubmitting(true);
+      setQueueAssignError(null);
+      try {
+        await api(`tasks/${taskId}/assign`, {
+          method: 'PUT',
+          body: JSON.stringify({ driver_id, team_id }),
+        });
+        setQueueAssignDriver(null);
+        setQueueAssignTasks([]);
+        await loadQueue({ silent: true });
+        onTaskListInvalidate?.();
+        if (allTasksView) fetchAssignedTasks();
+      } catch (err) {
+        setQueueAssignError(err?.error || err?.message || 'Assign failed');
+      } finally {
+        setQueueAssignSubmitting(false);
+      }
+    },
+    [
+      queueAssignDriver,
+      queueAssignSubmitting,
+      loadQueue,
+      onTaskListInvalidate,
+      allTasksView,
+      fetchAssignedTasks,
+    ]
+  );
 
   useEffect(() => {
     if (searchOpen && searchInputRef.current) {
@@ -631,11 +746,7 @@ export default function AgentPanel({ onOpenTaskDetails, onFocusRiderOnMap, listR
                     <li key={t.task_id} className="task-card-all-tasks">
                       <div className="task-card-all-tasks-inner">
                         <div className="task-card-all-tasks-avatar" aria-hidden="true">
-                          {avatarUrl ? (
-                            <img src={avatarUrl} alt="" />
-                          ) : (
-                            <span className="task-card-all-tasks-avatar-initials">{initial}</span>
-                          )}
+                          <AllTasksRiderAvatar src={avatarUrl} initials={initial} />
                         </div>
                         <div className="task-card-all-tasks-body">
                           <div className="task-card-all-tasks-badges">
@@ -909,14 +1020,30 @@ export default function AgentPanel({ onOpenTaskDetails, onFocusRiderOnMap, listR
                         </div>
                       )}
                     </div>
-                    <button
-                      type="button"
-                      className="btn btn-sm driver-queue-remove"
-                      disabled={queueRemovingId === row.driver_id}
-                      onClick={() => handleRemoveFromQueue(row.driver_id)}
-                    >
-                      Remove
-                    </button>
+                    <div className="driver-queue-row-actions">
+                      <button
+                        type="button"
+                        className="btn btn-sm driver-queue-assign"
+                        disabled={queueAssignSubmitting}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openQueueAssignModal(row);
+                        }}
+                      >
+                        Assign task
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-sm driver-queue-remove"
+                        disabled={queueRemovingId === row.driver_id}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleRemoveFromQueue(row.driver_id);
+                        }}
+                      >
+                        Remove
+                      </button>
+                    </div>
                   </li>
                 );
               })}
@@ -925,6 +1052,80 @@ export default function AgentPanel({ onOpenTaskDetails, onFocusRiderOnMap, listR
         </div>
       </div>
       )}
+
+      {queueAssignDriver &&
+        createPortal(
+          <div
+            className="modal-backdrop driver-queue-assign-backdrop"
+            role="presentation"
+            onClick={closeQueueAssignModal}
+          >
+            <div
+              className="modal-box modal-box-lg driver-queue-assign-modal"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="driver-queue-assign-title"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="driver-queue-assign-modal-head">
+                <h2 id="driver-queue-assign-title" className="driver-queue-assign-modal-title">
+                  Assign to task
+                </h2>
+                <button
+                  type="button"
+                  className="driver-queue-assign-modal-close"
+                  onClick={closeQueueAssignModal}
+                  disabled={queueAssignSubmitting}
+                  aria-label="Close"
+                >
+                  ×
+                </button>
+              </div>
+              <p className="driver-queue-assign-modal-rider">
+                Rider:{' '}
+                <strong>
+                  {queueAssignDriver.full_name || `Driver #${queueAssignDriver.driver_id}`}
+                </strong>
+              </p>
+              <p className="driver-queue-assign-modal-hint">Unassigned tasks for {todayStr()}</p>
+              {queueAssignLoading && (
+                <p className="driver-queue-assign-state">Loading tasks…</p>
+              )}
+              {queueAssignError && (
+                <p className="driver-queue-assign-error" role="alert">
+                  {queueAssignError}
+                </p>
+              )}
+              {!queueAssignLoading && !queueAssignError && queueAssignTasks.length === 0 && (
+                <p className="driver-queue-assign-state">No unassigned tasks for today.</p>
+              )}
+              {queueAssignTasks.length > 0 && (
+                <ul className="driver-queue-assign-list">
+                  {queueAssignTasks.map((t) => {
+                    const { title, sub } = queueAssignTaskLines(t);
+                    return (
+                      <li key={t.task_id} className="driver-queue-assign-row">
+                        <div className="driver-queue-assign-row-text">
+                          <div className="driver-queue-assign-row-title">{title}</div>
+                          <div className="driver-queue-assign-row-sub">{sub}</div>
+                        </div>
+                        <button
+                          type="button"
+                          className="btn btn-sm btn-primary driver-queue-assign-pick"
+                          disabled={queueAssignSubmitting}
+                          onClick={() => submitQueueAssign(t.task_id)}
+                        >
+                          Assign
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </div>
+          </div>,
+          document.body
+        )}
 
       {selectedDriver && (
         <DriverDetailsModal

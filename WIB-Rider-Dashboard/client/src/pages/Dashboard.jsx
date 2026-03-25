@@ -371,6 +371,7 @@ export default function Dashboard() {
           onOpenTaskDetails={handleOpenTaskDetailsFromPanel}
           onFocusRiderOnMap={handleFocusRiderOnMap}
           listRevision={taskListRevision}
+          onTaskListInvalidate={bumpTaskLists}
         />
       </div>
     </div>
