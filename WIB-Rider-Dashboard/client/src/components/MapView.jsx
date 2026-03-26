@@ -86,7 +86,7 @@ function MapLegend() {
           <span className="map-legend-swatch map-legend-swatch--rider" aria-hidden />
           <span className="map-legend-text">
             <strong>Active rider</strong>
-            <span className="map-legend-desc">On duty, live in app</span>
+            <span className="map-legend-desc">On duty — live GPS</span>
           </span>
         </li>
         <li className="map-legend-item">

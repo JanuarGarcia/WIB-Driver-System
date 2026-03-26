@@ -908,6 +908,14 @@ export default function TaskDetailsModal({
   })();
   /** Merchant pickup contact person (mt_merchant.contact_name). */
   const merchantContactNameDisplay = displaySanitizedOrDash(merchant?.contact_name);
+  /** Merchant phone for pickup (restaurant line preferred, else contact_phone). */
+  const merchantPhoneDisplay = (() => {
+    const raw =
+      [merchant?.restaurant_phone, merchant?.contact_phone]
+        .map((x) => (x != null ? String(x).trim() : ''))
+        .find(Boolean) || '';
+    return raw ? displaySanitizedOrDash(raw) : '—';
+  })();
   const merchantAddressDisplay = (() => {
     if (merchant) {
       const line = [merchant.street, merchant.city, merchant.state, merchant.post_code]
@@ -1087,8 +1095,8 @@ export default function TaskDetailsModal({
                           <span className="task-detail-value">{merchantContactNameDisplay}</span>
                         </div>
                         <div className="task-detail-pickup-item">
-                          <span className="task-detail-label">Customer contact number</span>
-                          <span className="task-detail-value">{task.contact_number ?? order?.contact_number ?? '—'}</span>
+                          <span className="task-detail-label">Merchant contact number</span>
+                          <span className="task-detail-value">{merchantPhoneDisplay}</span>
                         </div>
                         <div className="task-detail-pickup-item task-detail-pickup-address">
                           <span className="task-detail-label">Address</span>
