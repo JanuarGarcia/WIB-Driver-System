@@ -50,7 +50,7 @@ let mtOrderPaymentStatusColumn = true;
 async function queryRiderTaskRows(whereSql, params) {
   const payStatusExpr = mtOrderPaymentStatusColumn ? 'o.payment_status AS payment_status' : 'NULL AS payment_status';
   const sql = `SELECT t.task_id, t.order_id, t.task_description, t.trans_type AS trans_type_raw, t.contact_number, t.email_address, t.customer_name, t.delivery_date,
-      NULL AS delivery_time, t.delivery_address, t.task_lat, t.task_lng,
+      NULL AS delivery_time, t.delivery_address, t.task_lat, t.task_lng, t.dropoff_merchant,
       COALESCE(NULLIF(TRIM(m.restaurant_name), ''), NULLIF(TRIM(m2.restaurant_name), ''), t.dropoff_merchant) AS merchant_name,
       t.drop_address AS merchant_address,
       t.status, t.status AS status_raw, NULL AS order_status,
@@ -77,6 +77,158 @@ async function queryRiderTaskRows(whereSql, params) {
     }
     throw e;
   }
+}
+
+function pickMoneyStr(v) {
+  if (v == null || v === '') return null;
+  return String(v);
+}
+
+function numOrZero(v) {
+  if (v == null || v === '') return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+/** Single-line pickup address from mt_merchant (rider task details). */
+function formatMerchantPickupAddress(m) {
+  if (!m || typeof m !== 'object') return '';
+  const parts = [m.street, m.city, m.state, m.post_code, m.zipcode, m.country]
+    .map((x) => (x != null ? String(x).trim() : ''))
+    .filter(Boolean);
+  const joined = parts.join(', ');
+  if (joined) return joined;
+  const fa = m.formatted_address != null ? String(m.formatted_address).trim() : '';
+  return fa || '';
+}
+
+/**
+ * Merge order / delivery / merchant / line items into rider task details.
+ * Preserves existing keys from queryRiderTaskRows; adds order_subtotal, convenience_fee, nested order, etc.
+ */
+async function enrichRiderTaskDetails(pool, taskRow) {
+  const details = { ...taskRow };
+  const legacyDropMerchantAddr = details.merchant_address;
+  details.task_drop_address = legacyDropMerchantAddr != null ? String(legacyDropMerchantAddr) : '';
+  details.drop_address = details.task_drop_address;
+
+  const orderId = details.order_id != null ? parseInt(String(details.order_id), 10) : 0;
+
+  let orderRow = null;
+  if (orderId) {
+    try {
+      const [ords] = await pool.query('SELECT * FROM mt_order WHERE order_id = ? LIMIT 1', [orderId]);
+      orderRow = ords && ords[0];
+    } catch (e) {
+      if (e.code !== 'ER_NO_SUCH_TABLE') throw e;
+    }
+  }
+
+  let deliveryRow = null;
+  if (orderId) {
+    try {
+      const [dr] = await pool.query(
+        `SELECT location_name, google_lat, google_lng, street, city, state, zipcode, country, formatted_address, service_fee
+         FROM mt_order_delivery_address WHERE order_id = ? ORDER BY id DESC LIMIT 1`,
+        [orderId]
+      );
+      deliveryRow = dr && dr[0];
+    } catch (e) {
+      if (e.code === 'ER_BAD_FIELD_ERROR' && /service_fee/i.test(String(e.sqlMessage || ''))) {
+        const [dr] = await pool.query(
+          `SELECT location_name, google_lat, google_lng, street, city, state, zipcode, country, formatted_address
+           FROM mt_order_delivery_address WHERE order_id = ? ORDER BY id DESC LIMIT 1`,
+          [orderId]
+        );
+        deliveryRow = dr && dr[0];
+      } else if (e.code !== 'ER_NO_SUCH_TABLE' && e.code !== 'ER_BAD_FIELD_ERROR') {
+        throw e;
+      }
+    }
+  }
+
+  const midFromOrder = orderRow?.merchant_id != null && String(orderRow.merchant_id).trim() !== '' ? parseInt(String(orderRow.merchant_id), 10) : null;
+  const dropoff = details.dropoff_merchant;
+  const midFromTask =
+    dropoff != null && String(dropoff).trim() !== '' && /^\d+$/.test(String(dropoff).trim())
+      ? parseInt(String(dropoff).trim(), 10)
+      : null;
+  const merchantId = Number.isFinite(midFromOrder) ? midFromOrder : Number.isFinite(midFromTask) ? midFromTask : null;
+
+  let merchantRow = null;
+  if (merchantId) {
+    try {
+      const [mr] = await pool.query(
+        'SELECT merchant_id, restaurant_name, restaurant_phone, street, city, state, post_code FROM mt_merchant WHERE merchant_id = ? LIMIT 1',
+        [merchantId]
+      );
+      merchantRow = mr && mr[0];
+    } catch (e) {
+      if (e.code !== 'ER_NO_SUCH_TABLE' && e.code !== 'ER_BAD_FIELD_ERROR') throw e;
+    }
+  }
+
+  const pickupFormatted = formatMerchantPickupAddress(merchantRow);
+  details.merchant_address = pickupFormatted || details.drop_address || '';
+
+  if (merchantRow) {
+    details.merchant = {
+      merchant_id: merchantRow.merchant_id,
+      restaurant_name: merchantRow.restaurant_name,
+      restaurant_phone: merchantRow.restaurant_phone,
+      street: merchantRow.street,
+      city: merchantRow.city,
+      state: merchantRow.state,
+      post_code: merchantRow.post_code,
+      formatted_address: pickupFormatted || null,
+    };
+  }
+
+  if (deliveryRow) {
+    details.order_delivery_address = { ...deliveryRow };
+  }
+
+  if (orderRow) {
+    const cardN = numOrZero(orderRow.card_fee);
+    const svcN = numOrZero(deliveryRow?.service_fee);
+    let convenienceFee = null;
+    if (cardN != null && cardN !== 0) convenienceFee = pickMoneyStr(orderRow.card_fee);
+    else if (svcN != null && svcN !== 0) convenienceFee = pickMoneyStr(deliveryRow.service_fee);
+
+    const tipPct =
+      orderRow.cart_tip_percentage != null && String(orderRow.cart_tip_percentage).trim() !== ''
+        ? String(orderRow.cart_tip_percentage)
+        : null;
+
+    details.order_subtotal = pickMoneyStr(orderRow.sub_total);
+    details.order_delivery_charge = pickMoneyStr(orderRow.delivery_charge);
+    details.convenience_fee = convenienceFee;
+    details.cart_tip_percentage = tipPct;
+    details.cart_tip_value = pickMoneyStr(orderRow.cart_tip_value);
+    const totalW = pickMoneyStr(orderRow.total_w_tax);
+    details.order_total_amount = totalW != null ? totalW : pickMoneyStr(orderRow.sub_total);
+
+    details.order = {
+      sub_total: pickMoneyStr(orderRow.sub_total),
+      total_w_tax: pickMoneyStr(orderRow.total_w_tax),
+      delivery_charge: pickMoneyStr(orderRow.delivery_charge),
+      card_fee: pickMoneyStr(orderRow.card_fee),
+      cart_tip_percentage: tipPct,
+      cart_tip_value: pickMoneyStr(orderRow.cart_tip_value),
+    };
+  }
+
+  details.order_details = [];
+  if (orderId) {
+    try {
+      const [lines] = await pool.query('SELECT * FROM mt_order_details WHERE order_id = ? ORDER BY id ASC', [orderId]);
+      details.order_details = lines || [];
+    } catch (e) {
+      if (e.code !== 'ER_NO_SUCH_TABLE' && e.code !== 'ER_BAD_FIELD_ERROR') throw e;
+    }
+  }
+
+  return details;
 }
 
 // ---- Public (api_key only) ----
@@ -362,7 +514,12 @@ router.post('/GetTaskDetails', validateApiKey, resolveDriver, async (req, res) =
   const r = rows[0];
   if (!r) return error(res, 'Task not found');
   r.date_created = r.date_created ? new Date(r.date_created).toISOString() : null;
-  return success(res, r);
+  try {
+    const details = await enrichRiderTaskDetails(pool, r);
+    return success(res, details);
+  } catch (e) {
+    return error(res, e.message || 'Failed to load task details');
+  }
 });
 
 router.post('/ChangeTaskStatus', validateApiKey, resolveDriver, async (req, res) => {
