@@ -1,6 +1,19 @@
 let admin = null;
 let app = null;
 
+async function resetFirebase() {
+  try {
+    const adm = require('firebase-admin');
+    if (adm.apps && adm.apps.length) {
+      await Promise.all(adm.apps.map((a) => (a && typeof a.delete === 'function' ? a.delete() : Promise.resolve())));
+    }
+  } catch (e) {
+    console.warn('FCM reset:', e.message);
+  }
+  admin = null;
+  app = null;
+}
+
 async function initFirebase() {
   if (app) return app;
   const { pool } = require('../config/db');
@@ -63,4 +76,4 @@ async function sendPushToAllDrivers(title, body, data = {}) {
   }
 }
 
-module.exports = { initFirebase, sendPushToDriver, sendPushToAllDrivers };
+module.exports = { initFirebase, resetFirebase, sendPushToDriver, sendPushToAllDrivers };

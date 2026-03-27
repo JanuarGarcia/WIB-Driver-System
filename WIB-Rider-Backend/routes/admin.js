@@ -8,7 +8,7 @@ const { v4: uuidv4 } = require('uuid');
 const bcrypt = require('bcryptjs');
 const { pool } = require('../config/db');
 const { success, error } = require('../lib/response');
-const { sendPushToDriver, sendPushToAllDrivers } = require('../services/fcm');
+const { sendPushToDriver, sendPushToAllDrivers, resetFirebase, initFirebase } = require('../services/fcm');
 
 const ADMIN_SECRET = process.env.ADMIN_SECRET || '';
 /** Same as driver routes: absolute URLs for assets (set in .env for production). */
@@ -476,6 +476,30 @@ async function upsertGlobalSettingKey(strValue, key) {
   }
 }
 
+/** Filename-style label for the Firebase service account JSON (matches typical downloaded key names). */
+function deriveFcmServiceAccountDisplay(jsonStr) {
+  try {
+    const o = JSON.parse(jsonStr);
+    const pid = o.project_id;
+    const pkid = o.private_key_id;
+    const email = o.client_email || '';
+    const m = email.match(/firebase-adminsdk-([^@]+)/);
+    const mid = m ? m[1] : '';
+    if (pid && pkid && mid) {
+      const name = `${pid}-firebase-adminsdk-${mid}-${pkid}.json`;
+      return name.length > 80 ? `${name.slice(0, 77)}...` : name;
+    }
+    if (email) {
+      const local = email.split('@')[0];
+      const n = `${local}.json`;
+      return n.length > 80 ? `${n.slice(0, 77)}...` : n;
+    }
+    return pid ? `${pid}-service-account.json` : '';
+  } catch {
+    return '';
+  }
+}
+
 // ---- Settings (General) - merge `settings` + `mt_option` (`settings` wins on duplicate keys) ----
 async function getSettingsMap() {
   let fromOption = {};
@@ -608,6 +632,15 @@ router.get('/settings', async (req, res) => {
     const envMobileApiUrlRaw = (process.env.MOBILE_API_URL || '').trim();
     const envMobileApiUrl = envMobileApiUrlRaw ? envMobileApiUrlRaw.replace(/\/+$/, '') : '';
     const mobileApiUrl = apiHashKey && String(apiHashKey).trim() ? envMobileApiUrl : '';
+    let fcm_service_account_display = '';
+    const storedFcmName = map.fcm_service_account_filename != null ? String(map.fcm_service_account_filename).trim() : '';
+    if (storedFcmName) {
+      fcm_service_account_display = storedFcmName.length > 80 ? `${storedFcmName.slice(0, 77)}...` : storedFcmName;
+    } else if (map.fcm_service_account_path && String(map.fcm_service_account_path).trim()) {
+      fcm_service_account_display = path.basename(String(map.fcm_service_account_path).trim());
+    } else if (map.fcm_service_account_json && String(map.fcm_service_account_json).trim()) {
+      fcm_service_account_display = deriveFcmServiceAccountDisplay(map.fcm_service_account_json);
+    }
     return res.json({
       website_title: map.website_title || '',
       mobile_api_url: mobileApiUrl,
@@ -620,6 +653,7 @@ router.get('/settings', async (req, res) => {
       map_provider: (map.map_provider || 'leaflet').toLowerCase() === 'mapbox' ? 'mapbox' : (map.map_provider || '').toLowerCase() === 'google' ? 'google' : 'leaflet',
       fcm_server_key: map.fcm_server_key || '',
       fcm_service_account_configured: !!(map.fcm_service_account_json && String(map.fcm_service_account_json).trim()),
+      fcm_service_account_display,
       allow_all_admin_team_by_merchant: map.allow_all_admin_team_by_merchant || '0',
       set_certain_merchant_admin_team: map.set_certain_merchant_admin_team || '0',
       admin_team_merchant_ids: Array.isArray(admin_team_merchant_ids) ? admin_team_merchant_ids : [],
@@ -675,7 +709,7 @@ router.put('/settings', async (req, res) => {
   const body = req.body || {};
   const {
     website_title, mobile_api_url, api_hash_key, app_default_language, language, force_default_language,
-    google_api_key, mapbox_access_token, map_provider, fcm_server_key, fcm_service_account_json,
+    google_api_key, mapbox_access_token, map_provider, fcm_server_key, fcm_service_account_json, fcm_service_account_filename,
     allow_all_admin_team_by_merchant, set_certain_merchant_admin_team, admin_team_merchant_ids,
     task_owner, merchant_task_owner_admin_ids, admin_show_only_admin_task,
     do_not_allow_merchant_delete_task, merchant_delete_task_days,
@@ -705,6 +739,12 @@ router.put('/settings', async (req, res) => {
     [normalizedMapProvider, 'map_provider'],
     [fcm_server_key, 'fcm_server_key'],
     [fcm_service_account_json, 'fcm_service_account_json'],
+    [
+      fcm_service_account_json !== undefined && fcm_service_account_json !== null && String(fcm_service_account_json).trim() !== ''
+        ? (fcm_service_account_filename !== undefined && fcm_service_account_filename !== null ? String(fcm_service_account_filename).trim() : '')
+        : undefined,
+      'fcm_service_account_filename',
+    ],
     [allow_all_admin_team_by_merchant === true || allow_all_admin_team_by_merchant === '1' ? '1' : (allow_all_admin_team_by_merchant === false || allow_all_admin_team_by_merchant === '0' ? '0' : undefined), 'allow_all_admin_team_by_merchant'],
     [set_certain_merchant_admin_team === true || set_certain_merchant_admin_team === '1' ? '1' : (set_certain_merchant_admin_team === false || set_certain_merchant_admin_team === '0' ? '0' : undefined), 'set_certain_merchant_admin_team'],
     [jsonOr(admin_team_merchant_ids, null), 'admin_team_merchant_ids'],
@@ -771,6 +811,10 @@ router.put('/settings', async (req, res) => {
           }
         } else throw tableErr;
       }
+    }
+    if (updates.some(([, key]) => key === 'fcm_service_account_json')) {
+      await resetFirebase();
+      await initFirebase();
     }
     return res.json({ ok: true });
   } catch (e) {

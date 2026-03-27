@@ -7,15 +7,17 @@ import { getAdvanceOrderLines, isAdvanceOrderDisplay } from '../utils/advanceOrd
 import { useTableAutoRefresh } from '../hooks/useTableAutoRefresh';
 import {
   DASHBOARD_TASKS_MAP_DATE_KEY,
+  DASHBOARD_TASKS_MAP_DATE_EVENT,
   notifyDashboardTasksMapDateChanged,
   readDashboardTasksMapDateFromStorage,
+  readEffectiveDashboardTaskDate,
   todayDateStrLocal,
   taskDropoffLatLng,
 } from '../utils/mapTasks';
 
 /** Match dashboard map `tasks?date=` on first paint so GET dedupe shares one request with Dashboard. */
 function initialTaskPanelSelectedDate() {
-  const ymd = readDashboardTasksMapDateFromStorage() || todayDateStrLocal();
+  const ymd = readEffectiveDashboardTaskDate();
   const parts = ymd.split('-').map(Number);
   const [y, m, d] = parts;
   if (!Number.isFinite(y) || !Number.isFinite(m) || !Number.isFinite(d)) return new Date();
@@ -305,6 +307,26 @@ export default function TaskPanel({ onOpenTaskDetails, onFocusTaskOnMap, listRev
     } catch (_) {}
     notifyDashboardTasksMapDateChanged();
   }, [selectedDateTime]);
+
+  /** Keep picker in sync when Dashboard rolls stale session date to today (e.g. visibility). */
+  useEffect(() => {
+    const syncFromStorage = () => {
+      const ymd = readDashboardTasksMapDateFromStorage() || todayDateStrLocal();
+      setSelectedDateTime((prev) => {
+        const py = prev.getFullYear();
+        const pm = prev.getMonth() + 1;
+        const pd = prev.getDate();
+        const cur = `${py}-${String(pm).padStart(2, '0')}-${String(pd).padStart(2, '0')}`;
+        if (cur === ymd) return prev;
+        const parts = ymd.split('-').map(Number);
+        const [y, m, d] = parts;
+        if (!Number.isFinite(y) || !Number.isFinite(m) || !Number.isFinite(d)) return prev;
+        return new Date(y, m - 1, d, 12, 0, 0);
+      });
+    };
+    window.addEventListener(DASHBOARD_TASKS_MAP_DATE_EVENT, syncFromStorage);
+    return () => window.removeEventListener(DASHBOARD_TASKS_MAP_DATE_EVENT, syncFromStorage);
+  }, []);
 
   useEffect(() => {
     function handleClickOutside(e) {

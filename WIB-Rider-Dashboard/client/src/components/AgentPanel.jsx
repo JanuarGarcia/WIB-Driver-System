@@ -6,6 +6,7 @@ import DriverDetailsModal from './DriverDetailsModal';
 import { useTeamFilter } from '../context/TeamFilterContext';
 import { sanitizeLocationDisplayName, sanitizeMerchantDisplayName, shortTaskOrderDigits } from '../utils/displayText';
 import { getAdvanceOrderLines } from '../utils/advanceOrder';
+import { todayDateStrLocal } from '../utils/mapTasks';
 import { isLiveConnection, isOnDuty, isAgentPanelOnline } from '../utils/agentPanelRiders';
 
 const TABS = ['active', 'offline', 'total'];
@@ -122,7 +123,7 @@ const SORT_OPTIONS = [
 ];
 
 function todayStr() {
-  return new Date().toISOString().slice(0, 10);
+  return todayDateStrLocal();
 }
 
 const ASSIGNED_STATUSES = ['assigned', 'acknowledged', 'started', 'inprogress'];

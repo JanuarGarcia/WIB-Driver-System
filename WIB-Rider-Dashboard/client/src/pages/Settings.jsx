@@ -314,6 +314,9 @@ export default function Settings() {
     };
     if (fcmServiceAccountJson && fcmServiceAccountJson.trim()) {
       payload.fcm_service_account_json = fcmServiceAccountJson.trim();
+      if (fcmFile && String(fcmFile).trim()) {
+        payload.fcm_service_account_filename = String(fcmFile).trim();
+      }
     }
     api('settings', { method: 'PUT', body: JSON.stringify(payload) })
       .then(() => {
@@ -1110,7 +1113,15 @@ export default function Settings() {
                 <div className="settings-field">
                   <div className="settings-field-inline">
                     <button type="button" className="btn-browse" onClick={() => document.getElementById('fcm_file').click()}>Browse</button>
-                    <input type="text" readOnly className="form-control" placeholder={settings.fcm_service_account_configured ? '••• configured (upload new to replace)' : 'No file chosen'} value={fcmFile} style={{ flex: 1 }} />
+                    <input
+                      type="text"
+                      readOnly
+                      className="form-control"
+                      placeholder={fcmFile || settings.fcm_service_account_display ? '' : 'No file chosen'}
+                      value={fcmFile || settings.fcm_service_account_display || ''}
+                      title={fcmFile || settings.fcm_service_account_display || ''}
+                      style={{ flex: 1 }}
+                    />
                     <input id="fcm_file" type="file" accept=".json" style={{ display: 'none' }} onChange={handleFcmFileChange} />
                   </div>
                   <p className="settings-helper">

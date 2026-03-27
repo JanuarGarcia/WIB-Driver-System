@@ -27,8 +27,11 @@ import { api } from '../api';
 const MOBILE_DASHBOARD_MQ = '(max-width: 768px)';
 import { useTeamFilter } from '../context/TeamFilterContext';
 import {
+  DASHBOARD_TASKS_MAP_DATE_KEY,
   DASHBOARD_TASKS_MAP_DATE_EVENT,
+  notifyDashboardTasksMapDateChanged,
   readDashboardTasksMapDateFromStorage,
+  readEffectiveDashboardTaskDate,
   todayDateStrLocal,
   tasksWithMapCoordinates,
   taskDropoffLatLng,
@@ -101,7 +104,7 @@ export default function Dashboard() {
   const [defaultMapCenter, setDefaultMapCenter] = useState([12.8797, 121.774]);
   const [defaultMapZoom, setDefaultMapZoom] = useState(5);
   const [googleMapStyle, setGoogleMapStyle] = useState('');
-  const [tasksMapDateStr, setTasksMapDateStr] = useState(() => readDashboardTasksMapDateFromStorage() || todayDateStrLocal());
+  const [tasksMapDateStr, setTasksMapDateStr] = useState(() => readEffectiveDashboardTaskDate());
   const [rawMapTasks, setRawMapTasks] = useState([]);
   /** null = agent roster still loading (map shows all rider GPS pins); then filtered to Active panel roster. */
   const [activePanelDriverIdSet, setActivePanelDriverIdSet] = useState(null);
@@ -150,7 +153,7 @@ export default function Dashboard() {
 
   const refreshActivePanelDriverIds = useCallback(async () => {
     const params = new URLSearchParams();
-    params.set('date', new Date().toISOString().slice(0, 10));
+    params.set('date', todayDateStrLocal());
     if (selectedTeamId != null && selectedTeamId !== '') {
       params.set('team_id', String(selectedTeamId));
     }
@@ -230,6 +233,23 @@ export default function Dashboard() {
     const sync = () => setTasksMapDateStr(readDashboardTasksMapDateFromStorage() || todayDateStrLocal());
     window.addEventListener(DASHBOARD_TASKS_MAP_DATE_EVENT, sync);
     return () => window.removeEventListener(DASHBOARD_TASKS_MAP_DATE_EVENT, sync);
+  }, []);
+
+  /** Tab left overnight: roll stale session date to local today so map + task panel match without manual refresh. */
+  useEffect(() => {
+    const onVis = () => {
+      if (document.visibilityState !== 'visible') return;
+      const today = todayDateStrLocal();
+      const stored = readDashboardTasksMapDateFromStorage();
+      if (stored && stored < today) {
+        try {
+          sessionStorage.setItem(DASHBOARD_TASKS_MAP_DATE_KEY, today);
+        } catch (_) {}
+        notifyDashboardTasksMapDateChanged();
+      }
+    };
+    document.addEventListener('visibilitychange', onVis);
+    return () => document.removeEventListener('visibilitychange', onVis);
   }, []);
 
   const mapShowsNoMarkers =

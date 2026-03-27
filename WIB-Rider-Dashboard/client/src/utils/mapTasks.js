@@ -19,6 +19,18 @@ export function todayDateStrLocal() {
   return `${y}-${m}-${d}`;
 }
 
+/**
+ * Task list + map date on load/refresh. If session has a calendar day before local today, use today.
+ * Future dates (e.g. scheduled orders) are kept. (YYYY-MM-DD string compare.)
+ */
+export function readEffectiveDashboardTaskDate() {
+  const today = todayDateStrLocal();
+  const stored = readDashboardTasksMapDateFromStorage();
+  if (!stored) return today;
+  if (stored < today) return today;
+  return stored;
+}
+
 export function notifyDashboardTasksMapDateChanged() {
   try {
     window.dispatchEvent(new Event(DASHBOARD_TASKS_MAP_DATE_EVENT));
