@@ -90,6 +90,204 @@ function numOrZero(v) {
   return Number.isFinite(n) ? n : null;
 }
 
+function truthyAsap(v) {
+  if (v == null || v === '') return false;
+  if (typeof v === 'boolean') return v;
+  if (typeof v === 'number') return v !== 0;
+  const s = String(v).toLowerCase().trim();
+  return s === '1' || s === 'true' || s === 'yes' || s === 'y';
+}
+
+/** Normalize DB / Date to YYYY-MM-DD for JSON. */
+function formatDateOnlyMysql(v) {
+  if (v == null || v === '') return null;
+  if (v instanceof Date) {
+    const y = v.getFullYear();
+    const m = String(v.getMonth() + 1).padStart(2, '0');
+    const d = String(v.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+  const str = String(v).trim();
+  if (/^\d{4}-\d{2}-\d{2}/.test(str)) return str.slice(0, 10);
+  if (str.includes('T')) return str.slice(0, 10);
+  return str || null;
+}
+
+/** Map one mt_order_details row for rider app (snake + camelCase aliases, addon string + parsed addons). */
+function mapDetailRowForRider(row) {
+  if (!row || typeof row !== 'object') return row;
+  const out = { ...row };
+  const itemName = row.item_name ?? row.itemName ?? row.name ?? null;
+  const qty = row.qty ?? row.quantity ?? row.qty_ordered ?? null;
+  const size = row.size != null && row.size !== '' ? String(row.size) : null;
+  const orderNotes = row.order_notes ?? row.notes ?? row.orderNotes ?? null;
+  let addonRaw = row.addon ?? row.addons;
+  if (Buffer.isBuffer(addonRaw)) addonRaw = addonRaw.toString('utf8');
+  let addonsParsed = null;
+  if (addonRaw != null && typeof addonRaw === 'string' && addonRaw.trim() !== '') {
+    try {
+      addonsParsed = JSON.parse(addonRaw);
+    } catch (_) {
+      /* keep string in addon */
+    }
+  } else if (Array.isArray(addonRaw)) {
+    addonsParsed = addonRaw;
+    addonRaw = JSON.stringify(addonRaw);
+  }
+  if (itemName != null) {
+    out.item_name = itemName;
+    out.itemName = itemName;
+  }
+  if (qty != null) {
+    out.qty = qty;
+    out.quantity = qty;
+  }
+  if (size != null) out.size = size;
+  if (orderNotes != null) {
+    out.order_notes = orderNotes;
+    out.orderNotes = orderNotes;
+  }
+  if (addonRaw != null && addonRaw !== '') {
+    out.addon = typeof addonRaw === 'string' ? addonRaw : JSON.stringify(addonRaw);
+  } else {
+    out.addon = out.addon != null && !Buffer.isBuffer(out.addon) ? String(out.addon) : out.addon;
+  }
+  if (addonsParsed != null) out.addons = addonsParsed;
+  return out;
+}
+
+/**
+ * Attach scheduled delivery, instructions, line items, and nested order aliases (list + detail same shape).
+ * @param {Record<string, unknown>} details task row (mutated)
+ * @param {Record<string, unknown>|null} orderRow mt_order row or null
+ * @param {unknown[]} rawLineRows mt_order_details rows
+ */
+function attachScheduleLinesAndAliases(details, orderRow, rawLineRows) {
+  const lines = Array.isArray(rawLineRows) ? rawLineRows.map(mapDetailRowForRider) : [];
+  details.order_line_items = lines;
+  details.orderLineItems = lines;
+  details.mt_order_details = lines;
+  details.order_details = lines;
+  details.orderDetails = lines;
+
+  const ddFromOrder = orderRow ? formatDateOnlyMysql(orderRow.delivery_date) : null;
+  const ddFromTask = formatDateOnlyMysql(details.delivery_date);
+  const dd = ddFromOrder || ddFromTask || null;
+
+  const dt =
+    orderRow && orderRow.delivery_time != null && String(orderRow.delivery_time).trim() !== ''
+      ? String(orderRow.delivery_time).trim()
+      : null;
+
+  const di =
+    orderRow && orderRow.delivery_instruction != null && String(orderRow.delivery_instruction).trim() !== ''
+      ? String(orderRow.delivery_instruction).trim()
+      : null;
+
+  const deliveryAsap = orderRow ? truthyAsap(orderRow.delivery_asap) : false;
+
+  if (dd) {
+    details.delivery_date = dd;
+    details.deliveryDate = dd;
+  }
+  if (dt != null) {
+    details.delivery_time = dt;
+    details.deliveryTime = dt;
+  }
+  details.delivery_asap = deliveryAsap ? 1 : 0;
+  details.deliveryAsap = deliveryAsap;
+  if (di != null) {
+    details.delivery_instruction = di;
+    details.deliveryInstruction = di;
+  }
+
+  let jsonDetails = null;
+  if (orderRow) {
+    if (orderRow.json_details != null) {
+      jsonDetails = Buffer.isBuffer(orderRow.json_details) ? orderRow.json_details.toString('utf8') : String(orderRow.json_details);
+    } else if (orderRow.jsonDetails != null) {
+      jsonDetails = String(orderRow.jsonDetails);
+    }
+  }
+
+  const orderBase = details.order && typeof details.order === 'object' ? { ...details.order } : {};
+  orderBase.delivery_date = dd;
+  orderBase.deliveryDate = dd;
+  orderBase.delivery_time = dt;
+  orderBase.deliveryTime = dt;
+  orderBase.delivery_asap = deliveryAsap ? 1 : 0;
+  orderBase.deliveryAsap = deliveryAsap;
+  orderBase.delivery_instruction = di;
+  orderBase.deliveryInstruction = di;
+  if (jsonDetails) {
+    orderBase.json_details = jsonDetails;
+    orderBase.jsonDetails = jsonDetails;
+  }
+
+  if (orderRow) {
+    const tipPct =
+      orderRow.cart_tip_percentage != null && String(orderRow.cart_tip_percentage).trim() !== ''
+        ? String(orderRow.cart_tip_percentage)
+        : null;
+    orderBase.sub_total = pickMoneyStr(orderRow.sub_total);
+    orderBase.subTotal = orderBase.sub_total;
+    orderBase.total_w_tax = pickMoneyStr(orderRow.total_w_tax);
+    orderBase.totalWTax = orderBase.total_w_tax;
+    orderBase.delivery_charge = pickMoneyStr(orderRow.delivery_charge);
+    orderBase.deliveryCharge = orderBase.delivery_charge;
+    orderBase.card_fee = pickMoneyStr(orderRow.card_fee);
+    orderBase.cardFee = orderBase.card_fee;
+    orderBase.cart_tip_percentage = tipPct;
+    orderBase.cartTipPercentage = tipPct;
+    orderBase.cart_tip_value = pickMoneyStr(orderRow.cart_tip_value);
+    orderBase.cartTipValue = orderBase.cart_tip_value;
+  }
+
+  details.order = orderBase;
+  details.mt_order = { ...orderBase };
+  details.order_info = { ...orderBase };
+  details.orderInfo = { ...orderBase };
+
+  return details;
+}
+
+/** Batch-load mt_order + mt_order_details for many order_ids (driver task list). */
+async function batchFetchOrdersAndLines(pool, orderIds) {
+  const uniq = [
+    ...new Set(
+      orderIds
+        .map((id) => parseInt(String(id), 10))
+        .filter((n) => Number.isFinite(n) && n > 0)
+    ),
+  ];
+  const ordersMap = new Map();
+  const linesByOrder = new Map();
+  if (uniq.length === 0) return { ordersMap, linesByOrder };
+  const ph = uniq.map(() => '?').join(',');
+  try {
+    const [orows] = await pool.query(`SELECT * FROM mt_order WHERE order_id IN (${ph})`, uniq);
+    for (const r of orows || []) {
+      if (r.order_id != null) ordersMap.set(Number(r.order_id), r);
+    }
+  } catch (e) {
+    if (e.code !== 'ER_NO_SUCH_TABLE' && e.code !== 'ER_BAD_FIELD_ERROR') throw e;
+  }
+  try {
+    const [lrows] = await pool.query(
+      `SELECT * FROM mt_order_details WHERE order_id IN (${ph}) ORDER BY order_id ASC, id ASC`,
+      uniq
+    );
+    for (const r of lrows || []) {
+      const oid = Number(r.order_id);
+      if (!linesByOrder.has(oid)) linesByOrder.set(oid, []);
+      linesByOrder.get(oid).push(r);
+    }
+  } catch (e) {
+    if (e.code !== 'ER_NO_SUCH_TABLE' && e.code !== 'ER_BAD_FIELD_ERROR') throw e;
+  }
+  return { ordersMap, linesByOrder };
+}
+
 /** Single-line pickup address from mt_merchant (rider task details). */
 function formatMerchantPickupAddress(m) {
   if (!m || typeof m !== 'object') return '';
@@ -218,15 +416,17 @@ async function enrichRiderTaskDetails(pool, taskRow) {
     };
   }
 
-  details.order_details = [];
+  let rawLines = [];
   if (orderId) {
     try {
       const [lines] = await pool.query('SELECT * FROM mt_order_details WHERE order_id = ? ORDER BY id ASC', [orderId]);
-      details.order_details = lines || [];
+      rawLines = lines || [];
     } catch (e) {
       if (e.code !== 'ER_NO_SUCH_TABLE' && e.code !== 'ER_BAD_FIELD_ERROR') throw e;
     }
   }
+
+  attachScheduleLinesAndAliases(details, orderRow, rawLines);
 
   return details;
 }
@@ -500,10 +700,21 @@ router.post('/GetTaskByDate', validateApiKey, resolveDriver, async (req, res) =>
     'WHERE (t.delivery_date = ? OR DATE(t.delivery_date) = ?) AND (t.driver_id IS NULL OR t.driver_id = ?) ORDER BY t.task_id',
     [date, date, req.driver.id]
   );
-  const data = rows.map((r) => ({
-    ...r,
-    date_created: r.date_created ? new Date(r.date_created).toISOString() : null,
-  }));
+  const { ordersMap, linesByOrder } = await batchFetchOrdersAndLines(
+    pool,
+    rows.map((r) => r.order_id)
+  );
+  const data = rows.map((r) => {
+    const out = {
+      ...r,
+      date_created: r.date_created ? new Date(r.date_created).toISOString() : null,
+    };
+    const oid = out.order_id != null ? parseInt(String(out.order_id), 10) : 0;
+    const orderRow = Number.isFinite(oid) && oid > 0 ? ordersMap.get(oid) || null : null;
+    const lineRows = Number.isFinite(oid) && oid > 0 ? linesByOrder.get(oid) || [] : [];
+    attachScheduleLinesAndAliases(out, orderRow, lineRows);
+    return out;
+  });
   return success(res, { data });
 });
 
