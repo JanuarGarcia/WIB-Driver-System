@@ -7,6 +7,7 @@ import { useTableSort } from '../hooks/useTableSort';
 import TablePaginationControls from '../components/TablePaginationControls';
 import TableSortControls from '../components/TableSortControls';
 import DriverDetailsModal from '../components/DriverDetailsModal';
+import SendPushModal from '../components/SendPushModal';
 
 const STATUS_FILTERS = [
   { id: 'all', label: 'All' },
@@ -66,9 +67,6 @@ export default function Drivers() {
   const urlPage = Math.max(1, parseInt(searchParams.get('page'), 10) || 1);
   const urlSize = PAGE_SIZE_OPTIONS.includes(parseInt(searchParams.get('size'), 10)) ? parseInt(searchParams.get('size'), 10) : 10;
   const [pushDriver, setPushDriver] = useState(null);
-  const [pushTitle, setPushTitle] = useState('');
-  const [pushMessage, setPushMessage] = useState('');
-  const [pushSending, setPushSending] = useState(false);
   const [teams, setTeams] = useState([]);
   const [driverModal, setDriverModal] = useState(null);
   const [driverForm, setDriverForm] = useState({ username: '', password: '', first_name: '', last_name: '', email: '', phone: '', team_id: '', vehicle: '', status: 'active' });
@@ -344,8 +342,6 @@ export default function Drivers() {
 
   const openSendPush = (d) => {
     setPushDriver(d);
-    setPushTitle('Notification');
-    setPushMessage('');
   };
 
   const openViewDriver = (d) => {
@@ -355,22 +351,6 @@ export default function Drivers() {
       return;
     }
     setViewDriver({ ...d, id });
-  };
-
-  const sendPush = async () => {
-    if (!pushDriver) return;
-    setPushSending(true);
-    try {
-      await api(`drivers/${pushDriver.id}/send-push`, {
-        method: 'POST',
-        body: JSON.stringify({ title: pushTitle.trim() || 'Notification', message: pushMessage.trim() || 'You have a new notification.' }),
-      });
-      setPushDriver(null);
-    } catch (err) {
-      alert(err.error || 'Failed to send push');
-    } finally {
-      setPushSending(false);
-    }
   };
 
   return (
@@ -652,51 +632,16 @@ export default function Drivers() {
         />
       )}
 
-      {pushDriver && (
-        <div className="modal-backdrop" onClick={() => !pushSending && setPushDriver(null)}>
-          <div className="modal-box send-push-modal" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header send-push-modal-header">
-              <h3>Send push to {pushDriver.full_name || pushDriver.username || `Driver #${pushDriver.id}`}</h3>
-              <button type="button" className="send-push-modal-close" onClick={() => !pushSending && setPushDriver(null)} aria-label="Close">×</button>
-            </div>
-            <div className="modal-body send-push-modal-body">
-              <div className="send-push-field">
-                <label className="modal-label" htmlFor="send-push-title">Title</label>
-                <input
-                  type="text"
-                  id="send-push-title"
-                  className="form-control send-push-input"
-                  value={pushTitle}
-                  onChange={(e) => setPushTitle(e.target.value)}
-                  placeholder="Notification title"
-                />
-              </div>
-              <div className="send-push-field">
-                <label className="modal-label" htmlFor="send-push-message">Message</label>
-                <textarea
-                  id="send-push-message"
-                  className="form-control send-push-textarea"
-                  rows={4}
-                  value={pushMessage}
-                  onChange={(e) => setPushMessage(e.target.value)}
-                  placeholder="Message body"
-                />
-                <span className="send-push-char-count" aria-live="polite">
-                  {pushMessage.length} characters
-                </span>
-              </div>
-              <div className="modal-actions send-push-modal-actions">
-                <button type="button" className="btn btn-primary send-push-submit" onClick={sendPush} disabled={pushSending}>
-                  {pushSending ? 'Sending…' : 'Send push'}
-                </button>
-                <button type="button" className="btn send-push-cancel" onClick={() => !pushSending && setPushDriver(null)} disabled={pushSending}>
-                  Cancel
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      <SendPushModal
+        open={!!pushDriver}
+        driverId={pushDriver?.id ?? pushDriver?.driver_id}
+        driverLabel={
+          pushDriver
+            ? pushDriver.full_name || pushDriver.username || `Driver #${pushDriver.id ?? pushDriver.driver_id}`
+            : ''
+        }
+        onClose={() => setPushDriver(null)}
+      />
 
       {bulkPushOpen && (
         <div className="modal-backdrop" onClick={() => !bulkPushSending && setBulkPushOpen(false)}>

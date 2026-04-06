@@ -7,10 +7,40 @@ import { useTableSort } from '../hooks/useTableSort';
 import TablePaginationControls from '../components/TablePaginationControls';
 import TableSortControls from '../components/TableSortControls';
 
-function sectionDate() {
-  const d = new Date();
-  return `${d.toLocaleString('en-US', { month: 'short' })}-${d.getDate()}-${String(d.getFullYear()).slice(-2)}`;
+function smsMobile(r) {
+  return String(r?.mobile_number ?? r?.to ?? r?.phone ?? r?.recipient ?? '').trim();
 }
+
+const SMSLOG_SORT_OPTIONS = [
+  { key: 'id', label: 'ID', compare: (a, b) => (Number(a.id ?? a.sms_id) || 0) - (Number(b.id ?? b.sms_id) || 0) },
+  {
+    key: 'mobile',
+    label: 'Mobile number',
+    compare: (a, b) => smsMobile(a).localeCompare(smsMobile(b), undefined, { sensitivity: 'base' }),
+  },
+  {
+    key: 'message',
+    label: 'Message',
+    compare: (a, b) => String(a.message ?? a.sms_message ?? a.body ?? '').localeCompare(String(b.message ?? b.sms_message ?? b.body ?? ''), undefined, { sensitivity: 'base' }),
+  },
+  {
+    key: 'gateway',
+    label: 'Gateway',
+    compare: (a, b) => String(a.gateway ?? a.provider ?? '').localeCompare(String(b.gateway ?? b.provider ?? ''), undefined, { sensitivity: 'base' }),
+  },
+  {
+    key: 'status',
+    label: 'Status',
+    compare: (a, b) => String(a.status ?? '').localeCompare(String(b.status ?? ''), undefined, { sensitivity: 'base' }),
+  },
+  {
+    key: 'date',
+    label: 'Date',
+    compare: (a, b) =>
+      new Date(a.date_created ?? a.date_sent ?? a.date ?? a.created_at ?? 0) -
+      new Date(b.date_created ?? b.date_sent ?? b.date ?? b.created_at ?? 0),
+  },
+];
 
 export default function SmsLogs() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -100,9 +130,9 @@ export default function SmsLogs() {
               </thead>
               <tbody>
                 {paginatedLogs.map((l) => (
-                <tr key={l.id}>
-                  <td>{l.id}</td>
-                  <td>{l.mobile_number ?? l.to ?? '—'}</td>
+                <tr key={l.id ?? l.sms_id ?? `${l.mobile_number}-${l.date_created}`}>
+                  <td>{l.id ?? l.sms_id ?? '—'}</td>
+                  <td>{l.mobile_number ?? l.to ?? l.phone ?? l.recipient ?? '—'}</td>
                   <td>{(l.message || '').slice(0, 60)}{(l.message || '').length > 60 ? '…' : ''}</td>
                   <td>{l.gateway ?? '—'}</td>
                   <td>{l.status ?? '—'}</td>

@@ -1,6 +1,17 @@
 let admin = null;
 let app = null;
 
+/** FCM data payload values must be strings. */
+function stringifyDataPayload(data) {
+  const out = {};
+  if (!data || typeof data !== 'object') return out;
+  for (const [k, v] of Object.entries(data)) {
+    if (v == null) continue;
+    out[String(k)] = typeof v === 'string' ? v : String(v);
+  }
+  return out;
+}
+
 async function resetFirebase() {
   try {
     const adm = require('firebase-admin');
@@ -46,7 +57,7 @@ async function sendPushToDriver(driverId, title, body, data = {}) {
     const result = await app.messaging().send({
       token: d.device_id,
       notification: { title, body },
-      data: { ...data },
+      data: stringifyDataPayload(data),
       android: { priority: 'high' },
       apns: { payload: { aps: { sound: 'default' } } },
     });
@@ -67,7 +78,7 @@ async function sendPushToAllDrivers(title, body, data = {}) {
     const result = await app.messaging().sendEachForMulticast({
       tokens,
       notification: { title, body },
-      data: { ...data },
+      data: stringifyDataPayload(data),
       android: { priority: 'high' },
     });
     return { success: true, sent: result.successCount, failed: result.failureCount };

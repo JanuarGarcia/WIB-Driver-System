@@ -2605,8 +2605,19 @@ router.post('/drivers/:id/send-push', async (req, res) => {
   const pushMessage = (message ?? '').toString().trim() || 'You have a new notification.';
   try {
     const result = await sendPushToDriver(driverId, pushTitle, pushMessage, { type: 'admin_push' });
-    if (result.success) return res.json({ ok: true, message: 'Push sent' });
-    return res.status(400).json({ error: result.error || 'Failed to send push' });
+    if (!result.success) {
+      return res.status(400).json({ error: result.error || 'Failed to send push' });
+    }
+    try {
+      await pool.query(
+        `INSERT INTO mt_driver_pushlog (driver_id, push_title, push_message, push_type, task_id, order_id, date_created, date_process, is_read)
+         VALUES (?, ?, ?, 'admin_push', NULL, NULL, NOW(), NOW(), 0)`,
+        [driverId, pushTitle, pushMessage]
+      );
+    } catch (_) {
+      /* optional — rider app inbox still gets FCM */
+    }
+    return res.json({ ok: true, message: 'Push sent' });
   } catch (e) {
     return res.status(500).json({ error: e.message || 'Failed to send push' });
   }
@@ -3331,14 +3342,35 @@ router.post('/upload/json-account', uploadFcm.single('file'), async (req, res) =
   }
 });
 
-// ---- SMS logs (stub: empty array if no table) ----
+// ---- SMS logs (empty array if no table; tolerate column name differences) ----
 router.get('/sms-logs', async (req, res) => {
-  try {
-    const [rows] = await pool.query('SELECT * FROM mt_sms_logs ORDER BY date_created DESC LIMIT 200');
-    return res.json(rows);
-  } catch (e) {
-    return res.json([]);
+  const attempts = [
+    'SELECT * FROM mt_sms_logs ORDER BY date_created DESC LIMIT 200',
+    'SELECT * FROM mt_sms_logs ORDER BY date_sent DESC LIMIT 200',
+    'SELECT * FROM mt_sms_logs ORDER BY id DESC LIMIT 200',
+    'SELECT * FROM mt_sms_log ORDER BY date_created DESC LIMIT 200',
+    'SELECT * FROM mt_sms_log ORDER BY id DESC LIMIT 200',
+  ];
+  for (const sql of attempts) {
+    try {
+      const [rows] = await pool.query(sql);
+      const list = rows || [];
+      const normalized = list.map((r) => ({
+        ...r,
+        id: r.id ?? r.sms_id ?? r.log_id ?? null,
+        date_created: r.date_created ?? r.date_sent ?? r.date_added ?? r.created_at ?? null,
+        mobile_number: r.mobile_number ?? r.to ?? r.phone ?? r.recipient ?? null,
+        message: r.message ?? r.sms_message ?? r.body ?? null,
+        gateway: r.gateway ?? r.provider ?? null,
+        status: r.status ?? r.sms_status ?? null,
+      }));
+      return res.json(normalized);
+    } catch (e) {
+      if (e.code === 'ER_NO_SUCH_TABLE' || e.code === 'ER_BAD_FIELD_ERROR') continue;
+      return res.json([]);
+    }
   }
+  return res.json([]);
 });
 
 // ---- Email logs (stub) ----

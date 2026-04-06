@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { Link, useNavigate } from 'react-router-dom';
 import { api, statusClass, statusLabel, resolveUploadUrl } from '../api';
 import DriverDetailsModal from './DriverDetailsModal';
+import SendPushModal from './SendPushModal';
 import { useTeamFilter } from '../context/TeamFilterContext';
 import { sanitizeLocationDisplayName, sanitizeMerchantDisplayName, shortTaskOrderDigits } from '../utils/displayText';
 import { getAdvanceOrderLines } from '../utils/advanceOrder';
@@ -196,8 +197,21 @@ const AgentPanel = forwardRef(function AgentPanel(
   const [queueAssignLoading, setQueueAssignLoading] = useState(false);
   const [queueAssignError, setQueueAssignError] = useState(null);
   const [queueAssignSubmitting, setQueueAssignSubmitting] = useState(false);
+  /** Per-driver admin push (FCM); same flow as Drivers page / legacy dashboard. */
+  const [pushModalDriver, setPushModalDriver] = useState(null);
   const searchInputRef = useRef(null);
   const filterRef = useRef(null);
+
+  const openSendPushForDriver = useCallback((d) => {
+    if (!d) return;
+    const id = d.id ?? d.driver_id;
+    const num = id != null ? parseInt(String(id), 10) : NaN;
+    if (!Number.isFinite(num) || num <= 0) {
+      alert('Cannot send push: driver ID is missing.');
+      return;
+    }
+    setPushModalDriver({ ...d, id: num, driver_id: num });
+  }, []);
 
   const fetchAssignedTasks = useCallback(() => {
     setTasksLoading(true);
@@ -878,8 +892,9 @@ const AgentPanel = forwardRef(function AgentPanel(
                           type="button"
                           className="agent-detail-card-link"
                           onClick={(e) => {
+                            e.preventDefault();
                             e.stopPropagation();
-                            navigate('/broadcast-logs');
+                            openSendPushForDriver(d);
                           }}
                         >
                           Send Push
@@ -950,8 +965,9 @@ const AgentPanel = forwardRef(function AgentPanel(
                       type="button"
                       className="agent-detail-card-link"
                       onClick={(e) => {
+                        e.preventDefault();
                         e.stopPropagation();
-                        navigate('/broadcast-logs');
+                        openSendPushForDriver(d);
                       }}
                     >
                       Send Push
@@ -1165,13 +1181,32 @@ const AgentPanel = forwardRef(function AgentPanel(
               <Link to="/drivers" className="agent-detail-modal-btn agent-detail-modal-btn--primary">
                 View in drivers table
               </Link>
-              <button type="button" className="agent-detail-modal-btn" onClick={() => navigate('/broadcast-logs')}>
+              <button
+                type="button"
+                className="agent-detail-modal-btn"
+                onClick={() => {
+                  const d = selectedDriver;
+                  setSelectedDriver(null);
+                  openSendPushForDriver(d);
+                }}
+              >
                 Send Push
               </button>
             </>
           }
         />
       )}
+
+      <SendPushModal
+        open={!!pushModalDriver}
+        driverId={pushModalDriver?.id ?? pushModalDriver?.driver_id}
+        driverLabel={
+          pushModalDriver
+            ? pushModalDriver.full_name || pushModalDriver.username || `Driver #${pushModalDriver.id ?? pushModalDriver.driver_id}`
+            : ''
+        }
+        onClose={() => setPushModalDriver(null)}
+      />
     </div>
   );
 });

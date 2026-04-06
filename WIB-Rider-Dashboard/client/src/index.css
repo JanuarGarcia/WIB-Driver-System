@@ -7656,8 +7656,22 @@ tr:hover { background: var(--bg-hover) !important; }
 .modal-actions { display: flex; gap: 0.5rem; justify-content: flex-end; margin-top: 1rem; }
 
 /* Send push modal */
-.send-push-modal { min-width: 360px; max-width: 440px; }
+.send-push-modal-backdrop {
+  z-index: 1250;
+  background: var(--modal-backdrop, rgba(0, 0, 0, 0.55));
+}
+.send-push-modal { min-width: 360px; max-width: 440px; border-radius: 12px; box-shadow: 0 20px 50px rgba(0, 0, 0, 0.2); }
 .send-push-modal-header { border-bottom-color: var(--color-primary); }
+.send-push-modal-title {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: var(--text-dark);
+  flex: 1;
+  padding-right: 0.5rem;
+  line-height: 1.35;
+}
+.send-push-modal-recipient { font-size: 0.875rem; margin-bottom: 0.75rem; }
 .send-push-modal-close {
   width: 2rem;
   height: 2rem;
@@ -7710,6 +7724,24 @@ tr:hover { background: var(--bg-hover) !important; }
 .send-push-cancel:hover {
   background: var(--border-soft);
   color: var(--text-dark);
+}
+/* Legacy WIB-style cancel (teal); primary submit stays --color-primary */
+.send-push-cancel-btn.send-push-cancel {
+  background: #26a69a;
+  color: #fff;
+  border: 1px solid #20897e;
+}
+.send-push-cancel-btn.send-push-cancel:hover:not(:disabled) {
+  background: #2dbbad;
+  color: #fff;
+  border-color: #26a69a;
+}
+[data-theme="dark"] .send-push-cancel-btn.send-push-cancel {
+  background: #2a9d8f;
+  border-color: #237f74;
+}
+[data-theme="dark"] .send-push-cancel-btn.send-push-cancel:hover:not(:disabled) {
+  background: #33b8a8;
 }
 
 /* Driver add/edit modal — matches dashboard dark theme + lime accent */
