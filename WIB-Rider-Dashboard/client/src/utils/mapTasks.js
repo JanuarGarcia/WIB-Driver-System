@@ -43,11 +43,45 @@ export function normalizeTaskStatusKey(status) {
 }
 
 /** Only these statuses get an orange task pin (excludes delivered/successful/completed and other terminal states). */
-export const TASK_MAP_MARKER_STATUS_SET = new Set(['unassigned', 'inprogress', 'started', 'acknowledged']);
+export const TASK_MAP_MARKER_STATUS_SET = new Set([
+  'unassigned',
+  'assigned',
+  'inprogress',
+  'started',
+  'acknowledged',
+]);
 
-/** Valid drop-off coordinates for a task row (API `task_lat` / `task_lng`), or null. */
-export function taskDropoffLatLng(t) {
+/** Coordinates from ErrandWib `st_client_address` summary on task detail (`client_address`). */
+function latLngFromClientAddress(ca) {
+  if (!ca || typeof ca !== 'object') return null;
+  const pairs = [
+    ['latitude', 'longitude'],
+    ['google_lat', 'google_lng'],
+    ['lat', 'lng'],
+    ['map_lat', 'map_lng'],
+  ];
+  for (const [la, ln] of pairs) {
+    if (ca[la] == null || ca[ln] == null) continue;
+    const plat = Number(ca[la]);
+    const plng = Number(ca[ln]);
+    if (Number.isFinite(plat) && Number.isFinite(plng)) return { lat: plat, lng: plng };
+  }
+  return null;
+}
+
+/**
+ * Valid drop-off coordinates for a task row (`task_lat` / `task_lng`).
+ * @param {Record<string, unknown>|null|undefined} t - task object from API
+ * @param {Record<string, unknown>|null|undefined} [detailPayload] - full GET task/errand-orders response; uses `client_address` for Errand when present
+ */
+export function taskDropoffLatLng(t, detailPayload) {
   if (!t || typeof t !== 'object') return null;
+  if (detailPayload && typeof detailPayload === 'object') {
+    const fromDetail = latLngFromClientAddress(detailPayload.client_address);
+    if (fromDetail) return fromDetail;
+  }
+  const fromTaskNested = latLngFromClientAddress(t.client_address);
+  if (fromTaskNested) return fromTaskNested;
   const lat = t.task_lat != null ? Number(t.task_lat) : NaN;
   const lng = t.task_lng != null ? Number(t.task_lng) : NaN;
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
@@ -75,14 +109,22 @@ export function riderGpsFromLocations(driver, locations) {
 export function tasksWithMapCoordinates(tasks) {
   return (tasks || [])
     .map((t) => {
-      const lat = t.task_lat != null ? Number(t.task_lat) : NaN;
-      const lng = t.task_lng != null ? Number(t.task_lng) : NaN;
+      let lat = t.task_lat != null ? Number(t.task_lat) : NaN;
+      let lng = t.task_lng != null ? Number(t.task_lng) : NaN;
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+        const cc = latLngFromClientAddress(t.client_address);
+        if (cc) {
+          lat = cc.lat;
+          lng = cc.lng;
+        }
+      }
       if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
       const landmarkRaw = t.delivery_landmark != null ? String(t.delivery_landmark).trim() : '';
       return {
         task_id: t.task_id,
         lat,
         lng,
+        task_source: t.task_source,
         merchant_id: t.merchant_id ?? t.merchantId,
         delivery_address: t.delivery_address,
         restaurant_name: t.restaurant_name,

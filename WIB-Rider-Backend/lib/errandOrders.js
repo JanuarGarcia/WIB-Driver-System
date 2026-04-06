@@ -115,6 +115,96 @@ async function fetchErrandClientsByIds(errandPool, clientIds) {
   return map;
 }
 
+/**
+ * All saved addresses per client (ErrandWib `st_client_address`).
+ * @returns {Promise<Map<string, Record<string, unknown>[]>>} keyed by client_id string
+ */
+async function fetchErrandClientAddressesByClientIds(errandPool, clientIds) {
+  const map = new Map();
+  const uniq = [...new Set(clientIds.map((n) => parseInt(String(n), 10)).filter((n) => Number.isFinite(n) && n > 0))];
+  if (!uniq.length) return map;
+  const ph = uniq.map(() => '?').join(',');
+  try {
+    const [rows] = await errandPool.query(`SELECT * FROM st_client_address WHERE client_id IN (${ph})`, uniq);
+    for (const r of rows || []) {
+      const k = String(r.client_id);
+      if (!map.has(k)) map.set(k, []);
+      map.get(k).push(r);
+    }
+  } catch (e) {
+    if (e.code === 'ER_NO_SUCH_TABLE') return map;
+    throw e;
+  }
+  return map;
+}
+
+/** Single-line label for map / task list. */
+function clientAddressLine(addr) {
+  if (!addr || typeof addr !== 'object') return '';
+  const fa = addr.formatted_address ?? addr.formattedAddress;
+  if (fa != null && String(fa).trim()) return String(fa).trim();
+  const parts = [addr.address1, addr.address2, addr.city, addr.state, addr.postal_code, addr.country]
+    .map((x) => (x != null ? String(x).trim() : ''))
+    .filter(Boolean);
+  return parts.join(', ').trim();
+}
+
+function coordsFromClientAddressRow(addr) {
+  if (!addr || typeof addr !== 'object') return null;
+  const pairs = [
+    ['latitude', 'longitude'],
+    ['google_lat', 'google_lng'],
+    ['lat', 'lng'],
+    ['map_lat', 'map_lng'],
+  ];
+  for (const [la, ln] of pairs) {
+    if (addr[la] == null || addr[ln] == null) continue;
+    const plat = parseFloat(String(addr[la]));
+    const plng = parseFloat(String(addr[ln]));
+    if (Number.isFinite(plat) && Number.isFinite(plng)) {
+      return { lat: plat, lng: plng };
+    }
+  }
+  return null;
+}
+
+/**
+ * Pick `st_client_address` row for this order: explicit id on order row, else delivery-type, else latest.
+ * @param {Record<string, unknown>} orderRow - st_ordernew
+ * @param {Record<string, unknown>[]|null|undefined} addressList
+ */
+function pickClientAddressRow(orderRow, addressList) {
+  if (!addressList || !addressList.length) return null;
+  const idCandidates = [
+    orderRow.client_address_id,
+    orderRow.address_id,
+    orderRow.delivery_address_id,
+    orderRow.client_addressId,
+  ];
+  for (const id of idCandidates) {
+    if (id == null || String(id).trim() === '') continue;
+    const want = String(id).trim();
+    const hit = addressList.find((a) => String(a.address_id ?? '') === want);
+    if (hit) return hit;
+  }
+  const norm = (s) => String(s || '').toLowerCase().replace(/\s+/g, '');
+  const scoreType = (t) => {
+    const n = norm(t);
+    if (n.includes('delivery') || n.includes('shipping') || n === 'dropoff') return 0;
+    if (n.includes('default') || n.includes('primary')) return 1;
+    return 2;
+  };
+  const sorted = [...addressList].sort((a, b) => {
+    const sa = scoreType(a.address_type);
+    const sb = scoreType(b.address_type);
+    if (sa !== sb) return sa - sb;
+    const ta = new Date(a.date_modified || a.date_created || 0).getTime();
+    const tb = new Date(b.date_modified || b.date_created || 0).getTime();
+    return tb - ta;
+  });
+  return sorted[0] || null;
+}
+
 /** @param {Record<string, unknown>|null|undefined} c */
 function clientDisplayName(c) {
   if (!c || typeof c !== 'object') return null;
@@ -163,8 +253,9 @@ function clientDisplayPhone(c) {
  * @param {Map<string, string>} driverNameById - from mt_driver (primary pool)
  * @param {Map<string, Record<string, unknown>>} merchantById - from st_merchant (ErrandWib), keyed by merchant_id string
  * @param {Map<string, Record<string, unknown>>} [clientById] - from st_client (ErrandWib), keyed by client_id string
+ * @param {Map<string, Record<string, unknown>[]>} [clientAddressesByClientId] - from st_client_address, keyed by client_id string
  */
-function mapStOrderRowToTaskListRow(row, driverNameById, merchantById, clientById) {
+function mapStOrderRowToTaskListRow(row, driverNameById, merchantById, clientById, clientAddressesByClientId) {
   const oid = row.order_id != null ? Number(row.order_id) : NaN;
   const safeId = Number.isFinite(oid) ? oid : 0;
   const driverId = row.driver_id != null ? parseInt(String(row.driver_id), 10) : null;
@@ -184,10 +275,21 @@ function mapStOrderRowToTaskListRow(row, driverNameById, merchantById, clientByI
       ? String(merch.address).trim()
       : '';
   const dropAddr = row.formatted_address != null ? String(row.formatted_address).trim() : '';
-  /** Task panel address line: merchant pickup address when available, else delivery formatted_address */
-  const addressLine = merchantAddr || dropAddr;
+
+  const cid = row.client_id != null ? parseInt(String(row.client_id), 10) : null;
+  const addrList =
+    Number.isFinite(cid) && cid > 0 ? clientAddressesByClientId?.get(String(cid)) : null;
+  const clientAddrRow = pickClientAddressRow(row, addrList);
+  const clientAddrLine = clientAddressLine(clientAddrRow);
+  /** Primary line: client saved address (st_client_address), else order drop-off text, else merchant pickup */
+  const addressLine = clientAddrLine || dropAddr || merchantAddr;
   let taskLat = null;
   let taskLng = null;
+  const clientCoords = coordsFromClientAddressRow(clientAddrRow);
+  if (clientCoords) {
+    taskLat = clientCoords.lat;
+    taskLng = clientCoords.lng;
+  }
   if (merch) {
     const plat = merch.latitude != null ? parseFloat(String(merch.latitude)) : NaN;
     const plng =
@@ -196,9 +298,11 @@ function mapStOrderRowToTaskListRow(row, driverNameById, merchantById, clientByI
         : merch.longitude != null
           ? parseFloat(String(merch.longitude))
           : NaN;
-    if (Number.isFinite(plat) && Number.isFinite(plng)) {
-      taskLat = plat;
-      taskLng = plng;
+    if (taskLat == null || taskLng == null || !Number.isFinite(taskLat) || !Number.isFinite(taskLng)) {
+      if (Number.isFinite(plat) && Number.isFinite(plng)) {
+        taskLat = plat;
+        taskLng = plng;
+      }
     }
   }
   if (taskLat == null || taskLng == null || !Number.isFinite(taskLat) || !Number.isFinite(taskLng)) {
@@ -215,7 +319,6 @@ function mapStOrderRowToTaskListRow(row, driverNameById, merchantById, clientByI
       : `Errand order #${safeId}`;
   const created = row.date_created || row.created_at || row.date_modified || null;
 
-  const cid = row.client_id != null ? parseInt(String(row.client_id), 10) : null;
   const client = Number.isFinite(cid) && cid > 0 ? clientById?.get(String(cid)) : null;
   const customerName = clientDisplayName(client);
   const customerPhone = clientDisplayPhone(client);
@@ -234,8 +337,12 @@ function mapStOrderRowToTaskListRow(row, driverNameById, merchantById, clientByI
     order_status_raw: row.status != null ? String(row.status) : null,
     task_description: desc,
     delivery_address: addressLine,
-    formatted_address: dropAddr || null,
+    formatted_address: clientAddrLine || dropAddr || null,
     merchant_address: merchantAddr || null,
+    delivery_landmark:
+      clientAddrRow && clientAddrRow.location_name != null && String(clientAddrRow.location_name).trim()
+        ? String(clientAddrRow.location_name).trim()
+        : null,
     delivery_date: row.delivery_date,
     task_lat: taskLat,
     task_lng: taskLng,
@@ -247,6 +354,14 @@ function mapStOrderRowToTaskListRow(row, driverNameById, merchantById, clientByI
     contact_number: customerPhone,
     email_address: customerEmail,
     client_id: Number.isFinite(cid) ? cid : null,
+    client_address: clientAddrRow
+      ? {
+          latitude: clientAddrRow.latitude,
+          longitude: clientAddrRow.longitude,
+          google_lat: clientAddrRow.google_lat,
+          google_lng: clientAddrRow.google_lng,
+        }
+      : null,
     driver_id: Number.isFinite(driverId) ? driverId : null,
     driver_name: driverName,
     driver_profile_photo: null,
@@ -261,8 +376,9 @@ function mapStOrderRowToTaskListRow(row, driverNameById, merchantById, clientByI
  * Build GET /errand-orders/:id detail payload (mirrors task modal shape partially).
  * @param {Record<string, unknown>|null} merchantRow - st_merchant row or null
  * @param {Record<string, unknown>|null} clientRow - st_client row or null
+ * @param {Record<string, unknown>|null} [clientAddressRow] - chosen st_client_address row or null
  */
-function buildErrandTaskDetailPayload(row, driverName, merchantRow, clientRow) {
+function buildErrandTaskDetailPayload(row, driverName, merchantRow, clientRow, clientAddressRow) {
   const oid = row.order_id != null ? Number(row.order_id) : NaN;
   const safeId = Number.isFinite(oid) ? oid : 0;
   const driverId = row.driver_id != null ? parseInt(String(row.driver_id), 10) : null;
@@ -286,9 +402,16 @@ function buildErrandTaskDetailPayload(row, driverName, merchantRow, clientRow) {
         : null;
   const merchantAddr = m && m.address != null ? String(m.address).trim() : '';
   const dropAddr = row.formatted_address != null ? String(row.formatted_address).trim() : '';
-  const addressLine = merchantAddr || dropAddr;
+  const addr = clientAddressRow && typeof clientAddressRow === 'object' ? clientAddressRow : null;
+  const clientAddrLine = clientAddressLine(addr);
+  const addressLine = clientAddrLine || dropAddr || merchantAddr;
   let taskLat = null;
   let taskLng = null;
+  const clientCoords = coordsFromClientAddressRow(addr);
+  if (clientCoords) {
+    taskLat = clientCoords.lat;
+    taskLng = clientCoords.lng;
+  }
   if (m) {
     const plat = m.latitude != null ? parseFloat(String(m.latitude)) : NaN;
     const plng =
@@ -297,9 +420,11 @@ function buildErrandTaskDetailPayload(row, driverName, merchantRow, clientRow) {
         : m.longitude != null
           ? parseFloat(String(m.longitude))
           : NaN;
-    if (Number.isFinite(plat) && Number.isFinite(plng)) {
-      taskLat = plat;
-      taskLng = plng;
+    if (taskLat == null || taskLng == null || !Number.isFinite(taskLat) || !Number.isFinite(taskLng)) {
+      if (Number.isFinite(plat) && Number.isFinite(plng)) {
+        taskLat = plat;
+        taskLng = plng;
+      }
     }
   }
   if (taskLat == null || taskLng == null || !Number.isFinite(taskLat) || !Number.isFinite(taskLng)) {
@@ -320,8 +445,12 @@ function buildErrandTaskDetailPayload(row, driverName, merchantRow, clientRow) {
     delivery_status: row.delivery_status,
     task_description: desc,
     delivery_address: addressLine,
-    formatted_address: dropAddr || null,
+    formatted_address: clientAddrLine || dropAddr || null,
     merchant_address: merchantAddr || null,
+    delivery_landmark:
+      addr && addr.location_name != null && String(addr.location_name).trim()
+        ? String(addr.location_name).trim()
+        : null,
     delivery_date: row.delivery_date,
     customer_name: custName,
     contact_number: custPhone,
@@ -384,6 +513,17 @@ function buildErrandTaskDetailPayload(row, driverName, merchantRow, clientRow) {
           phone_prefix: cl.phone_prefix,
         }
       : null,
+    client_address: addr
+      ? {
+          address_id: addr.address_id,
+          address_type: addr.address_type,
+          formatted_address: clientAddrLine || null,
+          location_name: addr.location_name,
+          delivery_instructions: addr.delivery_instructions,
+          latitude: addr.latitude,
+          longitude: addr.longitude,
+        }
+      : null,
   };
 }
 
@@ -393,4 +533,6 @@ module.exports = {
   mapDeliveryToTaskStatus,
   fetchErrandMerchantsByIds,
   fetchErrandClientsByIds,
+  fetchErrandClientAddressesByClientIds,
+  pickClientAddressRow,
 };

@@ -103,6 +103,13 @@ function MapLegend() {
             <span className="map-legend-desc">Delivery drop-off</span>
           </span>
         </li>
+        <li className="map-legend-item">
+          <span className="map-legend-swatch map-legend-swatch--errand" aria-hidden />
+          <span className="map-legend-text">
+            <strong>Errand order</strong>
+            <span className="map-legend-desc">ErrandWib drop-off</span>
+          </span>
+        </li>
       </ul>
     </div>
   );
@@ -149,6 +156,17 @@ function MapLegendStack({ showLegend, driverQueueCount = 0, onViewDriverQueue })
 const GOOGLE_TASK_PIN_ICON = (() => {
   const svg =
     '<svg xmlns="http://www.w3.org/2000/svg" width="36" height="48" viewBox="0 0 36 48"><path fill="#ea580c" stroke="#ffffff" stroke-width="2" d="M18 3C10.8 3 5 8.8 5 16c0 11 13 29 13 29s13-18 13-29C31 8.8 25.2 3 18 3z"/><circle cx="18" cy="16" r="5.5" fill="#ffffff"/></svg>';
+  return {
+    url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`,
+    scaledSize: { width: 36, height: 48 },
+    anchor: { x: 18, y: 48 },
+  };
+})();
+
+/** Errand (ErrandWib) delivery pin — fuchsia, matches dashboard map CSS token. */
+const GOOGLE_ERRAND_TASK_PIN_ICON = (() => {
+  const svg =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="36" height="48" viewBox="0 0 36 48"><path fill="#c026d3" stroke="#ffffff" stroke-width="2" d="M18 3C10.8 3 5 8.8 5 16c0 11 13 29 13 29s13-18 13-29C31 8.8 25.2 3 18 3z"/><circle cx="18" cy="16" r="5.5" fill="#fdf4ff"/></svg>';
   return {
     url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`,
     scaledSize: { width: 36, height: 48 },
@@ -241,6 +259,7 @@ function PinMarker({ type, imageUrl, title }) {
         <div className="map-pin-head">
           {type === 'rider' ? <span className="map-pin-rider-core" aria-hidden="true" /> : null}
           {type === 'task' ? <span className="map-pin-task-inner" aria-hidden="true" /> : null}
+          {type === 'errand' ? <span className="map-pin-errand-inner" aria-hidden="true" /> : null}
           {hasImage ? (
             <img src={resolvedUrl} alt="" className="map-pin-img" />
           ) : null}
@@ -255,7 +274,12 @@ function leafletPinIcon(type, logoUrl) {
   const hasImage = type === 'merchant' && logoUrl && String(logoUrl).trim().length > 0;
   const safeUrl = hasImage ? String(logoUrl).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;') : '';
   const imgHtml = hasImage ? `<img src="${safeUrl}" alt="" class="leaflet-pin-img" loading="lazy" />` : '';
-  const taskInner = type === 'task' ? '<span class="leaflet-pin-task-inner" aria-hidden="true"></span>' : '';
+  const taskInner =
+    type === 'task'
+      ? '<span class="leaflet-pin-task-inner" aria-hidden="true"></span>'
+      : type === 'errand'
+        ? '<span class="leaflet-pin-errand-inner" aria-hidden="true"></span>'
+        : '';
   const riderCore = type === 'rider' ? '<span class="leaflet-pin-rider-core" aria-hidden="true"></span>' : '';
   return new L.DivIcon({
     className: 'leaflet-pin-wrap',
@@ -270,6 +294,15 @@ function leafletPinIcon(type, logoUrl) {
 
 const riderPinIcon = leafletPinIcon('rider', null);
 const taskPinIcon = leafletPinIcon('task', null);
+const errandTaskPinIcon = leafletPinIcon('errand', null);
+
+function taskMarkerLeafletIcon(t) {
+  return t && t.task_source === 'errand' ? errandTaskPinIcon : taskPinIcon;
+}
+
+function taskMarkerPinType(t) {
+  return t && t.task_source === 'errand' ? 'errand' : 'task';
+}
 
 function useDashboardMapMarkers(locations, merchants, taskMarkers) {
   const riderMarkers = useMemo(
@@ -512,7 +545,7 @@ function LeafletMapView({ locations, merchants, taskMarkers = [], center, zoom, 
           );
         })}
         {taskMapMarkers.map((t, idx) => (
-          <Marker key={`task-${t.task_id ?? idx}`} position={[Number(t.lat), Number(t.lng)]} icon={taskPinIcon}>
+          <Marker key={`task-${t.task_id ?? idx}`} position={[Number(t.lat), Number(t.lng)]} icon={taskMarkerLeafletIcon(t)}>
             <Popup className="map-popup-leaflet" minWidth={260}>
               <HtmlPopupBody html={taskLeafletPopupHtmlStyled(t, statusLabel)} />
             </Popup>
@@ -559,7 +592,7 @@ function LeafletMapboxMarkersLayer({ riderMarkers, merchantMarkers, taskMapMarke
       group.addLayer(marker);
     });
     (taskMapMarkers || []).forEach((t, idx) => {
-      const marker = L.marker([Number(t.lat), Number(t.lng)], { icon: taskPinIcon });
+      const marker = L.marker([Number(t.lat), Number(t.lng)], { icon: taskMarkerLeafletIcon(t) });
       marker.bindPopup(taskLeafletPopupHtmlStyled(t, statusLabel));
       group.addLayer(marker);
     });
@@ -708,7 +741,7 @@ function MapboxMapView({ mapboxToken, locations, merchants, taskMarkers = [], ce
         ))}
         {taskMapMarkers.map((t, idx) => (
           <MapboxMarker key={`task-${t.task_id ?? idx}`} longitude={Number(t.lng)} latitude={Number(t.lat)} anchor="bottom">
-            <PinMarker type="task" title={taskMapTitle(t)} />
+            <PinMarker type={taskMarkerPinType(t)} title={taskMapTitle(t)} />
           </MapboxMarker>
         ))}
       </Map>
@@ -1043,7 +1076,7 @@ function GoogleMapView({
               key={`task-${t.task_id ?? idx}`}
               position={{ lat: Number(t.lat), lng: Number(t.lng) }}
               title={taskMapTitle(t)}
-              icon={GOOGLE_TASK_PIN_ICON}
+              icon={t.task_source === 'errand' ? GOOGLE_ERRAND_TASK_PIN_ICON : GOOGLE_TASK_PIN_ICON}
             />
           ))}
         </GoogleMap>

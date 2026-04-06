@@ -12,6 +12,8 @@ const {
   buildErrandTaskDetailPayload,
   fetchErrandMerchantsByIds,
   fetchErrandClientsByIds,
+  fetchErrandClientAddressesByClientIds,
+  pickClientAddressRow,
 } = require('../lib/errandOrders');
 const { success, error } = require('../lib/response');
 const { sendPushToDriver, sendPushToAllDrivers, resetFirebase, initFirebase } = require('../services/fcm');
@@ -2081,7 +2083,10 @@ router.get('/tasks', async (req, res) => {
           .map((id) => parseInt(String(id), 10))
           .filter((n) => Number.isFinite(n) && n > 0);
         const clientById = await fetchErrandClientsByIds(errandWibPool, clientIds);
-        const errandMapped = list.map((r) => mapStOrderRowToTaskListRow(r, driverNameById, merchantById, clientById));
+        const clientAddressesByClientId = await fetchErrandClientAddressesByClientIds(errandWibPool, clientIds);
+        const errandMapped = list.map((r) =>
+          mapStOrderRowToTaskListRow(r, driverNameById, merchantById, clientById, clientAddressesByClientId)
+        );
         rows = [...rows, ...errandMapped].sort((a, b) => {
           const ta = a.date_created ? new Date(a.date_created).getTime() : 0;
           const tb = b.date_created ? new Date(b.date_created).getTime() : 0;
@@ -2211,14 +2216,18 @@ router.get('/errand-orders/:orderId', async (req, res) => {
       }
     }
     let clientRow = null;
+    let clientAddressRow = null;
     if (row.client_id != null && String(row.client_id).trim() !== '') {
       const cid = parseInt(String(row.client_id), 10);
       if (Number.isFinite(cid) && cid > 0) {
         const cmap = await fetchErrandClientsByIds(errandWibPool, [cid]);
         clientRow = cmap.get(String(cid)) || null;
+        const addrMap = await fetchErrandClientAddressesByClientIds(errandWibPool, [cid]);
+        const addrList = addrMap.get(String(cid)) || [];
+        clientAddressRow = pickClientAddressRow(row, addrList);
       }
     }
-    return res.json(buildErrandTaskDetailPayload(row, driverName, merchantRow, clientRow));
+    return res.json(buildErrandTaskDetailPayload(row, driverName, merchantRow, clientRow, clientAddressRow));
   } catch (e) {
     if (e.code === 'ER_NO_SUCH_TABLE') {
       return res.status(404).json({ error: 'Errand orders table not found' });

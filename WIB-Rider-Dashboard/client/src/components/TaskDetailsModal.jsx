@@ -412,7 +412,7 @@ export default function TaskDetailsModal({
     const isErrand = data.task_source === 'errand' || Number(taskId) < 0;
     if (!isErrand) return;
     if (errandMapFocusedForTaskIdRef.current === taskId) return;
-    const p = taskDropoffLatLng(data.task);
+    const p = taskDropoffLatLng(data.task, data);
     if (!p) return;
     errandMapFocusedForTaskIdRef.current = taskId;
     onFocusTaskOnMap(data.task);
