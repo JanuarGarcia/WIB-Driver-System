@@ -13,6 +13,7 @@ const {
   fetchErrandMerchantsByIds,
   fetchErrandClientsByIds,
   fetchErrandClientAddressesByClientIds,
+  fetchErrandLatestHistoryStatusByOrderIds,
   pickClientAddressRow,
 } = require('../lib/errandOrders');
 const { success, error } = require('../lib/response');
@@ -2084,8 +2085,21 @@ router.get('/tasks', async (req, res) => {
           .filter((n) => Number.isFinite(n) && n > 0);
         const clientById = await fetchErrandClientsByIds(errandWibPool, clientIds);
         const clientAddressesByClientId = await fetchErrandClientAddressesByClientIds(errandWibPool, clientIds);
+        const orderIds = list
+          .map((r) => r.order_id)
+          .filter((id) => id != null && String(id).trim() !== '')
+          .map((id) => parseInt(String(id), 10))
+          .filter((n) => Number.isFinite(n) && n > 0);
+        const latestHistoryStatusByOrderId = await fetchErrandLatestHistoryStatusByOrderIds(errandWibPool, orderIds);
         const errandMapped = list.map((r) =>
-          mapStOrderRowToTaskListRow(r, driverNameById, merchantById, clientById, clientAddressesByClientId)
+          mapStOrderRowToTaskListRow(
+            r,
+            driverNameById,
+            merchantById,
+            clientById,
+            clientAddressesByClientId,
+            latestHistoryStatusByOrderId
+          )
         );
         rows = [...rows, ...errandMapped].sort((a, b) => {
           const ta = a.date_created ? new Date(a.date_created).getTime() : 0;
@@ -2227,7 +2241,19 @@ router.get('/errand-orders/:orderId', async (req, res) => {
         clientAddressRow = pickClientAddressRow(row, addrList);
       }
     }
-    return res.json(buildErrandTaskDetailPayload(row, driverName, merchantRow, clientRow, clientAddressRow));
+    let latestHistoryStatus = null;
+    try {
+      const [[hr]] = await errandWibPool.query(
+        'SELECT status FROM st_ordernew_history WHERE order_id = ? ORDER BY id DESC LIMIT 1',
+        [orderId]
+      );
+      latestHistoryStatus = hr?.status != null ? String(hr.status).trim() : null;
+    } catch (_) {
+      latestHistoryStatus = null;
+    }
+    return res.json(
+      buildErrandTaskDetailPayload(row, driverName, merchantRow, clientRow, clientAddressRow, latestHistoryStatus)
+    );
   } catch (e) {
     if (e.code === 'ER_NO_SUCH_TABLE') {
       return res.status(404).json({ error: 'Errand orders table not found' });

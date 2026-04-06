@@ -1,0 +1,1 @@
+import{u as o,j as a}from"./index-ppZNDPln.js";import t from"./NewTaskModal-BhlFzzg-.js";import"./MapView-B2N8jJym.js";import"./leaflet-BWz1ZV-i.js";import"./displayText-DCKUzX3O.js";function p(){const s=o();return a.jsx("div",{className:"new-task-backdrop",children:a.jsx(t,{onClose:()=>s("/"),onSuccess:()=>s("/tasks")})})}export{p as default};

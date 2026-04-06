@@ -966,10 +966,17 @@ export default function TaskDetailsModal({
     return displaySanitizedOrDash(fromOrderSan || taskDelSan);
   })();
   const taskDescriptionDisplay = displaySanitized(task?.task_description) || '—';
-  const deliveryInstructionDisplay = displaySanitizedOrDash(order?.delivery_instruction ?? task?.delivery_instruction);
-  const landmarkDisplay = displaySanitizedOrDash(
-    orderDeliveryAddr?.location_name ?? task?.delivery_landmark
+  const clientAddr = data?.client_address;
+  const deliveryInstructionDisplay = displaySanitizedOrDash(
+    order?.delivery_instruction ?? task?.delivery_instruction ?? clientAddr?.delivery_instructions
   );
+  const landmarkDisplay = displaySanitizedOrDash(
+    orderDeliveryAddr?.location_name ?? task?.delivery_landmark ?? clientAddr?.location_name
+  );
+  const errandAddrPlace = displaySanitizedOrDash(clientAddr?.location_name);
+  const errandAddrStreet = displaySanitizedOrDash(clientAddr?.address1);
+  const errandAddrFull = displaySanitizedOrDash(clientAddr?.formatted_address_full);
+  const errandAddrLabel = displaySanitizedOrDash(clientAddr?.address_label);
   const teamNameDisplay = displaySanitizedOrDash(task?.team_name);
   const driverNameDisplay = displaySanitizedOrDash(task?.driver_name);
   const orderDeliveryTimeRaw =
@@ -1270,6 +1277,34 @@ export default function TaskDetailsModal({
                         </div>
                       </div>
                     </div>
+                    {isErrandTask && clientAddr && (
+                      <div className="task-detail-section">
+                        <div className="task-detail-section-title">Customer delivery address</div>
+                        <p className="muted" style={{ margin: '0 0 0.75rem', fontSize: '0.8125rem' }}>
+                          From <code style={{ fontSize: '0.75rem' }}>st_client_address</code> (place name, street, and maps line are stored separately).
+                        </p>
+                        <div className="task-detail-section-row">
+                          <div className="task-detail-row">
+                            <span className="task-detail-label">Place or landmark</span>
+                            <span className="task-detail-value">{errandAddrPlace}</span>
+                          </div>
+                          <div className="task-detail-row">
+                            <span className="task-detail-label">Street / area</span>
+                            <span className="task-detail-value">{errandAddrStreet}</span>
+                          </div>
+                          <div className="task-detail-row">
+                            <span className="task-detail-label">Full address (maps)</span>
+                            <span className="task-detail-value">{errandAddrFull}</span>
+                          </div>
+                          {clientAddr?.address_label != null && String(clientAddr.address_label).trim() !== '' && (
+                            <div className="task-detail-row">
+                              <span className="task-detail-label">Saved address label</span>
+                              <span className="task-detail-value">{errandAddrLabel}</span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
                     <div className="task-detail-section">
                       <div className="task-detail-section-title">Transaction</div>
                       <div className="task-detail-section-row">

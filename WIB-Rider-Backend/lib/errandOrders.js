@@ -22,6 +22,100 @@ function mapDeliveryToTaskStatus(deliveryStatus, orderStatus) {
   return 'unassigned';
 }
 
+/**
+ * Map latest `st_ordernew_history.status` into dashboard task statuses (TaskPanel / map).
+ * Errand often appends history while `st_ordernew.delivery_status` lags.
+ * @param {string|null|undefined} historyStatusRaw
+ * @param {unknown} deliveryStatus - st_ordernew.delivery_status
+ * @param {unknown} orderStatus - st_ordernew.status
+ * @param {number|null|undefined} driverId - assigned rider (mt_driver), if any
+ */
+function mapErrandHistoryStatusToTaskStatus(historyStatusRaw, deliveryStatus, orderStatus, driverId) {
+  const fromDelivery = mapDeliveryToTaskStatus(deliveryStatus, orderStatus);
+  if (historyStatusRaw == null || String(historyStatusRaw).trim() === '') {
+    return fromDelivery;
+  }
+  const hasDriver = driverId != null && Number.isFinite(Number(driverId)) && Number(driverId) > 0;
+  const h = String(historyStatusRaw).toLowerCase().replace(/\s+/g, ' ').trim();
+  const c = h.replace(/\s+/g, '').replace(/_/g, '');
+
+  if (/\bdelivered\b|complete|successful/i.test(h) || c === 'delivered' || c.endsWith('delivered')) {
+    return 'delivered';
+  }
+  if (c.includes('cancel') || c.includes('reject') || c.includes('declin')) {
+    return 'cancelled';
+  }
+
+  if (hasDriver) {
+    if (c.includes('way') || c.includes('transit') || c.includes('ontheway') || h.includes('on its way')) {
+      return 'inprogress';
+    }
+    if (c.includes('pick') || c.includes('prepar') || c.includes('cooking')) {
+      return 'inprogress';
+    }
+    if (c.includes('accept')) {
+      return 'assigned';
+    }
+    if (c === 'new' && fromDelivery !== 'unassigned') {
+      return fromDelivery;
+    }
+  } else {
+    if (c === 'new' || c.includes('advanceorder') || h.includes('advance order')) {
+      return 'unassigned';
+    }
+    if (c.includes('accept') || c.includes('prepar') || c.includes('way') || c.includes('pick')) {
+      return 'unassigned';
+    }
+  }
+
+  if (c.includes('way') || h.includes('on its way') || c.includes('transit')) {
+    return 'inprogress';
+  }
+  if (c.includes('pick') || c.includes('prepar')) {
+    return 'inprogress';
+  }
+  if (c.includes('accept')) {
+    return hasDriver ? 'assigned' : 'unassigned';
+  }
+
+  return fromDelivery;
+}
+
+/**
+ * Latest `st_ordernew_history.status` per order (by max id).
+ * @param {import('mysql2/promise').Pool} errandPool
+ * @param {number[]} orderIds
+ * @returns {Promise<Map<string, string>>}
+ */
+async function fetchErrandLatestHistoryStatusByOrderIds(errandPool, orderIds) {
+  const map = new Map();
+  const uniq = [...new Set(orderIds.map((n) => parseInt(String(n), 10)).filter((n) => Number.isFinite(n) && n > 0))];
+  if (!uniq.length) return map;
+  const ph = uniq.map(() => '?').join(',');
+  try {
+    const [rows] = await errandPool.query(
+      `SELECT h.order_id, h.status
+       FROM st_ordernew_history h
+       INNER JOIN (
+         SELECT order_id, MAX(id) AS max_id
+         FROM st_ordernew_history
+         WHERE order_id IN (${ph})
+         GROUP BY order_id
+       ) lm ON lm.order_id = h.order_id AND lm.max_id = h.id`,
+      uniq
+    );
+    for (const r of rows || []) {
+      if (r.order_id != null && r.status != null && String(r.status).trim() !== '') {
+        map.set(String(r.order_id), String(r.status).trim());
+      }
+    }
+  } catch (e) {
+    if (e.code === 'ER_NO_SUCH_TABLE') return map;
+    throw e;
+  }
+  return map;
+}
+
 function driverDisplayName(map, driverId) {
   if (driverId == null || driverId === '') return null;
   const k = String(driverId);
@@ -138,11 +232,20 @@ async function fetchErrandClientAddressesByClientIds(errandPool, clientIds) {
   return map;
 }
 
+/** Full formatted string from `st_client_address` (snake_case and camelCase columns). */
+function clientAddressFormattedFull(addr) {
+  if (!addr || typeof addr !== 'object') return null;
+  const a = addr.formatted_address != null ? String(addr.formatted_address).trim() : '';
+  const b = addr.formattedAddress != null ? String(addr.formattedAddress).trim() : '';
+  const s = a || b;
+  return s || null;
+}
+
 /** Single-line label for map / task list. */
 function clientAddressLine(addr) {
   if (!addr || typeof addr !== 'object') return '';
-  const fa = addr.formatted_address ?? addr.formattedAddress;
-  if (fa != null && String(fa).trim()) return String(fa).trim();
+  const fa = clientAddressFormattedFull(addr);
+  if (fa) return fa;
   const parts = [addr.address1, addr.address2, addr.city, addr.state, addr.postal_code, addr.country]
     .map((x) => (x != null ? String(x).trim() : ''))
     .filter(Boolean);
@@ -254,8 +357,16 @@ function clientDisplayPhone(c) {
  * @param {Map<string, Record<string, unknown>>} merchantById - from st_merchant (ErrandWib), keyed by merchant_id string
  * @param {Map<string, Record<string, unknown>>} [clientById] - from st_client (ErrandWib), keyed by client_id string
  * @param {Map<string, Record<string, unknown>[]>} [clientAddressesByClientId] - from st_client_address, keyed by client_id string
+ * @param {Map<string, string>} [latestHistoryStatusByOrderId] - latest st_ordernew_history.status per order_id
  */
-function mapStOrderRowToTaskListRow(row, driverNameById, merchantById, clientById, clientAddressesByClientId) {
+function mapStOrderRowToTaskListRow(
+  row,
+  driverNameById,
+  merchantById,
+  clientById,
+  clientAddressesByClientId,
+  latestHistoryStatusByOrderId
+) {
   const oid = row.order_id != null ? Number(row.order_id) : NaN;
   const safeId = Number.isFinite(oid) ? oid : 0;
   const driverId = row.driver_id != null ? parseInt(String(row.driver_id), 10) : null;
@@ -312,7 +423,8 @@ function mapStOrderRowToTaskListRow(row, driverNameById, merchantById, clientByI
       taskLng = oc.lng;
     }
   }
-  const status = mapDeliveryToTaskStatus(row.delivery_status, row.status);
+  const histStatus = latestHistoryStatusByOrderId?.get(String(safeId));
+  const status = mapErrandHistoryStatusToTaskStatus(histStatus, row.delivery_status, row.status, driverId);
   const desc =
     row.order_reference != null && String(row.order_reference).trim()
       ? `Errand ${String(row.order_reference).trim()}`
@@ -335,6 +447,7 @@ function mapStOrderRowToTaskListRow(row, driverNameById, merchantById, clientByI
     status,
     delivery_status: row.delivery_status != null ? String(row.delivery_status) : null,
     order_status_raw: row.status != null ? String(row.status) : null,
+    errand_history_status: histStatus || null,
     task_description: desc,
     delivery_address: addressLine,
     formatted_address: clientAddrLine || dropAddr || null,
@@ -377,12 +490,18 @@ function mapStOrderRowToTaskListRow(row, driverNameById, merchantById, clientByI
  * @param {Record<string, unknown>|null} merchantRow - st_merchant row or null
  * @param {Record<string, unknown>|null} clientRow - st_client row or null
  * @param {Record<string, unknown>|null} [clientAddressRow] - chosen st_client_address row or null
+ * @param {string|null} [latestHistoryStatus] - latest st_ordernew_history.status for this order
  */
-function buildErrandTaskDetailPayload(row, driverName, merchantRow, clientRow, clientAddressRow) {
+function buildErrandTaskDetailPayload(row, driverName, merchantRow, clientRow, clientAddressRow, latestHistoryStatus) {
   const oid = row.order_id != null ? Number(row.order_id) : NaN;
   const safeId = Number.isFinite(oid) ? oid : 0;
   const driverId = row.driver_id != null ? parseInt(String(row.driver_id), 10) : null;
-  const status = mapDeliveryToTaskStatus(row.delivery_status, row.status);
+  const status = mapErrandHistoryStatusToTaskStatus(
+    latestHistoryStatus,
+    row.delivery_status,
+    row.status,
+    Number.isFinite(driverId) ? driverId : null
+  );
   const desc =
     row.order_reference != null && String(row.order_reference).trim()
       ? `Errand ${String(row.order_reference).trim()}`
@@ -443,6 +562,7 @@ function buildErrandTaskDetailPayload(row, driverName, merchantRow, clientRow, c
     order_uuid: row.order_uuid,
     status,
     delivery_status: row.delivery_status,
+    errand_history_status: latestHistoryStatus != null && String(latestHistoryStatus).trim() !== '' ? String(latestHistoryStatus).trim() : null,
     task_description: desc,
     delivery_address: addressLine,
     formatted_address: clientAddrLine || dropAddr || null,
@@ -517,11 +637,15 @@ function buildErrandTaskDetailPayload(row, driverName, merchantRow, clientRow, c
       ? {
           address_id: addr.address_id,
           address_type: addr.address_type,
-          formatted_address: clientAddrLine || null,
-          location_name: addr.location_name,
-          delivery_instructions: addr.delivery_instructions,
-          latitude: addr.latitude,
-          longitude: addr.longitude,
+          address1: addr.address1 != null ? String(addr.address1).trim() : null,
+          formatted_address_full: clientAddressFormattedFull(addr),
+          location_name: addr.location_name != null ? String(addr.location_name).trim() : null,
+          address_label: addr.address_label != null ? String(addr.address_label).trim() : null,
+          delivery_instructions: addr.delivery_instructions != null ? String(addr.delivery_instructions).trim() : null,
+          /** Short line for lists / summaries (merged from saved address fields). */
+          formatted_address_summary: clientAddrLine || null,
+          latitude: addr.latitude ?? addr.google_lat ?? null,
+          longitude: addr.longitude ?? addr.google_lng ?? null,
         }
       : null,
   };
@@ -531,8 +655,10 @@ module.exports = {
   mapStOrderRowToTaskListRow,
   buildErrandTaskDetailPayload,
   mapDeliveryToTaskStatus,
+  mapErrandHistoryStatusToTaskStatus,
   fetchErrandMerchantsByIds,
   fetchErrandClientsByIds,
   fetchErrandClientAddressesByClientIds,
+  fetchErrandLatestHistoryStatusByOrderIds,
   pickClientAddressRow,
 };
