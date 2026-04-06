@@ -703,10 +703,9 @@ const AgentPanel = forwardRef(function AgentPanel(
             onChange={(e) => setAllTasksView(e.target.checked)}
             aria-label="Show all tasks view"
           />
-          <span className="btn-all-task-icon" aria-hidden="true">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M9 11l3 3L22 4" />
-              <path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" />
+          <span className="btn-all-task-icon task-card-v2-direction-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="currentColor">
+              <path d="M12 4l-6 8h4v8h4v-8h4L12 4z" />
             </svg>
           </span>
           <span className="btn-all-task-text">All tasks</span>
