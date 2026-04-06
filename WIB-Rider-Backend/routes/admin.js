@@ -7,7 +7,11 @@ const multer = require('multer');
 const { v4: uuidv4 } = require('uuid');
 const bcrypt = require('bcryptjs');
 const { pool, errandWibPool } = require('../config/db');
-const { mapStOrderRowToTaskListRow, buildErrandTaskDetailPayload } = require('../lib/errandOrders');
+const {
+  mapStOrderRowToTaskListRow,
+  buildErrandTaskDetailPayload,
+  fetchErrandMerchantsByIds,
+} = require('../lib/errandOrders');
 const { success, error } = require('../lib/response');
 const { sendPushToDriver, sendPushToAllDrivers, resetFirebase, initFirebase } = require('../services/fcm');
 const { fetchTaskProofPhotosWithUrls } = require('../lib/taskProof');
@@ -2064,7 +2068,13 @@ router.get('/tasks', async (req, res) => {
             driverNameById.set(String(d.driver_id), String(d.full_name || '').trim() || null);
           }
         }
-        const errandMapped = list.map((r) => mapStOrderRowToTaskListRow(r, driverNameById));
+        const merchantIds = list
+          .map((r) => r.merchant_id)
+          .filter((id) => id != null && String(id).trim() !== '')
+          .map((id) => parseInt(String(id), 10))
+          .filter((n) => Number.isFinite(n) && n > 0);
+        const merchantById = await fetchErrandMerchantsByIds(errandWibPool, merchantIds);
+        const errandMapped = list.map((r) => mapStOrderRowToTaskListRow(r, driverNameById, merchantById));
         rows = [...rows, ...errandMapped].sort((a, b) => {
           const ta = a.date_created ? new Date(a.date_created).getTime() : 0;
           const tb = b.date_created ? new Date(b.date_created).getTime() : 0;
@@ -2185,7 +2195,15 @@ router.get('/errand-orders/:orderId', async (req, res) => {
         driverName = d?.full_name != null ? String(d.full_name).trim() : null;
       }
     }
-    return res.json(buildErrandTaskDetailPayload(row, driverName));
+    let merchantRow = null;
+    if (row.merchant_id != null && String(row.merchant_id).trim() !== '') {
+      const mid = parseInt(String(row.merchant_id), 10);
+      if (Number.isFinite(mid)) {
+        const mmap = await fetchErrandMerchantsByIds(errandWibPool, [mid]);
+        merchantRow = mmap.get(String(mid)) || null;
+      }
+    }
+    return res.json(buildErrandTaskDetailPayload(row, driverName, merchantRow));
   } catch (e) {
     if (e.code === 'ER_NO_SUCH_TABLE') {
       return res.status(404).json({ error: 'Errand orders table not found' });

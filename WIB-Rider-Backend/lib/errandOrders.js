@@ -29,16 +29,86 @@ function driverDisplayName(map, driverId) {
 }
 
 /**
+ * Batch-load st_merchant rows (ErrandWib) for task list / detail.
+ * @param {import('mysql2/promise').Pool} errandPool
+ * @param {number[]} merchantIds
+ * @returns {Promise<Map<string, Record<string, unknown>>>}
+ */
+async function fetchErrandMerchantsByIds(errandPool, merchantIds) {
+  const map = new Map();
+  const uniq = [...new Set(merchantIds.map((n) => parseInt(String(n), 10)).filter((n) => Number.isFinite(n) && n > 0))];
+  if (!uniq.length) return map;
+  const ph = uniq.map(() => '?').join(',');
+  const sql = `SELECT merchant_id, restaurant_name, restaurant_phone, contact_name, contact_phone, contact_email,
+    address, latitude, lontitude
+    FROM st_merchant WHERE merchant_id IN (${ph})`;
+  try {
+    const [mrows] = await errandPool.query(sql, uniq);
+    for (const m of mrows || []) {
+      if (m.merchant_id != null) map.set(String(m.merchant_id), m);
+    }
+  } catch (e) {
+    if (e.code === 'ER_NO_SUCH_TABLE') {
+      return map;
+    }
+    if (e.code === 'ER_BAD_FIELD_ERROR' && /lontitude|longitude/i.test(String(e.sqlMessage || ''))) {
+      const [mrows2] = await errandPool.query(
+        `SELECT merchant_id, restaurant_name, restaurant_phone, contact_name, contact_phone, contact_email, address, latitude
+         FROM st_merchant WHERE merchant_id IN (${ph})`,
+        uniq
+      );
+      for (const m of mrows2 || []) {
+        if (m.merchant_id != null) map.set(String(m.merchant_id), m);
+      }
+    } else {
+      throw e;
+    }
+  }
+  return map;
+}
+
+/**
  * @param {Record<string, unknown>} row - st_ordernew row
  * @param {Map<string, string>} driverNameById - from mt_driver (primary pool)
+ * @param {Map<string, Record<string, unknown>>} merchantById - from st_merchant (ErrandWib), keyed by merchant_id string
  */
-function mapStOrderRowToTaskListRow(row, driverNameById) {
+function mapStOrderRowToTaskListRow(row, driverNameById, merchantById) {
   const oid = row.order_id != null ? Number(row.order_id) : NaN;
   const safeId = Number.isFinite(oid) ? oid : 0;
   const driverId = row.driver_id != null ? parseInt(String(row.driver_id), 10) : null;
   const driverName = Number.isFinite(driverId)
     ? driverDisplayName(driverNameById, driverId)
     : null;
+  const mid = row.merchant_id != null ? parseInt(String(row.merchant_id), 10) : null;
+  const merch = Number.isFinite(mid) ? merchantById?.get(String(mid)) : null;
+  const restaurantName =
+    merch && merch.restaurant_name != null && String(merch.restaurant_name).trim()
+      ? String(merch.restaurant_name).trim()
+      : mid != null
+        ? `Merchant #${mid}`
+        : null;
+  const merchantAddr =
+    merch && merch.address != null && String(merch.address).trim()
+      ? String(merch.address).trim()
+      : '';
+  const dropAddr = row.formatted_address != null ? String(row.formatted_address).trim() : '';
+  /** Task panel address line: merchant pickup address when available, else delivery formatted_address */
+  const addressLine = merchantAddr || dropAddr;
+  let taskLat = null;
+  let taskLng = null;
+  if (merch) {
+    const plat = merch.latitude != null ? parseFloat(String(merch.latitude)) : NaN;
+    const plng =
+      merch.lontitude != null
+        ? parseFloat(String(merch.lontitude))
+        : merch.longitude != null
+          ? parseFloat(String(merch.longitude))
+          : NaN;
+    if (Number.isFinite(plat) && Number.isFinite(plng)) {
+      taskLat = plat;
+      taskLng = plng;
+    }
+  }
   const status = mapDeliveryToTaskStatus(row.delivery_status, row.status);
   const desc =
     row.order_reference != null && String(row.order_reference).trim()
@@ -55,13 +125,16 @@ function mapStOrderRowToTaskListRow(row, driverNameById) {
     delivery_status: row.delivery_status != null ? String(row.delivery_status) : null,
     order_status_raw: row.status != null ? String(row.status) : null,
     task_description: desc,
-    delivery_address: row.formatted_address != null ? String(row.formatted_address).trim() : '',
+    delivery_address: addressLine,
+    formatted_address: dropAddr || null,
+    merchant_address: merchantAddr || null,
     delivery_date: row.delivery_date,
-    task_lat: null,
-    task_lng: null,
+    task_lat: taskLat,
+    task_lng: taskLng,
     date_created: created,
     merchant_id: row.merchant_id,
-    restaurant_name: row.merchant_id != null ? `Merchant #${row.merchant_id}` : null,
+    restaurant_name: restaurantName,
+    merchant_phone: merch?.restaurant_phone != null ? String(merch.restaurant_phone).trim() : null,
     driver_id: Number.isFinite(driverId) ? driverId : null,
     driver_name: driverName,
     driver_profile_photo: null,
@@ -74,8 +147,9 @@ function mapStOrderRowToTaskListRow(row, driverNameById) {
 
 /**
  * Build GET /errand-orders/:id detail payload (mirrors task modal shape partially).
+ * @param {Record<string, unknown>|null} merchantRow - st_merchant row or null
  */
-function buildErrandTaskDetailPayload(row, driverName) {
+function buildErrandTaskDetailPayload(row, driverName, merchantRow) {
   const oid = row.order_id != null ? Number(row.order_id) : NaN;
   const safeId = Number.isFinite(oid) ? oid : 0;
   const driverId = row.driver_id != null ? parseInt(String(row.driver_id), 10) : null;
@@ -84,6 +158,32 @@ function buildErrandTaskDetailPayload(row, driverName) {
     row.order_reference != null && String(row.order_reference).trim()
       ? `Errand ${String(row.order_reference).trim()}`
       : `Errand order #${safeId}`;
+
+  const m = merchantRow && typeof merchantRow === 'object' ? merchantRow : null;
+  const restaurantName =
+    m && m.restaurant_name != null && String(m.restaurant_name).trim()
+      ? String(m.restaurant_name).trim()
+      : row.merchant_id != null
+        ? `Merchant #${row.merchant_id}`
+        : null;
+  const merchantAddr = m && m.address != null ? String(m.address).trim() : '';
+  const dropAddr = row.formatted_address != null ? String(row.formatted_address).trim() : '';
+  const addressLine = merchantAddr || dropAddr;
+  let taskLat = null;
+  let taskLng = null;
+  if (m) {
+    const plat = m.latitude != null ? parseFloat(String(m.latitude)) : NaN;
+    const plng =
+      m.lontitude != null
+        ? parseFloat(String(m.lontitude))
+        : m.longitude != null
+          ? parseFloat(String(m.longitude))
+          : NaN;
+    if (Number.isFinite(plat) && Number.isFinite(plng)) {
+      taskLat = plat;
+      taskLng = plng;
+    }
+  }
 
   const task = {
     task_source: 'errand',
@@ -94,19 +194,21 @@ function buildErrandTaskDetailPayload(row, driverName) {
     status,
     delivery_status: row.delivery_status,
     task_description: desc,
-    delivery_address: row.formatted_address != null ? String(row.formatted_address).trim() : '',
+    delivery_address: addressLine,
+    formatted_address: dropAddr || null,
+    merchant_address: merchantAddr || null,
     delivery_date: row.delivery_date,
     customer_name: null,
     contact_number: null,
     email_address: null,
     trans_type: row.service_code != null ? String(row.service_code) : 'delivery',
     payment_type: row.payment_code != null ? String(row.payment_code) : null,
-    restaurant_name: row.merchant_id != null ? `Merchant #${row.merchant_id}` : null,
+    restaurant_name: restaurantName,
     driver_id: Number.isFinite(driverId) ? driverId : null,
     driver_name: driverName || null,
     driver_phone: null,
-    task_lat: null,
-    task_lng: null,
+    task_lat: taskLat,
+    task_lng: taskLng,
     date_created: row.date_created || row.created_at || null,
     advance_order_note: null,
   };
@@ -123,11 +225,24 @@ function buildErrandTaskDetailPayload(row, driverName) {
     order_change: row.amount_due,
   };
 
+  const merchant = m
+    ? {
+        merchant_id: m.merchant_id,
+        restaurant_name: m.restaurant_name,
+        restaurant_phone: m.restaurant_phone,
+        contact_name: m.contact_name,
+        contact_phone: m.contact_phone,
+        contact_email: m.contact_email,
+        street: m.address,
+        formatted_address: m.address,
+      }
+    : null;
+
   return {
     task_source: 'errand',
     task,
     order,
-    merchant: null,
+    merchant,
     order_details: [],
     task_photos: [],
     proof_images: [],
@@ -140,4 +255,5 @@ module.exports = {
   mapStOrderRowToTaskListRow,
   buildErrandTaskDetailPayload,
   mapDeliveryToTaskStatus,
+  fetchErrandMerchantsByIds,
 };
