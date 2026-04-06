@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node -r dotenv/config server.js",
-    "init-db": "node -r dotenv/config scripts/init-db.js"
+    "init-db": "node -r dotenv/config scripts/init-db.js",
+    "migrate-driver-photos": "node -r dotenv/config scripts/migrate-driver-task-photos.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

@@ -15,6 +15,23 @@ const ADMIN_SECRET = process.env.ADMIN_SECRET || '';
 const PUBLIC_BASE_URL = (process.env.BASE_URL || '').replace(/\/$/, '');
 
 /**
+ * Base for proof image URLs when photo_name is relative (filename or path).
+ * If set (e.g. https://wheninbaguioeat.com), proofs can hotlink the legacy host without copying files.
+ * If unset, uses BASE_URL (same server as API).
+ */
+function proofAssetBaseUrl() {
+  const v = process.env.PROOF_ASSET_BASE_URL;
+  if (v != null && String(v).trim() !== '') return String(v).trim().replace(/\/$/, '');
+  return PUBLIC_BASE_URL;
+}
+
+/** When 1/true: plain photo_name (no path) uses legacy /upload/driver/ + basename (matches old PHP app). */
+function proofLegacyPlainUsesDriverPath() {
+  const v = process.env.PROOF_LEGACY_PLAIN_USES_DRIVER_PATH;
+  return v === '1' || String(v).toLowerCase() === 'true' || String(v).toLowerCase() === 'yes';
+}
+
+/**
  * Clean mt_driver_task_photo.photo_name for disk URLs: basename, trim, strip wrapping <> from bad inserts,
  * collapse .jpg.jpg-style duplicates (must match likely on-disk filename).
  */
@@ -41,18 +58,30 @@ function taskProofDriverBasename(photoName) {
 
 /** Public URL for on-disk proof: legacy /upload/driver/ or /upload/task/ + sanitized name */
 function buildTaskProofImageUrl(photoName) {
-  const raw = String(photoName || '').trim().replace(/\\/g, '/');
+  const trimmed = String(photoName || '').trim();
+  if (/^https?:\/\//i.test(trimmed)) {
+    return trimmed;
+  }
+  const raw = trimmed.replace(/\\/g, '/');
+  const baseUrl = proofAssetBaseUrl();
   const lower = raw.toLowerCase();
   if (lower.includes('/driver/') || lower.includes('upload/driver')) {
     const base = taskProofDriverBasename(photoName);
     if (!base) return null;
     const rel = `/upload/driver/${encodeURIComponent(base)}`;
-    return PUBLIC_BASE_URL ? `${PUBLIC_BASE_URL}${rel}` : rel;
+    return baseUrl ? `${baseUrl}${rel}` : rel;
+  }
+  /** Old app stored basename-only names under /upload/driver/ (e.g. *.jpg.jpg). Opt-in via env. */
+  if (proofLegacyPlainUsesDriverPath() && raw.length > 0 && !raw.includes('/')) {
+    const base = taskProofDriverBasename(photoName);
+    if (!base) return null;
+    const rel = `/upload/driver/${encodeURIComponent(base)}`;
+    return baseUrl ? `${baseUrl}${rel}` : rel;
   }
   const safe = sanitizeTaskProofFileName(photoName);
   if (!safe) return null;
   const rel = `/upload/task/${encodeURIComponent(safe)}`;
-  return PUBLIC_BASE_URL ? `${PUBLIC_BASE_URL}${rel}` : rel;
+  return baseUrl ? `${baseUrl}${rel}` : rel;
 }
 
 async function fetchTaskProofPhotosWithUrls(pool, taskId) {
