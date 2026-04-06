@@ -1082,13 +1082,6 @@ export default function TaskDetailsModal({
               <div className="modal-body">
                 {tab === 'details' && (
                   <div className="task-details-content">
-                    {isErrandTask && (
-                      <div className="task-detail-advance-banner" role="status" style={{ marginBottom: '0.75rem' }}>
-                        <div className="task-detail-advance-banner-line">
-                          Order data comes from <code>st_ordernew</code>. Assigning a rider updates that row in the Errand database.
-                        </div>
-                      </div>
-                    )}
                     {advanceLinesModal && (
                       <div className="task-detail-advance-banner" role="status">
                         <div className="task-detail-advance-banner-title">Advance order</div>
