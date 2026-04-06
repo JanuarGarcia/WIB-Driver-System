@@ -108,11 +108,31 @@ function clientDisplayPhone(c) {
   if (!c || typeof c !== 'object') return null;
   const raw = c.contact_phone != null ? String(c.contact_phone).trim() : '';
   if (!raw) return null;
-  if (raw.startsWith('+')) return raw;
-  const prefix = c.phone_prefix != null && String(c.phone_prefix).trim() !== '' ? String(c.phone_prefix).trim() : '';
+  const prefix = c.phone_prefix != null ? String(c.phone_prefix).trim().replace(/\D/g, '') : '';
+
+  if (raw.startsWith('+')) {
+    let d = raw.slice(1).replace(/\D/g, '');
+    // Stored as +6363... (duplicate PH country code)
+    if (prefix === '63' && d.startsWith('6363')) {
+      d = `63${d.slice(4)}`;
+    }
+    return d ? `+${d}` : raw;
+  }
+
+  let digits = raw.replace(/\D/g, '');
+  if (!digits) return null;
+  // contact_phone often already includes country code while phone_prefix repeats it (e.g. 639... + prefix 63)
+  if (prefix && digits.startsWith(prefix)) {
+    return `+${digits}`;
+  }
+  if (prefix === '63' && digits.startsWith('0') && digits.length >= 10) {
+    return `+63${digits.slice(1)}`;
+  }
   if (prefix) {
-    const digits = raw.replace(/\D/g, '');
     return `+${prefix}${digits}`;
+  }
+  if (digits.startsWith('63')) {
+    return `+${digits}`;
   }
   return raw;
 }
@@ -268,9 +288,9 @@ function buildErrandTaskDetailPayload(row, driverName, merchantRow, clientRow) {
     formatted_address: dropAddr || null,
     merchant_address: merchantAddr || null,
     delivery_date: row.delivery_date,
-    customer_name: null,
-    contact_number: null,
-    email_address: null,
+    customer_name: custName,
+    contact_number: custPhone,
+    email_address: custEmail,
     trans_type: row.service_code != null ? String(row.service_code) : 'delivery',
     payment_type: row.payment_code != null ? String(row.payment_code) : null,
     restaurant_name: restaurantName,
