@@ -460,6 +460,7 @@ export default function Dashboard() {
               onAssignDriver={(id) => { setTaskDetailsId(null); navigate(`/tasks?highlight=${id}`); }}
               onTaskListInvalidate={bumpTaskLists}
               onTaskDeleted={() => setTaskDetailsId(null)}
+              onFocusTaskOnMap={handleFocusTaskOnMap}
               directionsMapSettings={{
                 mapProvider,
                 mapboxToken,

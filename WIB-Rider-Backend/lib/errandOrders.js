@@ -28,6 +28,27 @@ function driverDisplayName(map, driverId) {
   return map.get(k) || null;
 }
 
+/** Prefer pickup merchant coords; else use coordinates on the order row (ErrandWib `st_ordernew` varies by schema). */
+function coordsFromOrderRow(row) {
+  if (!row || typeof row !== 'object') return null;
+  const pairs = [
+    ['latitude', 'longitude'],
+    ['google_lat', 'google_lng'],
+    ['lat', 'lng'],
+    ['delivery_lat', 'delivery_lng'],
+    ['map_lat', 'map_lng'],
+  ];
+  for (const [la, ln] of pairs) {
+    if (row[la] == null || row[ln] == null) continue;
+    const plat = parseFloat(String(row[la]));
+    const plng = parseFloat(String(row[ln]));
+    if (Number.isFinite(plat) && Number.isFinite(plng)) {
+      return { lat: plat, lng: plng };
+    }
+  }
+  return null;
+}
+
 /**
  * Batch-load st_merchant rows (ErrandWib) for task list / detail.
  * @param {import('mysql2/promise').Pool} errandPool
@@ -180,6 +201,13 @@ function mapStOrderRowToTaskListRow(row, driverNameById, merchantById, clientByI
       taskLng = plng;
     }
   }
+  if (taskLat == null || taskLng == null || !Number.isFinite(taskLat) || !Number.isFinite(taskLng)) {
+    const oc = coordsFromOrderRow(row);
+    if (oc) {
+      taskLat = oc.lat;
+      taskLng = oc.lng;
+    }
+  }
   const status = mapDeliveryToTaskStatus(row.delivery_status, row.status);
   const desc =
     row.order_reference != null && String(row.order_reference).trim()
@@ -272,6 +300,13 @@ function buildErrandTaskDetailPayload(row, driverName, merchantRow, clientRow) {
     if (Number.isFinite(plat) && Number.isFinite(plng)) {
       taskLat = plat;
       taskLng = plng;
+    }
+  }
+  if (taskLat == null || taskLng == null || !Number.isFinite(taskLat) || !Number.isFinite(taskLng)) {
+    const oc = coordsFromOrderRow(row);
+    if (oc) {
+      taskLat = oc.lat;
+      taskLng = oc.lng;
     }
   }
 

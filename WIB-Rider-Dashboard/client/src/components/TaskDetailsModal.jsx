@@ -12,6 +12,7 @@ import MapView from './MapView';
 import LocationPreviewModal from './LocationPreviewModal';
 import DirectionsModal from './DirectionsModal';
 import { CountryCodeDropdown, COUNTRY_CODES } from './NewTaskModal';
+import { taskDropoffLatLng } from '../utils/mapTasks';
 
 /** Split stored contact (e.g. +63917…) into dial code + national number for edit UI. */
 function splitContactCountry(full) {
@@ -361,6 +362,8 @@ export default function TaskDetailsModal({
   /** When set, enables in-app Get directions (Mapbox and/or Google per Settings). */
   directionsMapSettings = null,
   initialTab = 'details',
+  /** Dashboard: fly map to task pin when errand details load (orange task marker). */
+  onFocusTaskOnMap = null,
 }) {
   const initialTabRef = useRef(initialTab);
   initialTabRef.current = initialTab;
@@ -398,6 +401,22 @@ export default function TaskDetailsModal({
   /** In-app Leaflet preview for timeline “Location on Map” (no Google redirect). */
   const [locationPreview, setLocationPreview] = useState(null);
   const [directionsContext, setDirectionsContext] = useState(null);
+  const errandMapFocusedForTaskIdRef = useRef(null);
+
+  useEffect(() => {
+    errandMapFocusedForTaskIdRef.current = null;
+  }, [taskId]);
+
+  useEffect(() => {
+    if (!taskId || !data?.task || typeof onFocusTaskOnMap !== 'function') return;
+    const isErrand = data.task_source === 'errand' || Number(taskId) < 0;
+    if (!isErrand) return;
+    if (errandMapFocusedForTaskIdRef.current === taskId) return;
+    const p = taskDropoffLatLng(data.task);
+    if (!p) return;
+    errandMapFocusedForTaskIdRef.current = taskId;
+    onFocusTaskOnMap(data.task);
+  }, [taskId, data, onFocusTaskOnMap]);
 
   useEffect(() => {
     if (!taskId) {
@@ -1015,7 +1034,6 @@ export default function TaskDetailsModal({
                   <div className="task-details-content">
                     {isErrandTask && (
                       <div className="task-detail-advance-banner" role="status" style={{ marginBottom: '0.75rem' }}>
-                        <div className="task-detail-advance-banner-title">Errand (ErrandWib)</div>
                         <div className="task-detail-advance-banner-line">
                           Order data comes from <code>st_ordernew</code>. Assigning a rider updates that row in the Errand database.
                         </div>
