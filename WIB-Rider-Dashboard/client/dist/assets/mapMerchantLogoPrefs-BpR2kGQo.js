@@ -1,0 +1,1 @@
+const t="wib_map_merchant_logos",r="wib-map-merchant-logos-changed";function n(){try{return localStorage.getItem(t)!=="0"}catch{return!0}}function c(e){try{localStorage.setItem(t,e?"1":"0")}catch{}if(typeof window<"u")try{window.dispatchEvent(new CustomEvent(r,{detail:{on:e}}))}catch{}}export{r as M,t as a,n as r,c as w};

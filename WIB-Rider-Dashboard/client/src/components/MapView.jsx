@@ -14,6 +14,11 @@ import {
   useGoogleMap,
 } from '@react-google-maps/api';
 import { resolveUploadUrl } from '../api';
+import {
+  MAP_MERCHANT_LOGOS_KEY,
+  MAP_MERCHANT_LOGOS_CHANGED_EVENT,
+  readMerchantLogosPreference,
+} from '../utils/mapMerchantLogoPrefs';
 import { sanitizeMerchantDisplayName, shortTaskOrderDigits } from '../utils/displayText';
 import { statusLabel } from '../api';
 import {
@@ -495,7 +500,15 @@ function LeafletFitBounds({ locations, merchants, taskMarkers, disabled, mapResi
   return null;
 }
 
-function LeafletMapView({ locations, merchants, taskMarkers = [], center, zoom, mapResizeTrigger = 0 }) {
+function LeafletMapView({
+  locations,
+  merchants,
+  taskMarkers = [],
+  center,
+  zoom,
+  mapResizeTrigger = 0,
+  showMerchantLogosOnMap = true,
+}) {
   const { riderMarkers, merchantMarkers, taskMapMarkers } = useDashboardMapMarkers(locations, merchants, taskMarkers);
   const mapCenter = center != null ? center : BAGUIO_CENTER;
   const mapZoom = zoom != null ? zoom : 13;
@@ -531,7 +544,7 @@ function LeafletMapView({ locations, merchants, taskMarkers = [], center, zoom, 
         ))}
         {merchantMarkers.map((m, idx) => {
           const logo = m.logo_url ?? m.logo ?? m.image_url;
-          const logoImgUrl = merchantLogoUrl(logo);
+          const logoImgUrl = showMerchantLogosOnMap ? merchantLogoUrl(logo) : null;
           return (
             <Marker
               key={`merchant-${m.merchant_id ?? idx}`}
@@ -563,7 +576,7 @@ function mapboxTileUrl(accessToken) {
 }
 
 /** Individual pins at every zoom (no clustering) — matches legacy dashboard behavior. */
-function LeafletMapboxMarkersLayer({ riderMarkers, merchantMarkers, taskMapMarkers }) {
+function LeafletMapboxMarkersLayer({ riderMarkers, merchantMarkers, taskMapMarkers, showMerchantLogosOnMap = true }) {
   const map = useMap();
   const groupRef = useRef(null);
   useEffect(() => {
@@ -586,7 +599,7 @@ function LeafletMapboxMarkersLayer({ riderMarkers, merchantMarkers, taskMapMarke
     });
     (merchantMarkers || []).forEach((m, idx) => {
       const logo = m.logo_url ?? m.logo ?? m.image_url;
-      const logoImgUrl = merchantLogoUrl(logo);
+      const logoImgUrl = showMerchantLogosOnMap ? merchantLogoUrl(logo) : null;
       const marker = L.marker([Number(m.lat), Number(m.lng)], { icon: leafletPinIcon('merchant', logoImgUrl) });
       marker.bindPopup(merchantLeafletPopupHtmlStyled(m.restaurant_name));
       group.addLayer(marker);
@@ -596,7 +609,7 @@ function LeafletMapboxMarkersLayer({ riderMarkers, merchantMarkers, taskMapMarke
       marker.bindPopup(taskLeafletPopupHtmlStyled(t, statusLabel));
       group.addLayer(marker);
     });
-  }, [riderMarkers, merchantMarkers, taskMapMarkers]);
+  }, [riderMarkers, merchantMarkers, taskMapMarkers, showMerchantLogosOnMap]);
   return null;
 }
 
@@ -628,6 +641,7 @@ function LeafletMapboxView({
   mapResizeTrigger = 0,
   focusTaskRequest = null,
   onResetMapView,
+  showMerchantLogosOnMap = true,
 }) {
   const { riderMarkers, merchantMarkers, taskMapMarkers } = useDashboardMapMarkers(locations, merchants, taskMarkers);
   const mapCenter = center != null && Array.isArray(center) && center.length >= 2 ? center : BAGUIO_CENTER;
@@ -668,7 +682,12 @@ function LeafletMapboxView({
           disabled={fitBoundsDisabled}
           mapResizeTrigger={mapResizeTrigger}
         />
-        <LeafletMapboxMarkersLayer riderMarkers={riderMarkers} merchantMarkers={merchantMarkers} taskMapMarkers={taskMapMarkers} />
+        <LeafletMapboxMarkersLayer
+          riderMarkers={riderMarkers}
+          merchantMarkers={merchantMarkers}
+          taskMapMarkers={taskMapMarkers}
+          showMerchantLogosOnMap={showMerchantLogosOnMap}
+        />
         <LeafletFlyToTaskFocus focusTaskRequest={focusTaskRequest} />
         {typeof onResetMapView === 'function' ? (
           <LeafletMapResetControl onResetMapView={onResetMapView} />
@@ -683,7 +702,15 @@ function LeafletMapboxView({
   );
 }
 
-function MapboxMapView({ mapboxToken, locations, merchants, taskMarkers = [], center, zoom }) {
+function MapboxMapView({
+  mapboxToken,
+  locations,
+  merchants,
+  taskMarkers = [],
+  center,
+  zoom,
+  showMerchantLogosOnMap = true,
+}) {
   const { riderMarkers, merchantMarkers, taskMapMarkers } = useDashboardMapMarkers(locations, merchants, taskMarkers);
   const [loadError, setLoadError] = useState(null);
   const [mounted, setMounted] = useState(false);
@@ -734,7 +761,11 @@ function MapboxMapView({ mapboxToken, locations, merchants, taskMarkers = [], ce
           <MapboxMarker key={`merchant-${m.merchant_id ?? idx}`} longitude={Number(m.lng)} latitude={Number(m.lat)} anchor="bottom">
             <PinMarker
               type="merchant"
-              imageUrl={m.image_url || m.logo_url || m.logo || m.photo || m.merchant_image}
+              imageUrl={
+                showMerchantLogosOnMap
+                  ? m.image_url || m.logo_url || m.logo || m.photo || m.merchant_image
+                  : null
+              }
               title={merchantMapTitle(m.restaurant_name)}
             />
           </MapboxMarker>
@@ -1116,6 +1147,22 @@ export default function MapView({
   /** Clear task zoom and refit all pins (dashboard). */
   onResetMapView,
 }) {
+  const [merchantLogosOn, setMerchantLogosOn] = useState(readMerchantLogosPreference);
+
+  useEffect(() => {
+    const sync = () => setMerchantLogosOn(readMerchantLogosPreference());
+    const onStorage = (e) => {
+      if (e.key !== MAP_MERCHANT_LOGOS_KEY || e.storageArea !== localStorage) return;
+      sync();
+    };
+    window.addEventListener('storage', onStorage);
+    window.addEventListener(MAP_MERCHANT_LOGOS_CHANGED_EVENT, sync);
+    return () => {
+      window.removeEventListener('storage', onStorage);
+      window.removeEventListener(MAP_MERCHANT_LOGOS_CHANGED_EVENT, sync);
+    };
+  }, []);
+
   const token = String(mapboxToken || '').trim();
   const useMapbox = mapProvider === 'mapbox' && token.length > 0;
   const useGoogle = mapProvider === 'google' && apiKey && String(apiKey).trim().length > 0;
@@ -1152,6 +1199,7 @@ export default function MapView({
         mapResizeTrigger={mapResizeTrigger}
         focusTaskRequest={focusTaskRequest}
         onResetMapView={onResetMapView}
+        showMerchantLogosOnMap={merchantLogosOn}
       />
     );
   }

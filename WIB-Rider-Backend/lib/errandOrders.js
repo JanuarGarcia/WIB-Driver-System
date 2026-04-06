@@ -3,6 +3,12 @@
  * task_id is negative (-order_id) so it cannot collide with mt_driver_task.task_id.
  */
 
+const {
+  normalizeDriverPaymentType,
+  normalizeDriverPaymentStatus,
+  mapPaymentRawToEnum,
+} = require('./errandPayment');
+
 function mapDeliveryToTaskStatus(deliveryStatus, orderStatus) {
   const ds = String(deliveryStatus || '')
     .toLowerCase()
@@ -467,6 +473,15 @@ function mapStOrderRowToTaskListRow(
       ? String(client.email_address).trim()
       : null;
 
+  const payment_type =
+    normalizeDriverPaymentType(row) ??
+    (row.payment_code != null && String(row.payment_code).trim() !== ''
+      ? mapPaymentRawToEnum(String(row.payment_code))
+      : null);
+  const payment_status_norm =
+    normalizeDriverPaymentStatus(row) ??
+    (row.payment_status != null && String(row.payment_status).trim() !== '' ? String(row.payment_status).trim() : null);
+
   return {
     task_source: 'errand',
     task_id: safeId > 0 ? -safeId : 0,
@@ -509,7 +524,9 @@ function mapStOrderRowToTaskListRow(
     driver_id: Number.isFinite(driverId) ? driverId : null,
     driver_name: driverName,
     driver_profile_photo: null,
-    payment_status: row.payment_status,
+    payment_type,
+    payment_status: payment_status_norm,
+    order_payment_status: payment_status_norm,
     payment_code: row.payment_code,
     service_code: row.service_code,
     total: row.total,
@@ -779,6 +796,15 @@ function buildErrandTaskDetailPayload(
 
   const orderDeliveryTime = pickErrandOrderDeliveryTime(row);
 
+  const payment_type =
+    normalizeDriverPaymentType(row) ??
+    (row.payment_code != null && String(row.payment_code).trim() !== ''
+      ? mapPaymentRawToEnum(String(row.payment_code))
+      : null);
+  const payment_status_norm =
+    normalizeDriverPaymentStatus(row) ??
+    (row.payment_status != null && String(row.payment_status).trim() !== '' ? String(row.payment_status).trim() : null);
+
   const task = {
     task_source: 'errand',
     task_id: safeId > 0 ? -safeId : 0,
@@ -804,7 +830,9 @@ function buildErrandTaskDetailPayload(
     contact_number: custPhone,
     email_address: custEmail,
     trans_type: row.service_code != null ? String(row.service_code) : 'delivery',
-    payment_type: row.payment_code != null ? String(row.payment_code) : null,
+    payment_type,
+    payment_status: payment_status_norm,
+    order_payment_status: payment_status_norm,
     restaurant_name: restaurantName,
     driver_id: Number.isFinite(driverId) ? driverId : null,
     driver_name: driverName || null,
@@ -818,7 +846,9 @@ function buildErrandTaskDetailPayload(
   const order = {
     order_id: safeId,
     trans_type: row.service_code,
-    payment_type: row.payment_code,
+    payment_type,
+    payment_status: payment_status_norm,
+    order_payment_status: payment_status_norm,
     sub_total: row.sub_total,
     total_w_tax: row.total,
     delivery_date: row.delivery_date,
@@ -845,6 +875,9 @@ function buildErrandTaskDetailPayload(
 
   return {
     task_source: 'errand',
+    payment_type,
+    payment_status: payment_status_norm,
+    order_payment_status: payment_status_norm,
     task,
     order,
     merchant,

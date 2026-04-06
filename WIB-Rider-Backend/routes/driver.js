@@ -808,7 +808,7 @@ router.post('/GetTaskDetails', validateApiKey, resolveDriver, async (req, res) =
 });
 
 router.post('/ChangeTaskStatus', validateApiKey, resolveDriver, async (req, res) => {
-  const { task_id, status_raw, reason, payment_type, payment_status } = req.body;
+  const { task_id, status_raw, reason, payment_type, payment_status, latitude, longitude, lat, lng } = req.body;
   const tid = parseInt(task_id, 10);
   if (!tid) return error(res, 'task_id required');
   const status = (status_raw || 'completed').toString().toLowerCase();
@@ -861,10 +861,33 @@ router.post('/ChangeTaskStatus', validateApiKey, resolveDriver, async (req, res)
 
   try {
     const remarks = reason != null && String(reason).trim() ? String(reason).trim() : '';
-    await pool.query(
-      'INSERT INTO mt_order_history (order_id, task_id, status, remarks, date_created, update_by_type) VALUES (?, ?, ?, ?, NOW(), ?)',
-      [task?.order_id || null, tid, status, remarks, 'driver']
-    );
+    const latRaw = latitude ?? lat;
+    const lngRaw = longitude ?? lng;
+    const geoLat = latRaw != null && String(latRaw).trim() !== '' ? parseFloat(latRaw) : NaN;
+    const geoLng = lngRaw != null && String(lngRaw).trim() !== '' ? parseFloat(lngRaw) : NaN;
+    const hasGeo = Number.isFinite(geoLat) && Number.isFinite(geoLng);
+    if (hasGeo) {
+      try {
+        await pool.query(
+          'INSERT INTO mt_order_history (order_id, task_id, status, remarks, date_created, update_by_type, latitude, longitude) VALUES (?, ?, ?, ?, NOW(), ?, ?, ?)',
+          [task?.order_id || null, tid, status, remarks, 'driver', geoLat, geoLng]
+        );
+      } catch (geoErr) {
+        if (geoErr.code === 'ER_BAD_FIELD_ERROR') {
+          await pool.query(
+            'INSERT INTO mt_order_history (order_id, task_id, status, remarks, date_created, update_by_type) VALUES (?, ?, ?, ?, NOW(), ?)',
+            [task?.order_id || null, tid, status, remarks, 'driver']
+          );
+        } else {
+          throw geoErr;
+        }
+      }
+    } else {
+      await pool.query(
+        'INSERT INTO mt_order_history (order_id, task_id, status, remarks, date_created, update_by_type) VALUES (?, ?, ?, ?, NOW(), ?)',
+        [task?.order_id || null, tid, status, remarks, 'driver']
+      );
+    }
   } catch (_) {
     /* mt_order_history optional — do not fail status update */
   }

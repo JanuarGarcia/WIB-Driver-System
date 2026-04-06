@@ -1456,16 +1456,33 @@ router.get('/merchants/:id/address', async (req, res) => {
 const ORDER_HISTORY_SELECT_COLS =
   'id, order_id, status, remarks, date_created, ip_address, task_id, reason, driver_id, remarks2, notes, update_by_type, update_by_id, update_by_name';
 
+/** Cached SELECT list: includes latitude/longitude when those columns exist on mt_order_history. */
+let orderHistorySelectColsResolved = null;
+
+async function resolveOrderHistorySelectCols(pool) {
+  if (orderHistorySelectColsResolved != null) return orderHistorySelectColsResolved;
+  const extended = `${ORDER_HISTORY_SELECT_COLS}, latitude, longitude`;
+  try {
+    await pool.query(`SELECT ${extended} FROM mt_order_history WHERE 1=0`);
+    orderHistorySelectColsResolved = extended;
+  } catch (e) {
+    if (e.code === 'ER_BAD_FIELD_ERROR' || e.code === 'ER_NO_SUCH_TABLE') {
+      orderHistorySelectColsResolved = ORDER_HISTORY_SELECT_COLS;
+    } else {
+      throw e;
+    }
+  }
+  return orderHistorySelectColsResolved;
+}
+
 /**
  * Activity timeline: rows for this task_id plus order-level rows (same order_id, task_id NULL/0).
  * Deduplicates by id, sorts oldest-first like the classic driver app.
  */
 async function fetchMergedTaskOrderHistory(pool, taskId, orderId) {
   try {
-    const [taskRows] = await pool.query(
-      `SELECT ${ORDER_HISTORY_SELECT_COLS} FROM mt_order_history WHERE task_id = ?`,
-      [taskId]
-    );
+    const cols = await resolveOrderHistorySelectCols(pool);
+    const [taskRows] = await pool.query(`SELECT ${cols} FROM mt_order_history WHERE task_id = ?`, [taskId]);
     const byId = new Map();
     for (const row of taskRows || []) {
       if (row && row.id != null) byId.set(Number(row.id), row);
@@ -1473,7 +1490,7 @@ async function fetchMergedTaskOrderHistory(pool, taskId, orderId) {
     const oid = orderId != null && String(orderId).trim() !== '' && String(orderId).trim() !== '0' ? orderId : null;
     if (oid != null) {
       const [orderOnlyRows] = await pool.query(
-        `SELECT ${ORDER_HISTORY_SELECT_COLS} FROM mt_order_history WHERE order_id = ? AND (task_id IS NULL OR task_id = 0)`,
+        `SELECT ${cols} FROM mt_order_history WHERE order_id = ? AND (task_id IS NULL OR task_id = 0)`,
         [oid]
       );
       for (const row of orderOnlyRows || []) {

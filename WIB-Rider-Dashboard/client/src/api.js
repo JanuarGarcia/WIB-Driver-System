@@ -127,14 +127,43 @@ export function formatActivityTimelineDateTimeShort(d) {
   return `${mon}-${day}-${yy} ${timePart}`;
 }
 
-/** Status class for tags - matches WIB Driver app order/colors */
+/** Normalize status strings for class lookup ("Ready For Pickup", "initial_order", etc.). */
+function statusClassKey(s) {
+  return String(s || '')
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, '')
+    .replace(/_/g, '');
+}
+
+/** Status class for tags - matches WIB Driver app + classic rider Activity Timeline */
 export function statusClass(s) {
   if (!s) return 'status-default';
-  const v = String(s).toLowerCase();
-  if (['assigned', 'unassigned', 'acknowledged', 'successful', 'completed', 'delivered'].includes(v)) return 'status-green';
-  if (['started', 'inprogress'].includes(v)) return 'status-blue';
+  const v = statusClassKey(s);
   if (v === 'failed') return 'status-red';
   if (['declined', 'cancelled', 'canceled'].includes(v)) return 'status-amber';
+  if (
+    ['assigned', 'unassigned', 'acknowledged', 'successful', 'completed', 'delivered'].includes(v)
+  ) {
+    return 'status-green';
+  }
+  if (
+    [
+      'started',
+      'inprogress',
+      'photo',
+      'verification',
+      'preparing',
+      'readypickup',
+      'readyforpickup',
+      'initialorder',
+      'deliveryonitsway',
+      'arrivedat',
+      'advanceorder',
+    ].includes(v)
+  ) {
+    return 'status-blue';
+  }
   return 'status-default';
 }
 

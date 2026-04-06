@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import {
   api,
   formatDate,
@@ -78,6 +78,7 @@ function normalizeTimelineStatusKey(s) {
 }
 
 const TIMELINE_MAP_LINK_STATUSES = new Set([
+  'assigned',
   'acknowledged',
   'started',
   'inprogress',
@@ -124,6 +125,69 @@ function getTimelineEntryMapCoords(task, entry) {
   return getTaskMapCoords(task);
 }
 
+/** If no explicit accept row has GPS, use first fix after accept (legacy behavior). */
+const TASK_ACCEPT_FALLBACK_STATUSES = new Set(['started', 'inprogress']);
+
+function historyRowHasCoords(row) {
+  if (!row || typeof row !== 'object') return null;
+  const la = row.latitude != null ? Number(row.latitude) : NaN;
+  const ln = row.longitude != null ? Number(row.longitude) : NaN;
+  if (!Number.isFinite(la) || !Number.isFinite(ln)) return null;
+  return { lat: la, lng: ln };
+}
+
+/** True if this history row represents the rider accepting the task (checks status, description, remarks, reason). */
+function historyRowIsRiderAcceptance(row) {
+  const parts = [row.status, row.description, row.remarks, row.reason, row.notes];
+  const by = String(row.update_by_type || '').toLowerCase();
+  const assignedByDispatcher = by === 'admin' || by === 'merchant';
+  for (const p of parts) {
+    const key = normalizeTimelineStatusKey(p);
+    if (!key) continue;
+    if (key.includes('taskaccepted') || key.includes('orderaccepted')) return true;
+    if (key === 'acknowledged' || key === 'accepted' || key === 'accept') return true;
+    if (key === 'assigned' && !assignedByDispatcher) return true;
+    if (key === 'orderassigned' || key === 'driverassigned') return true;
+  }
+  return false;
+}
+
+/**
+ * Oldest-first: first GPS row that marks rider acceptance, else first started/inprogress with GPS (approximate legacy “start”).
+ * @returns {{ lat: number, lng: number, pinLabel: string } | null}
+ */
+function getTaskAcceptCoordsFromHistory(historyRows) {
+  const rows = Array.isArray(historyRows) ? [...historyRows] : [];
+  rows.sort((a, b) => {
+    const ta = a?.date_created ? new Date(a.date_created).getTime() : 0;
+    const tb = b?.date_created ? new Date(b.date_created).getTime() : 0;
+    if (ta !== tb) return ta - tb;
+    return Number(a?.id) - Number(b?.id);
+  });
+  for (const row of rows) {
+    const coords = historyRowHasCoords(row);
+    if (!coords || !historyRowIsRiderAcceptance(row)) continue;
+    return { ...coords, pinLabel: 'Accepted here' };
+  }
+  for (const row of rows) {
+    const coords = historyRowHasCoords(row);
+    if (!coords) continue;
+    const key = normalizeTimelineStatusKey(row.status || row.description || '');
+    if (TASK_ACCEPT_FALLBACK_STATUSES.has(key)) {
+      return { ...coords, pinLabel: 'Rider GPS (en route)' };
+    }
+  }
+  return null;
+}
+
+function getMerchantPickupCoords(merchant) {
+  if (!merchant || typeof merchant !== 'object') return null;
+  const la = merchant.latitude != null ? Number(merchant.latitude) : NaN;
+  const ln = merchant.longitude != null ? Number(merchant.longitude) : NaN;
+  if (!Number.isFinite(la) || !Number.isFinite(ln)) return null;
+  return { lat: la, lng: ln };
+}
+
 function timelineHistoryBadgeLabel(entry) {
   return (entry.status || entry.description || '').trim() || '—';
 }
@@ -138,6 +202,21 @@ function timelineHistoryPrimaryText(entry) {
   if (by && st) return `${by} — ${st}`;
   if (entry.type === 'legacy' && !by) return '';
   return st ? displaySanitized(st) || st : '';
+}
+
+/** Classic rider timeline: "Kenneth Charles added a photo" (first two name parts, like legacy admin). */
+function timelineDriverShortName(full) {
+  const s = displaySanitized(full || '').trim();
+  if (!s) return '';
+  const parts = s.split(/\s+/).filter(Boolean);
+  if (parts.length <= 2) return s;
+  return `${parts[0]} ${parts[1]}`;
+}
+
+function timelinePhotoEntryCaption(driverName) {
+  const short = timelineDriverShortName(driverName);
+  if (short) return `${short} added a photo`;
+  return 'A photo was added';
 }
 
 function ActivityTimelineMetaCol({ task, entry, dateCreated, onOpenLocation }) {
@@ -566,6 +645,17 @@ export default function TaskDetailsModal({
       });
   }, [taskId, data?.task, data?.order_history, data?.mt_order_history]);
 
+  const taskStartMapCoords = useMemo(() => {
+    if (!taskId) return null;
+    const fromHist = getTaskAcceptCoordsFromHistory(orderHistory);
+    if (fromHist) {
+      return { lat: fromHist.lat, lng: fromHist.lng, label: fromHist.pinLabel };
+    }
+    const pickup = getMerchantPickupCoords(data?.merchant ?? null);
+    if (pickup) return { lat: pickup.lat, lng: pickup.lng, label: 'Pickup' };
+    return null;
+  }, [taskId, orderHistory, data?.merchant]);
+
   if (!taskId) return null;
 
   const handleClose = () => {
@@ -586,7 +676,20 @@ export default function TaskDetailsModal({
   };
 
   const openTimelineLocation = (la, ln) => {
-    setLocationPreview({ lat: la, lng: ln });
+    const start = taskStartMapCoords;
+    const thresh = 0.00006;
+    let startLat;
+    let startLng;
+    let startLegendLabel;
+    if (start) {
+      const dup = Math.abs(start.lat - la) < thresh && Math.abs(start.lng - ln) < thresh;
+      if (!dup) {
+        startLat = start.lat;
+        startLng = start.lng;
+        startLegendLabel = start.label;
+      }
+    }
+    setLocationPreview({ lat: la, lng: ln, startLat, startLng, startLegendLabel });
   };
 
   const openDirectionsModal = () => {
@@ -896,35 +999,34 @@ export default function TaskDetailsModal({
       longitude: row.longitude,
       ip_address: row.ip_address,
     }));
+  /* One timeline row per mt_driver_task_photo (classic flow: photo → inprogress → verification → …). */
   const photoEntries = (() => {
-    if (!taskPhotos.length && !proofImages.length) return [];
-    const urlsFromRows = taskPhotos.map((row) => row.proof_url).filter(Boolean);
-    const urls = proofImages.length > 0 ? proofImages : urlsFromRows;
-    const date_created =
-      taskPhotos.length > 0 ? taskPhotos[taskPhotos.length - 1].date_created : null;
-    if (urls.length > 0) {
+    if (taskPhotos.length > 0) {
+      return taskPhotos.filter(Boolean).map((row) => ({
+        type: 'photo',
+        id: `photo-${row.id}`,
+        date_created: row.date_created,
+        urls: row.proof_url ? [row.proof_url] : [],
+        photo_rows: [row],
+      }));
+    }
+    if (proofImages.length > 0) {
       return [
         {
           type: 'photo',
           id: 'proof-delivery-bundle',
-          date_created,
-          urls,
-          photo_rows: taskPhotos,
+          date_created: null,
+          urls: proofImages,
+          photo_rows: [],
         },
       ];
     }
-    return taskPhotos.filter(Boolean).map((row) => ({
-      type: 'photo',
-      id: `photo-${row.id}`,
-      date_created: row.date_created,
-      urls: [],
-      photo_rows: [row],
-    }));
+    return [];
   })();
   /* Oldest first (initial order at top, successful / latest at bottom) — matches classic rider timeline */
   const combined = [...historyEntries, ...photoEntries].sort((a, b) => {
-    const da = a.date_created ? new Date(a.date_created).getTime() : 0;
-    const db = b.date_created ? new Date(b.date_created).getTime() : 0;
+    const da = a.date_created ? new Date(a.date_created).getTime() : Number.POSITIVE_INFINITY;
+    const db = b.date_created ? new Date(b.date_created).getTime() : Number.POSITIVE_INFINITY;
     if (da !== db) return da - db;
     const ida = typeof a.id === 'string' && a.id.startsWith('photo-') ? a.id : Number(a.id);
     const idb = typeof b.id === 'string' && b.id.startsWith('photo-') ? b.id : Number(b.id);
@@ -939,8 +1041,8 @@ export default function TaskDetailsModal({
       : legacyTimeline
           .map((e) => ({ ...e, type: 'legacy' }))
           .sort((a, b) => {
-            const da = a.date_created ? new Date(a.date_created).getTime() : 0;
-            const db = b.date_created ? new Date(b.date_created).getTime() : 0;
+            const da = a.date_created ? new Date(a.date_created).getTime() : Number.POSITIVE_INFINITY;
+            const db = b.date_created ? new Date(b.date_created).getTime() : Number.POSITIVE_INFINITY;
             return da - db;
           });
   const customerName = displaySanitizedOrDash(task?.customer_name);
@@ -1201,8 +1303,19 @@ export default function TaskDetailsModal({
                                 <div className="activity-timeline-row">
                                   <div className="activity-timeline-content-col">
                                     <div className="activity-timeline-badge-col">
-                                      <span className="tag status-green">Proof of delivery</span>
+                                      {entry.id === 'proof-delivery-bundle' ? (
+                                        <span className="tag status-green">Proof of delivery</span>
+                                      ) : (
+                                        <span className={`tag ${statusDisplayClass('photo')}`}>photo</span>
+                                      )}
                                     </div>
+                                    {entry.id === 'proof-delivery-bundle' ? null : (
+                                      <div className="activity-timeline-body-col">
+                                        <div className="activity-timeline-primary">
+                                          {timelinePhotoEntryCaption(task?.driver_name)}
+                                        </div>
+                                      </div>
+                                    )}
                                   </div>
                                   <ActivityTimelineMetaCol
                                     task={task}
@@ -1965,6 +2078,10 @@ export default function TaskDetailsModal({
         <LocationPreviewModal
           lat={locationPreview.lat}
           lng={locationPreview.lng}
+          startLat={locationPreview.startLat}
+          startLng={locationPreview.startLng}
+          startLegendLabel={locationPreview.startLegendLabel || 'Accepted here'}
+          mapboxToken={directionsMapSettings?.mapboxToken || ''}
           onClose={() => setLocationPreview(null)}
           caption={
             task

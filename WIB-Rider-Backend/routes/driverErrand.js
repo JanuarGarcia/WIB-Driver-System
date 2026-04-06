@@ -449,7 +449,10 @@ router.post(
           fs.unlinkSync(newPath);
         } catch (_) {}
         if (e.code === 'ER_NO_SUCH_TABLE') {
-          return error(res, 'Proof storage not configured — run sql/wib_errand_driver_proof.sql on ErrandWib DB');
+          return error(
+            res,
+            'Proof storage not configured — run WIB-Rider-Backend/sql/wib_errand_driver_proof.sql on the ErrandWib database (creates wib_errand_driver_proof or mt_errand_driver_proof)'
+          );
         }
         return error(res, e.message || 'Failed to save proof');
       }

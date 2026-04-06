@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { api } from '../api';
 import MapMerchantFilter from '../components/MapMerchantFilter';
 import { sanitizeMerchantDisplayName } from '../utils/displayText';
+import { readMerchantLogosPreference, writeMerchantLogosPreference } from '../utils/mapMerchantLogoPrefs';
 
 function SearchableMerchantSelect({ merchants, excludedIds, onSelect, 'aria-label': ariaLabel }) {
   const [query, setQuery] = useState('');
@@ -141,6 +142,8 @@ export default function Settings() {
   const [hideDeliveryTasks, setHideDeliveryTasks] = useState(false);
   const [hideSuccessfulTasks, setHideSuccessfulTasks] = useState(false);
   const [googleMapStyle, setGoogleMapStyle] = useState('');
+  /** Mapbox dashboard map: show restaurant image on merchant pins (browser localStorage). */
+  const [merchantLogosOnDashboardMap, setMerchantLogosOnDashboardMap] = useState(() => readMerchantLogosPreference());
 
   const ORDER_STATUS_ACCEPTED_OPTIONS = ['Pending', 'Processing', 'Accepted', 'Preparing', 'Ready For Pickup', 'Paid Na', 'paid', 'Advance Order'];
 
@@ -156,6 +159,12 @@ export default function Settings() {
   useEffect(() => {
     api('merchants').then((list) => setMerchants(Array.isArray(list) ? list : [])).catch(() => setMerchants([]));
   }, []);
+
+  useEffect(() => {
+    if (activeTab === 'map-settings') {
+      setMerchantLogosOnDashboardMap(readMerchantLogosPreference());
+    }
+  }, [activeTab]);
 
   useEffect(() => {
     setAllowAllAdminTeam(settings.allow_all_admin_team_by_merchant === '1');
@@ -363,6 +372,7 @@ export default function Settings() {
   const handleMapSettingsSave = () => {
     setMessage(null);
     setSaving(true);
+    writeMerchantLogosPreference(merchantLogosOnDashboardMap);
     const payload = {
       default_map_country: defaultMapCountry || 'ph',
       disable_activity_tracking: disableActivityTracking ? '1' : '0',
@@ -1184,6 +1194,23 @@ export default function Settings() {
                 <div className="settings-field">
                   <div role="button" className={`settings-toggle ${includeOfflineDriversOnMap ? 'on' : ''}`} tabIndex={0} aria-label="Toggle" onClick={() => setIncludeOfflineDriversOnMap((v) => !v)}> </div>
                   <span className="settings-toggle-label">{includeOfflineDriversOnMap ? 'ON' : 'OFF'}</span>
+                </div>
+              </div>
+              <div className="settings-form-row">
+                <label>Merchant logos on dashboard map</label>
+                <div className="settings-field">
+                  <div
+                    role="button"
+                    className={`settings-toggle ${merchantLogosOnDashboardMap ? 'on' : ''}`}
+                    tabIndex={0}
+                    aria-label="Toggle merchant logos on map pins"
+                    onClick={() => setMerchantLogosOnDashboardMap((v) => !v)}
+                    onKeyDown={(e) => e.key === 'Enter' && setMerchantLogosOnDashboardMap((v) => !v)}
+                  />
+                  <span className="settings-toggle-label">{merchantLogosOnDashboardMap ? 'ON' : 'OFF'}</span>
+                  <p className="settings-helper">
+                    When the dashboard uses <strong>Mapbox</strong>, merchant pins can show each store&apos;s logo. Turn <strong>OFF</strong> to use the generic purple pin only. Applies on this browser after you click <strong>Save</strong> below. Google Maps pins do not use merchant logos.
+                  </p>
                 </div>
               </div>
               <div className="settings-form-row">
