@@ -1,10 +1,11 @@
 import { getToken } from './auth';
 
 // Prefer explicit env-configured base URL (useful for phones / other devices).
-// Fallback: in dev call backend directly; in build use relative /api (proxied or same-origin).
+// Fallback: dev hits Node directly; production uses /admin/api (Express mount in WIB-Rider-Backend app.js).
+// /api in prod only works if nginx rewrites /api -> /admin/api (vite dev does that; see vite.config.js).
 const API =
   import.meta.env.VITE_API_URL ||
-  (import.meta.env.DEV ? 'http://localhost:3000/admin/api' : '/api');
+  (import.meta.env.DEV ? 'http://localhost:3000/admin/api' : '/admin/api');
 
 /** Origin where `/uploads/...` is served (matches API app in app.js). */
 export function uploadsOrigin() {
@@ -59,7 +60,10 @@ export async function api(path, options = {}) {
       data = text ? JSON.parse(text) : {};
     } catch (e) {
       if (text.trimStart().startsWith('<!')) {
-        throw { error: 'Server returned HTML instead of JSON. Is the backend running on port 3000?' };
+        throw {
+          error:
+            'Server returned HTML instead of JSON (often the SPA index or a 404 page). Set VITE_API_URL at build time to your API base, e.g. https://your-host/admin/api, or proxy /admin/api on this host to the Node backend.',
+        };
       }
       throw { error: 'Invalid response from server', message: e.message };
     }
