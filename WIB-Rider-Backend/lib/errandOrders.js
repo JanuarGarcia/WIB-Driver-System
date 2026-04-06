@@ -241,6 +241,13 @@ function clientAddressFormattedFull(addr) {
   return s || null;
 }
 
+/** Short maps label from `st_client_address.formatted_address` (dashboard task card). */
+function clientAddressShortFormattedLine(addr) {
+  if (!addr || typeof addr !== 'object') return '';
+  const short = addr.formatted_address != null ? String(addr.formatted_address).trim() : '';
+  return short || '';
+}
+
 /** Single-line label for map / task list. */
 function clientAddressLine(addr) {
   if (!addr || typeof addr !== 'object') return '';
@@ -403,8 +410,9 @@ function mapStOrderRowToTaskListRow(
   const clientAddrRow = pickClientAddressRow(row, addrList);
   const clientAddrLine = clientAddressLine(clientAddrRow);
   const streetOrArea = clientStreetOrAreaLine(clientAddrRow);
-  /** Primary line: street/area from saved address, else order drop-off text, else merchant pickup */
-  const addressLine = streetOrArea || dropAddr || merchantAddr;
+  const shortFormatted = clientAddressShortFormattedLine(clientAddrRow);
+  /** Task card / list: `st_client_address.formatted_address`, then street/area, else order/merchant */
+  const addressLine = shortFormatted || streetOrArea || dropAddr || merchantAddr;
   let taskLat = null;
   let taskLng = null;
   const clientCoords = coordsFromClientAddressRow(clientAddrRow);
@@ -461,7 +469,7 @@ function mapStOrderRowToTaskListRow(
     errand_history_status: histStatus || null,
     task_description: desc,
     delivery_address: addressLine,
-    formatted_address: clientAddressFormattedFull(clientAddrRow) || clientAddrLine || dropAddr || null,
+    formatted_address: shortFormatted || clientAddressFormattedFull(clientAddrRow) || clientAddrLine || dropAddr || null,
     merchant_address: merchantAddr || null,
     delivery_landmark:
       clientAddrRow && clientAddrRow.location_name != null && String(clientAddrRow.location_name).trim()
@@ -535,7 +543,8 @@ function buildErrandTaskDetailPayload(row, driverName, merchantRow, clientRow, c
   const addr = clientAddressRow && typeof clientAddressRow === 'object' ? clientAddressRow : null;
   const clientAddrLine = clientAddressLine(addr);
   const streetOrArea = clientStreetOrAreaLine(addr);
-  const addressLine = streetOrArea || dropAddr || merchantAddr;
+  const shortFormatted = clientAddressShortFormattedLine(addr);
+  const addressLine = shortFormatted || streetOrArea || dropAddr || merchantAddr;
   let taskLat = null;
   let taskLng = null;
   const clientCoords = coordsFromClientAddressRow(addr);
@@ -577,7 +586,7 @@ function buildErrandTaskDetailPayload(row, driverName, merchantRow, clientRow, c
     errand_history_status: latestHistoryStatus != null && String(latestHistoryStatus).trim() !== '' ? String(latestHistoryStatus).trim() : null,
     task_description: desc,
     delivery_address: addressLine,
-    formatted_address: clientAddressFormattedFull(addr) || clientAddrLine || dropAddr || null,
+    formatted_address: shortFormatted || clientAddressFormattedFull(addr) || clientAddrLine || dropAddr || null,
     merchant_address: merchantAddr || null,
     delivery_landmark:
       addr && addr.location_name != null && String(addr.location_name).trim()
@@ -651,6 +660,7 @@ function buildErrandTaskDetailPayload(row, driverName, merchantRow, clientRow, c
           address_type: addr.address_type,
           address1: addr.address1 != null ? String(addr.address1).trim() : null,
           address2: addr.address2 != null ? String(addr.address2).trim() : null,
+          formatted_address: shortFormatted || null,
           formatted_address_full: clientAddressFormattedFull(addr),
           location_name: addr.location_name != null ? String(addr.location_name).trim() : null,
           address_label: addr.address_label != null ? String(addr.address_label).trim() : null,

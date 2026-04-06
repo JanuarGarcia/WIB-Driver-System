@@ -109,8 +109,19 @@ export function riderGpsFromLocations(driver, locations) {
 export function tasksWithMapCoordinates(tasks) {
   return (tasks || [])
     .map((t) => {
-      let lat = t.task_lat != null ? Number(t.task_lat) : NaN;
-      let lng = t.task_lng != null ? Number(t.task_lng) : NaN;
+      let lat = NaN;
+      let lng = NaN;
+      if (t.task_source === 'errand') {
+        const cc = latLngFromClientAddress(t.client_address);
+        if (cc && Number.isFinite(cc.lat) && Number.isFinite(cc.lng)) {
+          lat = cc.lat;
+          lng = cc.lng;
+        }
+      }
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+        lat = t.task_lat != null ? Number(t.task_lat) : NaN;
+        lng = t.task_lng != null ? Number(t.task_lng) : NaN;
+      }
       if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
         const cc = latLngFromClientAddress(t.client_address);
         if (cc) {
