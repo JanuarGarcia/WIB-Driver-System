@@ -68,11 +68,62 @@ async function fetchErrandMerchantsByIds(errandPool, merchantIds) {
 }
 
 /**
+ * Batch-load st_client rows (ErrandWib) linked from st_ordernew.client_id.
+ * @param {import('mysql2/promise').Pool} errandPool
+ * @param {number[]} clientIds
+ * @returns {Promise<Map<string, Record<string, unknown>>>}
+ */
+async function fetchErrandClientsByIds(errandPool, clientIds) {
+  const map = new Map();
+  const uniq = [...new Set(clientIds.map((n) => parseInt(String(n), 10)).filter((n) => Number.isFinite(n) && n > 0))];
+  if (!uniq.length) return map;
+  const ph = uniq.map(() => '?').join(',');
+  try {
+    const [rows] = await errandPool.query(
+      `SELECT client_id, first_name, last_name, email_address, phone_prefix, contact_phone
+       FROM st_client WHERE client_id IN (${ph})`,
+      uniq
+    );
+    for (const c of rows || []) {
+      if (c.client_id != null) map.set(String(c.client_id), c);
+    }
+  } catch (e) {
+    if (e.code === 'ER_NO_SUCH_TABLE') return map;
+    throw e;
+  }
+  return map;
+}
+
+/** @param {Record<string, unknown>|null|undefined} c */
+function clientDisplayName(c) {
+  if (!c || typeof c !== 'object') return null;
+  const fn = c.first_name != null ? String(c.first_name).trim() : '';
+  const ln = c.last_name != null ? String(c.last_name).trim() : '';
+  const full = [fn, ln].filter(Boolean).join(' ').trim();
+  return full || null;
+}
+
+/** @param {Record<string, unknown>|null|undefined} c */
+function clientDisplayPhone(c) {
+  if (!c || typeof c !== 'object') return null;
+  const raw = c.contact_phone != null ? String(c.contact_phone).trim() : '';
+  if (!raw) return null;
+  if (raw.startsWith('+')) return raw;
+  const prefix = c.phone_prefix != null && String(c.phone_prefix).trim() !== '' ? String(c.phone_prefix).trim() : '';
+  if (prefix) {
+    const digits = raw.replace(/\D/g, '');
+    return `+${prefix}${digits}`;
+  }
+  return raw;
+}
+
+/**
  * @param {Record<string, unknown>} row - st_ordernew row
  * @param {Map<string, string>} driverNameById - from mt_driver (primary pool)
  * @param {Map<string, Record<string, unknown>>} merchantById - from st_merchant (ErrandWib), keyed by merchant_id string
+ * @param {Map<string, Record<string, unknown>>} [clientById] - from st_client (ErrandWib), keyed by client_id string
  */
-function mapStOrderRowToTaskListRow(row, driverNameById, merchantById) {
+function mapStOrderRowToTaskListRow(row, driverNameById, merchantById, clientById) {
   const oid = row.order_id != null ? Number(row.order_id) : NaN;
   const safeId = Number.isFinite(oid) ? oid : 0;
   const driverId = row.driver_id != null ? parseInt(String(row.driver_id), 10) : null;
@@ -116,6 +167,15 @@ function mapStOrderRowToTaskListRow(row, driverNameById, merchantById) {
       : `Errand order #${safeId}`;
   const created = row.date_created || row.created_at || row.date_modified || null;
 
+  const cid = row.client_id != null ? parseInt(String(row.client_id), 10) : null;
+  const client = Number.isFinite(cid) && cid > 0 ? clientById?.get(String(cid)) : null;
+  const customerName = clientDisplayName(client);
+  const customerPhone = clientDisplayPhone(client);
+  const customerEmail =
+    client && client.email_address != null && String(client.email_address).trim()
+      ? String(client.email_address).trim()
+      : null;
+
   return {
     task_source: 'errand',
     task_id: safeId > 0 ? -safeId : 0,
@@ -135,6 +195,10 @@ function mapStOrderRowToTaskListRow(row, driverNameById, merchantById) {
     merchant_id: row.merchant_id,
     restaurant_name: restaurantName,
     merchant_phone: merch?.restaurant_phone != null ? String(merch.restaurant_phone).trim() : null,
+    customer_name: customerName,
+    contact_number: customerPhone,
+    email_address: customerEmail,
+    client_id: Number.isFinite(cid) ? cid : null,
     driver_id: Number.isFinite(driverId) ? driverId : null,
     driver_name: driverName,
     driver_profile_photo: null,
@@ -148,8 +212,9 @@ function mapStOrderRowToTaskListRow(row, driverNameById, merchantById) {
 /**
  * Build GET /errand-orders/:id detail payload (mirrors task modal shape partially).
  * @param {Record<string, unknown>|null} merchantRow - st_merchant row or null
+ * @param {Record<string, unknown>|null} clientRow - st_client row or null
  */
-function buildErrandTaskDetailPayload(row, driverName, merchantRow) {
+function buildErrandTaskDetailPayload(row, driverName, merchantRow, clientRow) {
   const oid = row.order_id != null ? Number(row.order_id) : NaN;
   const safeId = Number.isFinite(oid) ? oid : 0;
   const driverId = row.driver_id != null ? parseInt(String(row.driver_id), 10) : null;
@@ -158,6 +223,11 @@ function buildErrandTaskDetailPayload(row, driverName, merchantRow) {
     row.order_reference != null && String(row.order_reference).trim()
       ? `Errand ${String(row.order_reference).trim()}`
       : `Errand order #${safeId}`;
+
+  const cl = clientRow && typeof clientRow === 'object' ? clientRow : null;
+  const custName = clientDisplayName(cl);
+  const custPhone = clientDisplayPhone(cl);
+  const custEmail = cl && cl.email_address != null && String(cl.email_address).trim() ? String(cl.email_address).trim() : null;
 
   const m = merchantRow && typeof merchantRow === 'object' ? merchantRow : null;
   const restaurantName =
@@ -220,8 +290,9 @@ function buildErrandTaskDetailPayload(row, driverName, merchantRow) {
     sub_total: row.sub_total,
     total_w_tax: row.total,
     delivery_date: row.delivery_date,
+    delivery_time: row.delivery_time != null ? row.delivery_time : row.delivery_time_end,
     date_created: row.date_created || row.created_at,
-    contact_number: null,
+    contact_number: custPhone,
     order_change: row.amount_due,
   };
 
@@ -248,6 +319,16 @@ function buildErrandTaskDetailPayload(row, driverName, merchantRow) {
     proof_images: [],
     order_history: [],
     errand_order: row,
+    client: cl
+      ? {
+          client_id: cl.client_id,
+          first_name: cl.first_name,
+          last_name: cl.last_name,
+          email_address: cl.email_address,
+          contact_phone: cl.contact_phone,
+          phone_prefix: cl.phone_prefix,
+        }
+      : null,
   };
 }
 
@@ -256,4 +337,5 @@ module.exports = {
   buildErrandTaskDetailPayload,
   mapDeliveryToTaskStatus,
   fetchErrandMerchantsByIds,
+  fetchErrandClientsByIds,
 };
