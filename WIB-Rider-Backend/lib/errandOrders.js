@@ -252,6 +252,16 @@ function clientAddressLine(addr) {
   return parts.join(', ').trim();
 }
 
+/** Street / area from `st_client_address` (address1, then address2) for transaction / driver line. */
+function clientStreetOrAreaLine(addr) {
+  if (!addr || typeof addr !== 'object') return '';
+  for (const k of ['address1', 'address2', 'street', 'area']) {
+    const v = addr[k];
+    if (v != null && String(v).trim() !== '') return String(v).trim();
+  }
+  return '';
+}
+
 function coordsFromClientAddressRow(addr) {
   if (!addr || typeof addr !== 'object') return null;
   const pairs = [
@@ -392,8 +402,9 @@ function mapStOrderRowToTaskListRow(
     Number.isFinite(cid) && cid > 0 ? clientAddressesByClientId?.get(String(cid)) : null;
   const clientAddrRow = pickClientAddressRow(row, addrList);
   const clientAddrLine = clientAddressLine(clientAddrRow);
-  /** Primary line: client saved address (st_client_address), else order drop-off text, else merchant pickup */
-  const addressLine = clientAddrLine || dropAddr || merchantAddr;
+  const streetOrArea = clientStreetOrAreaLine(clientAddrRow);
+  /** Primary line: street/area from saved address, else order drop-off text, else merchant pickup */
+  const addressLine = streetOrArea || dropAddr || merchantAddr;
   let taskLat = null;
   let taskLng = null;
   const clientCoords = coordsFromClientAddressRow(clientAddrRow);
@@ -450,7 +461,7 @@ function mapStOrderRowToTaskListRow(
     errand_history_status: histStatus || null,
     task_description: desc,
     delivery_address: addressLine,
-    formatted_address: clientAddrLine || dropAddr || null,
+    formatted_address: clientAddressFormattedFull(clientAddrRow) || clientAddrLine || dropAddr || null,
     merchant_address: merchantAddr || null,
     delivery_landmark:
       clientAddrRow && clientAddrRow.location_name != null && String(clientAddrRow.location_name).trim()
@@ -523,7 +534,8 @@ function buildErrandTaskDetailPayload(row, driverName, merchantRow, clientRow, c
   const dropAddr = row.formatted_address != null ? String(row.formatted_address).trim() : '';
   const addr = clientAddressRow && typeof clientAddressRow === 'object' ? clientAddressRow : null;
   const clientAddrLine = clientAddressLine(addr);
-  const addressLine = clientAddrLine || dropAddr || merchantAddr;
+  const streetOrArea = clientStreetOrAreaLine(addr);
+  const addressLine = streetOrArea || dropAddr || merchantAddr;
   let taskLat = null;
   let taskLng = null;
   const clientCoords = coordsFromClientAddressRow(addr);
@@ -565,7 +577,7 @@ function buildErrandTaskDetailPayload(row, driverName, merchantRow, clientRow, c
     errand_history_status: latestHistoryStatus != null && String(latestHistoryStatus).trim() !== '' ? String(latestHistoryStatus).trim() : null,
     task_description: desc,
     delivery_address: addressLine,
-    formatted_address: clientAddrLine || dropAddr || null,
+    formatted_address: clientAddressFormattedFull(addr) || clientAddrLine || dropAddr || null,
     merchant_address: merchantAddr || null,
     delivery_landmark:
       addr && addr.location_name != null && String(addr.location_name).trim()
@@ -638,6 +650,7 @@ function buildErrandTaskDetailPayload(row, driverName, merchantRow, clientRow, c
           address_id: addr.address_id,
           address_type: addr.address_type,
           address1: addr.address1 != null ? String(addr.address1).trim() : null,
+          address2: addr.address2 != null ? String(addr.address2).trim() : null,
           formatted_address_full: clientAddressFormattedFull(addr),
           location_name: addr.location_name != null ? String(addr.location_name).trim() : null,
           address_label: addr.address_label != null ? String(addr.address_label).trim() : null,

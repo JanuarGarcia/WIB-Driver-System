@@ -1057,4 +1057,7 @@ router.post('/LogMapApiCall', validateApiKey, optionalDriver, async (req, res) =
   }
 });
 
+const driverErrandRoutes = require('./driverErrand');
+router.use(driverErrandRoutes);
+
 module.exports = router;

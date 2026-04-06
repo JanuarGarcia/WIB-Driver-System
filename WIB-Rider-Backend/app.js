@@ -19,7 +19,8 @@ const uploadsTaskDir = path.join(uploadsRoot, 'task');
 const uploadsTaskPhotosDir = path.join(uploadsRoot, 'task_photos');
 // Legacy rider PHP: /upload/driver/<file> — copy old files into uploads/driver/
 const uploadsDriverDir = path.join(uploadsRoot, 'driver');
-[uploadsRoot, uploadsTaskDir, uploadsTaskPhotosDir, uploadsDriverDir].forEach((dir) => {
+const uploadsErrandDir = path.join(uploadsRoot, 'errand');
+[uploadsRoot, uploadsTaskDir, uploadsTaskPhotosDir, uploadsDriverDir, uploadsErrandDir].forEach((dir) => {
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 });
 
@@ -28,6 +29,7 @@ app.use('/uploads', express.static(uploadsRoot));
 app.use('/upload/task', express.static(uploadsTaskDir));
 app.use('/upload/task', express.static(uploadsTaskPhotosDir));
 app.use('/upload/driver', express.static(uploadsDriverDir));
+app.use('/upload/errand', express.static(uploadsErrandDir));
 
 // Driver API (Flutter app) - base path /driver/api
 app.use('/driver/api', driverRoutes);

@@ -958,7 +958,18 @@ export default function TaskDetailsModal({
     return '—';
   })();
   const orderDeliveryAddr = data?.order_delivery_address ?? null;
+  const clientAddr = data?.client_address;
   const customerDeliveryAddressDisplay = (() => {
+    if (isErrandTask) {
+      const full =
+        (task?.formatted_address != null && String(task.formatted_address).trim()) ||
+        (clientAddr?.formatted_address_full != null && String(clientAddr.formatted_address_full).trim()) ||
+        (clientAddr?.formatted_address_summary != null && String(clientAddr.formatted_address_summary).trim()) ||
+        '';
+      const taskDel = task?.delivery_address != null ? String(task.delivery_address).trim() : '';
+      const line = full || taskDel;
+      return line ? displaySanitizedOrDash(line) : '—';
+    }
     const fromOrder = formatDeliveryAddressFromOrderRow(orderDeliveryAddr);
     const fromOrderSan = fromOrder ? displaySanitized(fromOrder) || fromOrder : '';
     const taskDel = task?.delivery_address != null ? String(task.delivery_address).trim() : '';
@@ -966,17 +977,19 @@ export default function TaskDetailsModal({
     return displaySanitizedOrDash(fromOrderSan || taskDelSan);
   })();
   const taskDescriptionDisplay = displaySanitized(task?.task_description) || '—';
-  const clientAddr = data?.client_address;
   const deliveryInstructionDisplay = displaySanitizedOrDash(
     order?.delivery_instruction ?? task?.delivery_instruction ?? clientAddr?.delivery_instructions
   );
   const landmarkDisplay = displaySanitizedOrDash(
     orderDeliveryAddr?.location_name ?? task?.delivery_landmark ?? clientAddr?.location_name
   );
-  const errandAddrPlace = displaySanitizedOrDash(clientAddr?.location_name);
   const errandAddrStreet = displaySanitizedOrDash(clientAddr?.address1);
-  const errandAddrFull = displaySanitizedOrDash(clientAddr?.formatted_address_full);
-  const errandAddrLabel = displaySanitizedOrDash(clientAddr?.address_label);
+  /** Errand-only: street/area line for Transaction (separate from full delivery address). */
+  const transactionStreetOrAreaValue = isErrandTask
+    ? errandAddrStreet !== '—'
+      ? errandAddrStreet
+      : displaySanitizedOrDash(clientAddr?.address2 ?? task?.delivery_address)
+    : '';
   const teamNameDisplay = displaySanitizedOrDash(task?.team_name);
   const driverNameDisplay = displaySanitizedOrDash(task?.driver_name);
   const orderDeliveryTimeRaw =
@@ -1277,34 +1290,6 @@ export default function TaskDetailsModal({
                         </div>
                       </div>
                     </div>
-                    {isErrandTask && clientAddr && (
-                      <div className="task-detail-section">
-                        <div className="task-detail-section-title">Customer delivery address</div>
-                        <p className="muted" style={{ margin: '0 0 0.75rem', fontSize: '0.8125rem' }}>
-                          From <code style={{ fontSize: '0.75rem' }}>st_client_address</code> (place name, street, and maps line are stored separately).
-                        </p>
-                        <div className="task-detail-section-row">
-                          <div className="task-detail-row">
-                            <span className="task-detail-label">Place or landmark</span>
-                            <span className="task-detail-value">{errandAddrPlace}</span>
-                          </div>
-                          <div className="task-detail-row">
-                            <span className="task-detail-label">Street / area</span>
-                            <span className="task-detail-value">{errandAddrStreet}</span>
-                          </div>
-                          <div className="task-detail-row">
-                            <span className="task-detail-label">Full address (maps)</span>
-                            <span className="task-detail-value">{errandAddrFull}</span>
-                          </div>
-                          {clientAddr?.address_label != null && String(clientAddr.address_label).trim() !== '' && (
-                            <div className="task-detail-row">
-                              <span className="task-detail-label">Saved address label</span>
-                              <span className="task-detail-value">{errandAddrLabel}</span>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    )}
                     <div className="task-detail-section">
                       <div className="task-detail-section-title">Transaction</div>
                       <div className="task-detail-section-row">
@@ -1315,6 +1300,12 @@ export default function TaskDetailsModal({
                         <div className="task-detail-row"><span className="task-detail-label">Delivery date</span><span className="task-detail-value">{order?.delivery_date ? formatDateOnly(order.delivery_date) : '—'}</span></div>
                         <div className="task-detail-row"><span className="task-detail-label">Delivery time</span><span className="task-detail-value">{orderDeliveryTimeRaw ? formatDbTimeTo12h(orderDeliveryTimeRaw) : '—'}</span></div>
                         <div className="task-detail-row"><span className="task-detail-label">Delivery address</span><span className="task-detail-value">{customerDeliveryAddressDisplay}</span></div>
+                        {isErrandTask && (
+                          <div className="task-detail-row">
+                            <span className="task-detail-label">Street / area</span>
+                            <span className="task-detail-value">{transactionStreetOrAreaValue}</span>
+                          </div>
+                        )}
                         <div className="task-detail-row"><span className="task-detail-label">Delivery instruction</span><span className="task-detail-value">{deliveryInstructionDisplay}</span></div>
                         <div className="task-detail-row"><span className="task-detail-label">Landmark</span><span className="task-detail-value">{landmarkDisplay}</span></div>
                       </div>
