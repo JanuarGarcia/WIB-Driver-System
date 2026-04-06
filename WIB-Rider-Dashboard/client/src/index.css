@@ -4353,17 +4353,9 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
   width: 100%;
   min-width: 0;
 }
-.task-card-all-tasks-arrow {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 18px;
-  height: 18px;
+/* Direction marker matches Task panel: .task-card-v2-direction-icon */
+.task-card-all-tasks-waiting .task-card-v2-direction-icon {
   flex-shrink: 0;
-}
-.task-card-all-tasks-arrow svg {
-  width: 14px;
-  height: 14px;
 }
 .task-card-all-tasks-waiting-mins {
   color: var(--color-danger);
