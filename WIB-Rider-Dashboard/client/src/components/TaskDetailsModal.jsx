@@ -431,7 +431,9 @@ export default function TaskDetailsModal({
     setChangeStatusValue('');
     setChangeStatusReason('');
     setLoading(true);
-    api(`tasks/${taskId}`)
+    const errandOid = Number(taskId) < 0 ? Math.abs(Number(taskId)) : null;
+    const loadUrl = errandOid != null ? `errand-orders/${errandOid}` : `tasks/${taskId}`;
+    api(loadUrl)
       .then((res) => {
         if (res && typeof res === 'object' && !res.error) {
           setData(res);
@@ -503,6 +505,7 @@ export default function TaskDetailsModal({
 
   useEffect(() => {
     if (!taskId || !data?.task) return;
+    if (data.task_source === 'errand' || Number(taskId) < 0) return;
     const fromTask = Array.isArray(data.order_history) ? data.order_history : Array.isArray(data.mt_order_history) ? data.mt_order_history : [];
     if (fromTask.length > 0) return;
     api(`tasks/${taskId}/order-history`)
@@ -633,13 +636,16 @@ export default function TaskDetailsModal({
     const team_id = assignTeamId ? parseInt(assignTeamId, 10) : undefined;
     if (!driver_id) return;
     setActionLoading(true);
-    api(`tasks/${taskId}/assign`, { method: 'PUT', body: JSON.stringify({ driver_id, team_id }) })
+    const errandOid = Number(taskId) < 0 ? Math.abs(Number(taskId)) : null;
+    const assignPath =
+      errandOid != null ? `errand-orders/${errandOid}/assign` : `tasks/${taskId}/assign`;
+    api(assignPath, { method: 'PUT', body: JSON.stringify({ driver_id, team_id }) })
       .then(() => {
         setAssignOpen(false);
         setAssignTeamId('');
         setAssignDriverId('');
-        // Refresh task details to reflect assignment
-        return api(`tasks/${taskId}`);
+        const refreshUrl = errandOid != null ? `errand-orders/${errandOid}` : `tasks/${taskId}`;
+        return api(refreshUrl);
       })
       .then((res) => {
         if (res && typeof res === 'object' && !res.error) setData(res);
@@ -817,6 +823,7 @@ export default function TaskDetailsModal({
   })();
 
   const task = data && (data.task ?? data);
+  const isErrandTask = data?.task_source === 'errand' || Number(taskId) < 0;
   const order = data?.order ?? null;
   const orderDetails = Array.isArray(data?.order_details) ? data.order_details : [];
   const merchant = data?.merchant ?? null;
@@ -978,7 +985,12 @@ export default function TaskDetailsModal({
         aria-hidden={editOpen ? true : undefined}
       >
         <div className="modal-header">
-          <h3>Task ID : {task?.task_id ?? taskId ?? '…'}</h3>
+          <h3>
+            {isErrandTask ? 'Errand order' : 'Task ID'} :{' '}
+            {isErrandTask && task?.st_order_id != null
+              ? task.st_order_id
+              : task?.task_id ?? taskId ?? '…'}
+          </h3>
         </div>
         {loading && (
           <div className="modal-body"><div className="loading">Loading…</div></div>
@@ -1001,6 +1013,14 @@ export default function TaskDetailsModal({
               <div className="modal-body">
                 {tab === 'details' && (
                   <div className="task-details-content">
+                    {isErrandTask && (
+                      <div className="task-detail-advance-banner" role="status" style={{ marginBottom: '0.75rem' }}>
+                        <div className="task-detail-advance-banner-title">Errand (ErrandWib)</div>
+                        <div className="task-detail-advance-banner-line">
+                          Order data comes from <code>st_ordernew</code>. Assigning a rider updates that row in the Errand database.
+                        </div>
+                      </div>
+                    )}
                     {advanceLinesModal && (
                       <div className="task-detail-advance-banner" role="status">
                         <div className="task-detail-advance-banner-title">Advance order</div>
@@ -1359,14 +1379,18 @@ export default function TaskDetailsModal({
                 {(String(task.status || '').toLowerCase() === 'unassigned') && (
                   <>
                     <button type="button" className="btn btn-primary" onClick={openAssignModal} disabled={actionLoading}>Assign driver</button>
-                    <button type="button" className="btn" onClick={handleAssignToAll} disabled={actionLoading}>Assign to all drivers</button>
-                    <button type="button" className="btn" onClick={handleRetryAutoAssign} disabled={actionLoading}>Retry auto-assign</button>
+                    {!isErrandTask && (
+                      <>
+                        <button type="button" className="btn" onClick={handleAssignToAll} disabled={actionLoading}>Assign to all drivers</button>
+                        <button type="button" className="btn" onClick={handleRetryAutoAssign} disabled={actionLoading}>Retry auto-assign</button>
+                      </>
+                    )}
                   </>
                 )}
-                {!changeStatusOpen && !editOpen && !assignOpen && (
+                {!isErrandTask && !changeStatusOpen && !editOpen && !assignOpen && (
                   <button type="button" className="btn" onClick={openEdit} disabled={actionLoading}>Edit</button>
                 )}
-                {!changeStatusOpen && !editOpen && !assignOpen && (
+                {!isErrandTask && !changeStatusOpen && !editOpen && !assignOpen && (
                   <button type="button" className="btn" onClick={openChangeStatus} disabled={actionLoading}>Change status</button>
                 )}
                 {directionsMapSettings && (
@@ -1377,7 +1401,9 @@ export default function TaskDetailsModal({
                 {directionsUrl && (
                   <a href={directionsUrl} target="_blank" rel="noopener noreferrer" className="btn">Open in Google Maps</a>
                 )}
-                <button type="button" className="btn" onClick={openDeleteConfirm} disabled={actionLoading}>Delete task</button>
+                {!isErrandTask && (
+                  <button type="button" className="btn" onClick={openDeleteConfirm} disabled={actionLoading}>Delete task</button>
+                )}
                 <button type="button" className="btn" onClick={handleClose}>Close</button>
               </div>
             </>
@@ -1397,7 +1423,10 @@ export default function TaskDetailsModal({
             onClick={(e) => e.stopPropagation()}
           >
             <div className="modal-header">
-              <h3 id="task-assign-modal-title">Task ID : {task?.task_id ?? taskId ?? '…'}</h3>
+              <h3 id="task-assign-modal-title">
+                {isErrandTask ? 'Errand order' : 'Task ID'} :{' '}
+                {isErrandTask && task?.st_order_id != null ? task.st_order_id : task?.task_id ?? taskId ?? '…'}
+              </h3>
               <button
                 type="button"
                 className="task-detail-edit-modal-close"

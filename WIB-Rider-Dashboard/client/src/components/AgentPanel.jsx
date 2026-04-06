@@ -439,7 +439,7 @@ const AgentPanel = forwardRef(function AgentPanel(
   }, [queueAssignSubmitting]);
 
   const submitQueueAssign = useCallback(
-    async (taskId) => {
+    async (task) => {
       if (!queueAssignDriver || queueAssignSubmitting) return;
       const driver_id = Number(queueAssignDriver.driver_id);
       if (!Number.isFinite(driver_id)) return;
@@ -449,7 +449,16 @@ const AgentPanel = forwardRef(function AgentPanel(
       setQueueAssignSubmitting(true);
       setQueueAssignError(null);
       try {
-        await api(`tasks/${taskId}/assign`, {
+        const taskId = typeof task === 'object' && task != null ? task.task_id : task;
+        const errandOid =
+          typeof task === 'object' && task != null && task.task_source === 'errand' && task.st_order_id != null
+            ? Number(task.st_order_id)
+            : Number(taskId) < 0
+              ? Math.abs(Number(taskId))
+              : null;
+        const assignPath =
+          errandOid != null ? `errand-orders/${errandOid}/assign` : `tasks/${taskId}/assign`;
+        await api(assignPath, {
           method: 'PUT',
           body: JSON.stringify({ driver_id, team_id }),
         });
@@ -1130,7 +1139,7 @@ const AgentPanel = forwardRef(function AgentPanel(
                           type="button"
                           className="btn btn-sm btn-primary driver-queue-assign-pick"
                           disabled={queueAssignSubmitting}
-                          onClick={() => submitQueueAssign(t.task_id)}
+                          onClick={() => submitQueueAssign(t)}
                         >
                           Assign
                         </button>

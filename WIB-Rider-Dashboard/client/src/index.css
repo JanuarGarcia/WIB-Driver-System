@@ -3998,6 +3998,18 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
 }
 .task-card-v2-order-label { font-size: 0.7rem; font-weight: 500; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em; }
 .task-card-v2-order-num { font-size: 1rem; font-weight: 700; color: var(--color-primary); line-height: 1.2; }
+.task-card-v2-errand-badge {
+  margin-left: 0.35rem;
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 0.12rem 0.4rem;
+  border-radius: 4px;
+  background: rgba(124, 58, 237, 0.15);
+  color: #6d28d9;
+  vertical-align: middle;
+}
 .task-card-v2-merchant-row {
   display: flex;
   align-items: center;

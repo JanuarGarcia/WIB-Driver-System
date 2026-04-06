@@ -6,7 +6,8 @@ const fs = require('fs');
 const multer = require('multer');
 const { v4: uuidv4 } = require('uuid');
 const bcrypt = require('bcryptjs');
-const { pool } = require('../config/db');
+const { pool, errandWibPool } = require('../config/db');
+const { mapStOrderRowToTaskListRow, buildErrandTaskDetailPayload } = require('../lib/errandOrders');
 const { success, error } = require('../lib/response');
 const { sendPushToDriver, sendPushToAllDrivers, resetFirebase, initFirebase } = require('../services/fcm');
 const { fetchTaskProofPhotosWithUrls } = require('../lib/taskProof');
@@ -2034,6 +2035,46 @@ router.get('/tasks', async (req, res) => {
       else delete out.advance_order_note;
       return out;
     });
+
+    const includeErrand = req.query.include_errand !== '0';
+    if (includeErrand && date) {
+      try {
+        const [eRows] = await errandWibPool.query(
+          `SELECT * FROM st_ordernew
+           WHERE DATE(COALESCE(delivery_date, created_at, date_created)) = ?
+           ORDER BY order_id DESC
+           LIMIT 500`,
+          [date]
+        );
+        const list = eRows || [];
+        const driverIds = [
+          ...new Set(
+            list.map((r) => r.driver_id).filter((id) => id != null && String(id).trim() !== '')
+          ),
+        ].map((id) => parseInt(String(id), 10)).filter((n) => Number.isFinite(n));
+        const driverNameById = new Map();
+        if (driverIds.length) {
+          const ph = driverIds.map(() => '?').join(',');
+          const [drows] = await pool.query(
+            `SELECT driver_id, CONCAT(COALESCE(first_name,''), ' ', COALESCE(last_name,'')) AS full_name
+             FROM mt_driver WHERE driver_id IN (${ph})`,
+            driverIds
+          );
+          for (const d of drows || []) {
+            driverNameById.set(String(d.driver_id), String(d.full_name || '').trim() || null);
+          }
+        }
+        const errandMapped = list.map((r) => mapStOrderRowToTaskListRow(r, driverNameById));
+        rows = [...rows, ...errandMapped].sort((a, b) => {
+          const ta = a.date_created ? new Date(a.date_created).getTime() : 0;
+          const tb = b.date_created ? new Date(b.date_created).getTime() : 0;
+          return tb - ta;
+        });
+      } catch (e) {
+        if (e.code !== 'ER_NO_SUCH_TABLE' && e.code !== 'ER_BAD_FIELD_ERROR') throw e;
+      }
+    }
+
     return res.json(rows);
   } catch (e) {
     if (e.code === 'ER_NO_SUCH_TABLE' || e.code === 'ER_BAD_FIELD_ERROR') {
@@ -2121,6 +2162,92 @@ router.put('/tasks/:id/assign', express.json(), async (req, res) => {
   } catch (e) {
     if (e.code === 'ER_NO_SUCH_TABLE' || e.code === 'ER_BAD_FIELD_ERROR') {
       return res.status(503).json({ error: 'Tasks table unavailable. Please ensure mt_driver_task exists.' });
+    }
+    throw e;
+  }
+});
+
+// ---- Errand DB (wheninba_ErrandWib.st_ordernew): detail + assign (driver IDs match mt_driver on primary DB) ----
+router.get('/errand-orders/:orderId', async (req, res) => {
+  const orderId = parseInt(req.params.orderId, 10);
+  if (!Number.isFinite(orderId)) return res.status(400).json({ error: 'Invalid order id' });
+  try {
+    const [[row]] = await errandWibPool.query('SELECT * FROM st_ordernew WHERE order_id = ? LIMIT 1', [orderId]);
+    if (!row) return res.status(404).json({ error: 'Errand order not found' });
+    let driverName = null;
+    if (row.driver_id != null && String(row.driver_id).trim() !== '') {
+      const did = parseInt(String(row.driver_id), 10);
+      if (Number.isFinite(did)) {
+        const [[d]] = await pool.query(
+          `SELECT CONCAT(COALESCE(first_name,''), ' ', COALESCE(last_name,'')) AS full_name FROM mt_driver WHERE driver_id = ? LIMIT 1`,
+          [did]
+        );
+        driverName = d?.full_name != null ? String(d.full_name).trim() : null;
+      }
+    }
+    return res.json(buildErrandTaskDetailPayload(row, driverName));
+  } catch (e) {
+    if (e.code === 'ER_NO_SUCH_TABLE') {
+      return res.status(404).json({ error: 'Errand orders table not found' });
+    }
+    throw e;
+  }
+});
+
+router.put('/errand-orders/:orderId/assign', express.json(), async (req, res) => {
+  const orderId = parseInt(req.params.orderId, 10);
+  const driverId = parseInt(req.body?.driver_id, 10);
+  if (!Number.isFinite(orderId)) return res.status(400).json({ error: 'Invalid order id' });
+  if (!Number.isFinite(driverId)) return res.status(400).json({ error: 'driver_id required' });
+  try {
+    let result;
+    try {
+      [result] = await errandWibPool.query(
+        `UPDATE st_ordernew SET driver_id = ?, delivery_status = 'assigned', assigned_at = NOW(), date_modified = NOW() WHERE order_id = ?`,
+        [driverId, orderId]
+      );
+    } catch (e) {
+      if (e.code === 'ER_BAD_FIELD_ERROR') {
+        [result] = await errandWibPool.query(
+          `UPDATE st_ordernew SET driver_id = ?, delivery_status = 'assigned', date_modified = NOW() WHERE order_id = ?`,
+          [driverId, orderId]
+        );
+      } else {
+        throw e;
+      }
+    }
+    if (!result.affectedRows) return res.status(404).json({ error: 'Errand order not found' });
+    try {
+      await pool.query(
+        `UPDATE mt_driver_queue SET left_at = NOW(), status = ? WHERE driver_id = ? AND left_at IS NULL`,
+        ['left', driverId]
+      );
+    } catch (_) {}
+    try {
+      const [[er]] = await errandWibPool.query(
+        'SELECT order_reference, order_uuid FROM st_ordernew WHERE order_id = ? LIMIT 1',
+        [orderId]
+      );
+      const msg =
+        er?.order_reference != null && String(er.order_reference).trim()
+          ? `Errand ${String(er.order_reference).trim()}`
+          : `Errand order #${orderId}`;
+      await sendPushToDriver(driverId, 'Errand order assigned', msg, {
+        order_id: String(orderId),
+        type: 'errand_order_assigned',
+      });
+    } catch (_) {}
+    return res.json({ ok: true });
+  } catch (e) {
+    if (e.code === 'ER_BAD_FIELD_ERROR') {
+      return res.status(400).json({
+        error:
+          e.message ||
+          'UPDATE failed — check st_ordernew columns (driver_id, delivery_status, assigned_at, date_modified).',
+      });
+    }
+    if (e.code === 'ER_NO_SUCH_TABLE') {
+      return res.status(503).json({ error: 'Errand orders table not found' });
     }
     throw e;
   }
