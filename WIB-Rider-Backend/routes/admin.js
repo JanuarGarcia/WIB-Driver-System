@@ -10,6 +10,8 @@ const { pool, errandWibPool } = require('../config/db');
 const {
   mapStOrderRowToTaskListRow,
   buildErrandTaskDetailPayload,
+  fetchErrandOrderLineItems,
+  fetchErrandOrderHistory,
   fetchErrandMerchantsByIds,
   fetchErrandClientsByIds,
   fetchErrandClientAddressesByClientIds,
@@ -2251,8 +2253,21 @@ router.get('/errand-orders/:orderId', async (req, res) => {
     } catch (_) {
       latestHistoryStatus = null;
     }
+    const [orderDetails, orderHistoryRows] = await Promise.all([
+      fetchErrandOrderLineItems(errandWibPool, orderId),
+      fetchErrandOrderHistory(errandWibPool, orderId),
+    ]);
     return res.json(
-      buildErrandTaskDetailPayload(row, driverName, merchantRow, clientRow, clientAddressRow, latestHistoryStatus)
+      buildErrandTaskDetailPayload(
+        row,
+        driverName,
+        merchantRow,
+        clientRow,
+        clientAddressRow,
+        latestHistoryStatus,
+        orderDetails,
+        orderHistoryRows
+      )
     );
   } catch (e) {
     if (e.code === 'ER_NO_SUCH_TABLE') {

@@ -8,6 +8,8 @@ const { validateApiKey, resolveDriver } = require('../middleware/auth');
 const {
   mapStOrderRowToTaskListRow,
   buildErrandTaskDetailPayload,
+  fetchErrandOrderLineItems,
+  fetchErrandOrderHistory,
   fetchErrandMerchantsByIds,
   fetchErrandClientsByIds,
   fetchErrandClientAddressesByClientIds,
@@ -168,7 +170,20 @@ async function buildDetailPayloadForOrder(orderId) {
   } catch (_) {
     latestHistoryStatus = null;
   }
-  const payload = buildErrandTaskDetailPayload(row, driverName, merchantRow, clientRow, clientAddressRow, latestHistoryStatus);
+  const [orderDetails, orderHistoryRows] = await Promise.all([
+    fetchErrandOrderLineItems(errandWibPool, orderId),
+    fetchErrandOrderHistory(errandWibPool, orderId),
+  ]);
+  const payload = buildErrandTaskDetailPayload(
+    row,
+    driverName,
+    merchantRow,
+    clientRow,
+    clientAddressRow,
+    latestHistoryStatus,
+    orderDetails,
+    orderHistoryRows
+  );
   const proofs = await fetchErrandProofsForOrder(errandWibPool, orderId);
   const taskPhotos = proofs.map((p) => ({
     id: p.id,

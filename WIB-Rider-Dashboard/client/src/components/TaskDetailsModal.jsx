@@ -89,11 +89,20 @@ const TIMELINE_MAP_LINK_STATUSES = new Set([
   'cancelled',
   'canceled',
   'verification',
+  /* Errand / st_ordernew_history labels (spaces stripped by normalizeTimelineStatusKey) */
+  'preparing',
+  'readypickup',
+  'deliveryonitsway',
+  'arrivedat',
+  'advanceorder',
 ]);
 
 function timelineEntryShowsMapLink(entry) {
   if (!entry || entry.type === 'legacy') return false;
   if (entry.type === 'photo') return true;
+  const elat = entry.latitude != null ? Number(entry.latitude) : NaN;
+  const elng = entry.longitude != null ? Number(entry.longitude) : NaN;
+  if (Number.isFinite(elat) && Number.isFinite(elng)) return true;
   const key = normalizeTimelineStatusKey(entry.status || entry.description);
   if (!key) return false;
   return TIMELINE_MAP_LINK_STATUSES.has(key);
@@ -104,6 +113,15 @@ function getTaskMapCoords(task) {
   const lng = task?.task_lng != null ? Number(task.task_lng) : NaN;
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
   return { lat, lng };
+}
+
+function getTimelineEntryMapCoords(task, entry) {
+  if (entry && typeof entry === 'object') {
+    const elat = entry.latitude != null ? Number(entry.latitude) : NaN;
+    const elng = entry.longitude != null ? Number(entry.longitude) : NaN;
+    if (Number.isFinite(elat) && Number.isFinite(elng)) return { lat: elat, lng: elng };
+  }
+  return getTaskMapCoords(task);
 }
 
 function timelineHistoryBadgeLabel(entry) {
@@ -123,7 +141,7 @@ function timelineHistoryPrimaryText(entry) {
 }
 
 function ActivityTimelineMetaCol({ task, entry, dateCreated, onOpenLocation }) {
-  const coords = getTaskMapCoords(task);
+  const coords = getTimelineEntryMapCoords(task, entry);
   const showMap = timelineEntryShowsMapLink(entry) && coords && typeof onOpenLocation === 'function';
   return (
     <div className="activity-timeline-meta-col">
@@ -874,6 +892,9 @@ export default function TaskDetailsModal({
       update_by_type: row.update_by_type,
       driver_id: row.driver_id,
       notes: row.notes,
+      latitude: row.latitude,
+      longitude: row.longitude,
+      ip_address: row.ip_address,
     }));
   const photoEntries = (() => {
     if (!taskPhotos.length && !proofImages.length) return [];

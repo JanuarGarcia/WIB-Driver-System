@@ -505,13 +505,203 @@ function mapStOrderRowToTaskListRow(
 }
 
 /**
+ * Map joined `st_ordernew_item` + `st_item` row into `order_details` shape (TaskDetailsModal ordered items).
+ * @param {Record<string, unknown>} row
+ */
+function mapErrandOrderLineToOrderDetail(row) {
+  const qty = row.qty != null ? Number(row.qty) : 0;
+  let unit = row.price != null ? Number(row.price) : null;
+  if (unit != null && Number.isNaN(unit)) unit = null;
+  const name =
+    row.item_name != null && String(row.item_name).trim() !== ''
+      ? String(row.item_name).trim()
+      : row.item_id != null
+        ? `Item #${row.item_id}`
+        : 'Item';
+  const notes =
+    row.special_instructions != null && String(row.special_instructions).trim() !== ''
+      ? String(row.special_instructions).trim()
+      : null;
+  return {
+    id: row.line_id,
+    item_id: row.item_id,
+    qty,
+    item_name: name,
+    item_name_display: name,
+    normal_price: unit,
+    discounted_price: unit,
+    order_notes: notes,
+    item_source: 'errand',
+    photo: row.photo != null ? String(row.photo).trim() : null,
+    path: row.path != null ? String(row.path).trim() : null,
+  };
+}
+
+/**
+ * Load line items for an errand order (`st_ordernew_item` JOIN `st_item`).
+ * @param {import('mysql2/promise').Pool} errandPool
+ * @param {number} orderId
+ * @returns {Promise<Record<string, unknown>[]>}
+ */
+async function fetchErrandOrderLineItems(errandPool, orderId) {
+  const mapRows = (rows) => (rows || []).map(mapErrandOrderLineToOrderDetail);
+  try {
+    const [rows] = await errandPool.query(
+      `SELECT oi.id AS line_id, oi.order_id, oi.item_id, oi.qty, oi.price, oi.discount, oi.discount_type,
+              oi.special_instructions, oi.item_size_id, oi.cat_id,
+              i.item_name, i.photo, i.path, i.item_description, i.item_short_description
+       FROM st_ordernew_item oi
+       LEFT JOIN st_item i ON i.item_id = oi.item_id
+       WHERE oi.order_id = ? AND oi.voided_at IS NULL
+       ORDER BY oi.id ASC`,
+      [orderId]
+    );
+    return mapRows(rows);
+  } catch (e) {
+    if (e.code === 'ER_NO_SUCH_TABLE') return [];
+    if (e.code === 'ER_BAD_FIELD_ERROR') {
+      try {
+        const [rows2] = await errandPool.query(
+          `SELECT oi.id AS line_id, oi.order_id, oi.item_id, oi.qty, oi.price, oi.special_instructions,
+                  i.item_name, i.photo, i.path
+           FROM st_ordernew_item oi
+           LEFT JOIN st_item i ON i.item_id = oi.item_id
+           WHERE oi.order_id = ?
+           ORDER BY oi.id ASC`,
+          [orderId]
+        );
+        return mapRows(rows2);
+      } catch (e2) {
+        if (e2.code === 'ER_NO_SUCH_TABLE') return [];
+        throw e2;
+      }
+    }
+    throw e;
+  }
+}
+
+/**
+ * Replace `{{placeholders}}` in `remarks` using JSON from `ramarks_trans` / `remarks_trans`.
+ * @param {unknown} remarks
+ * @param {unknown} transRaw
+ */
+function resolveErrandHistoryRemarks(remarks, transRaw) {
+  let t = remarks != null ? String(remarks) : '';
+  if (!t.trim()) return '';
+  let map = /** @type {Record<string, string>} */ ({});
+  if (transRaw != null && String(transRaw).trim() !== '') {
+    try {
+      const parsed = JSON.parse(String(transRaw));
+      if (parsed && typeof parsed === 'object') map = /** @type {Record<string, string>} */ (parsed);
+    } catch (_) {
+      /* keep t */
+    }
+  }
+  if (map && typeof map === 'object') {
+    for (const [k, v] of Object.entries(map)) {
+      if (k) t = t.split(k).join(v != null ? String(v) : '');
+    }
+  }
+  return t.trim();
+}
+
+/**
+ * One `st_ordernew_history` row → `order_history` entry for the dashboard timeline.
+ * @param {Record<string, unknown>} row
+ */
+function mapErrandHistoryRowForTimeline(row) {
+  const trans = row.ramarks_trans ?? row.remarks_trans;
+  const resolved = resolveErrandHistoryRemarks(row.remarks, trans);
+  const lat = row.latitude != null ? parseFloat(String(row.latitude)) : NaN;
+  const lng = row.longitude != null ? parseFloat(String(row.longitude)) : NaN;
+  return {
+    id: row.id,
+    order_id: row.order_id,
+    status: row.status != null ? String(row.status).trim() : '',
+    remarks: resolved || null,
+    date_created: row.created_at ?? row.date_created ?? null,
+    update_by_name: row.change_by != null ? String(row.change_by).trim() : null,
+    update_by_type: row.change_by != null ? String(row.change_by).trim() : null,
+    latitude: Number.isFinite(lat) ? lat : null,
+    longitude: Number.isFinite(lng) ? lng : null,
+    ip_address: row.ip_address != null ? String(row.ip_address).trim() : null,
+    errand_history: true,
+  };
+}
+
+/**
+ * Activity timeline rows from `st_ordernew_history` (ErrandWib).
+ * @param {import('mysql2/promise').Pool} errandPool
+ * @param {number} orderId
+ */
+async function fetchErrandOrderHistory(errandPool, orderId) {
+  const mapRows = (rows) => (rows || []).map(mapErrandHistoryRowForTimeline);
+  try {
+    const [rows] = await errandPool.query(
+      `SELECT id, order_id, status, remarks, ramarks_trans, change_by, latitude, longitude, ip_address, created_at
+       FROM st_ordernew_history
+       WHERE order_id = ?
+       ORDER BY id ASC`,
+      [orderId]
+    );
+    return mapRows(rows);
+  } catch (e) {
+    if (e.code === 'ER_NO_SUCH_TABLE') return [];
+    if (e.code === 'ER_BAD_FIELD_ERROR') {
+      try {
+        const [rows2] = await errandPool.query(
+          `SELECT id, order_id, status, remarks, remarks_trans, change_by, latitude, longitude, ip_address, created_at
+           FROM st_ordernew_history
+           WHERE order_id = ?
+           ORDER BY id ASC`,
+          [orderId]
+        );
+        return (rows2 || []).map((r) => mapErrandHistoryRowForTimeline({ ...r, ramarks_trans: r.remarks_trans }));
+      } catch (e2) {
+        if (e2.code === 'ER_BAD_FIELD_ERROR') {
+          try {
+            const [rows3] = await errandPool.query(
+              `SELECT id, order_id, status, remarks, change_by, created_at
+               FROM st_ordernew_history
+               WHERE order_id = ?
+               ORDER BY id ASC`,
+              [orderId]
+            );
+            return (rows3 || []).map((r) =>
+              mapErrandHistoryRowForTimeline({ ...r, ramarks_trans: null, latitude: null, longitude: null, ip_address: null })
+            );
+          } catch (e3) {
+            if (e3.code === 'ER_NO_SUCH_TABLE') return [];
+            throw e3;
+          }
+        }
+        if (e2.code === 'ER_NO_SUCH_TABLE') return [];
+        throw e2;
+      }
+    }
+    throw e;
+  }
+}
+
+/**
  * Build GET /errand-orders/:id detail payload (mirrors task modal shape partially).
  * @param {Record<string, unknown>|null} merchantRow - st_merchant row or null
  * @param {Record<string, unknown>|null} clientRow - st_client row or null
  * @param {Record<string, unknown>|null} [clientAddressRow] - chosen st_client_address row or null
  * @param {string|null} [latestHistoryStatus] - latest st_ordernew_history.status for this order
+ * @param {Record<string, unknown>[]} [orderDetails] - from fetchErrandOrderLineItems
+ * @param {Record<string, unknown>[]} [orderHistoryRows] - from fetchErrandOrderHistory (activity timeline)
  */
-function buildErrandTaskDetailPayload(row, driverName, merchantRow, clientRow, clientAddressRow, latestHistoryStatus) {
+function buildErrandTaskDetailPayload(
+  row,
+  driverName,
+  merchantRow,
+  clientRow,
+  clientAddressRow,
+  latestHistoryStatus,
+  orderDetails = [],
+  orderHistoryRows = []
+) {
   const oid = row.order_id != null ? Number(row.order_id) : NaN;
   const safeId = Number.isFinite(oid) ? oid : 0;
   const driverId = row.driver_id != null ? parseInt(String(row.driver_id), 10) : null;
@@ -639,10 +829,10 @@ function buildErrandTaskDetailPayload(row, driverName, merchantRow, clientRow, c
     task,
     order,
     merchant,
-    order_details: [],
+    order_details: Array.isArray(orderDetails) ? orderDetails : [],
     task_photos: [],
     proof_images: [],
-    order_history: [],
+    order_history: Array.isArray(orderHistoryRows) ? orderHistoryRows : [],
     errand_order: row,
     client: cl
       ? {
@@ -677,6 +867,8 @@ function buildErrandTaskDetailPayload(row, driverName, merchantRow, clientRow, c
 module.exports = {
   mapStOrderRowToTaskListRow,
   buildErrandTaskDetailPayload,
+  fetchErrandOrderLineItems,
+  fetchErrandOrderHistory,
   mapDeliveryToTaskStatus,
   mapErrandHistoryStatusToTaskStatus,
   fetchErrandMerchantsByIds,
