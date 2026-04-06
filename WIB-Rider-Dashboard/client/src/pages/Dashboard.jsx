@@ -22,7 +22,7 @@ const MAP_CHUNK_FALLBACK_STYLE = {
 import AgentPanel from '../components/AgentPanel';
 import { useMapMerchantFilterSelection } from '../components/MapMerchantFilter';
 import { hydrateMapMerchantFilterFromServer } from '../utils/mapMerchantFilterPrefs';
-import { api } from '../api';
+import { api, centralUnifiedOverview } from '../api';
 
 const MOBILE_DASHBOARD_MQ = '(max-width: 768px)';
 import { useTeamFilter } from '../context/TeamFilterContext';
@@ -108,6 +108,9 @@ export default function Dashboard() {
   const [rawMapTasks, setRawMapTasks] = useState([]);
   /** null = agent roster still loading (map shows all rider GPS pins); then filtered to Active panel roster. */
   const [activePanelDriverIdSet, setActivePanelDriverIdSet] = useState(null);
+  /** Centralized backend: default + MercifulGod + ErrandWib pools (read-only health). */
+  const [centralOverview, setCentralOverview] = useState(null);
+  const [centralOverviewErr, setCentralOverviewErr] = useState(null);
 
   const handleFocusRiderOnMap = useCallback(
     (driver) => {
@@ -340,6 +343,27 @@ export default function Dashboard() {
     };
   }, [mobileSection]);
 
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const data = await centralUnifiedOverview();
+        if (!cancelled) {
+          setCentralOverview(data);
+          setCentralOverviewErr(null);
+        }
+      } catch (e) {
+        if (!cancelled) {
+          setCentralOverview(null);
+          setCentralOverviewErr(e?.error || e?.message || 'Could not load central DB status');
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   return (
     <>
     <div className="dashboard-layout" data-mobile-section={mobileSection}>
@@ -372,6 +396,50 @@ export default function Dashboard() {
           Agents
         </button>
       </nav>
+      <details
+        className="dashboard-central-db"
+        style={{
+          margin: '0 0 8px',
+          padding: '8px 12px',
+          fontSize: '0.8125rem',
+          border: '1px solid var(--border-subtle, #ddd)',
+          borderRadius: 8,
+          background: 'var(--panel-bg, #fafafa)',
+        }}
+      >
+        <summary style={{ cursor: 'pointer', fontWeight: 600 }}>Central database status</summary>
+        <p style={{ margin: '8px 0 0', color: 'var(--text-muted, #666)' }}>
+          One backend, multiple MySQL schemas. This panel loads{' '}
+          <code style={{ fontSize: '0.75rem' }}>/admin/api/central/unified-overview</code> (merged in Node).
+        </p>
+        {centralOverviewErr && (
+          <p style={{ margin: '8px 0 0', color: '#b33' }} role="alert">
+            {centralOverviewErr}
+          </p>
+        )}
+        {centralOverview && !centralOverviewErr && (
+          <ul style={{ margin: '8px 0 0', paddingLeft: 18, lineHeight: 1.5 }}>
+            <li>
+              <strong>Primary (existing app / DB_NAME)</strong>:{' '}
+              {centralOverview.defaultPool?.ok
+                ? `${centralOverview.defaultPool.current_database ?? '—'} · ${centralOverview.defaultPool.table_count ?? '—'} tables`
+                : centralOverview.defaultPool?.error || 'unavailable'}
+            </li>
+            <li>
+              <strong>MercifulGod</strong> ({centralOverview.databaseNames?.mercifulGod ?? '—'}):{' '}
+              {centralOverview.mercifulGod?.ok
+                ? `${centralOverview.mercifulGod.current_database ?? '—'} · ${centralOverview.mercifulGod.table_count ?? '—'} tables`
+                : centralOverview.mercifulGod?.error || 'unavailable'}
+            </li>
+            <li>
+              <strong>ErrandWib</strong> ({centralOverview.databaseNames?.errandWib ?? '—'}):{' '}
+              {centralOverview.errandWib?.ok
+                ? `${centralOverview.errandWib.current_database ?? '—'} · ${centralOverview.errandWib.table_count ?? '—'} tables`
+                : centralOverview.errandWib?.error || 'unavailable'}
+            </li>
+          </ul>
+        )}
+      </details>
       <div className="dashboard-layout-panel dashboard-layout-tasks">
         <TaskPanel
           onOpenTaskDetails={handleOpenTaskDetailsFromPanel}

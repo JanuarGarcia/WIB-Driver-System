@@ -154,3 +154,18 @@ export function statusLabel(s) {
 export function statusDisplayClass(s) {
   return statusClass(s);
 }
+
+/** Centralized backend: MercifulGod pool only (admin session required). */
+export function centralMercifulGodPing() {
+  return api('central/merciful-god/ping');
+}
+
+/** Centralized backend: ErrandWib pool only. */
+export function centralErrandWibPing() {
+  return api('central/errand-wib/ping');
+}
+
+/** Combined snapshot (default pool + both named databases). */
+export function centralUnifiedOverview() {
+  return api('central/unified-overview');
+}

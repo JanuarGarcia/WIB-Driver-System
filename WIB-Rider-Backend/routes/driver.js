@@ -9,6 +9,7 @@ const fs = require('fs');
 const { pool } = require('../config/db');
 const { success, error } = require('../lib/response');
 const { validateApiKey, resolveDriver, optionalDriver } = require('../middleware/auth');
+const { fetchTaskProofPhotosWithUrls, buildTaskProofImageUrl } = require('../lib/taskProof');
 
 const uploadDir = path.join(__dirname, '..', 'uploads', 'profiles');
 if (!fs.existsSync(uploadDir)) {
@@ -26,6 +27,37 @@ const upload = multer({
     }
   },
 });
+
+const taskProofDir = path.join(__dirname, '..', 'uploads', 'task');
+if (!fs.existsSync(taskProofDir)) {
+  fs.mkdirSync(taskProofDir, { recursive: true });
+}
+const taskProofUpload = multer({
+  dest: taskProofDir,
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const ext = (file.originalname || '').toLowerCase();
+    if (['.jpg', '.jpeg', '.png', '.gif'].some((e) => ext.endsWith(e))) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only images allowed'));
+    }
+  },
+});
+
+/** Remove multer temp file when auth middleware responds with code 2 (invalid key/token). */
+function cleanupUploadOnAuthError(req, res, next) {
+  const orig = res.json.bind(res);
+  res.json = (body) => {
+    if (req.file?.path && body && body.code === 2) {
+      try {
+        fs.unlinkSync(req.file.path);
+      } catch (_) {}
+    }
+    return orig(body);
+  };
+  next();
+}
 
 const BASE_URL = process.env.BASE_URL || 'http://localhost:3000';
 
@@ -428,6 +460,16 @@ async function enrichRiderTaskDetails(pool, taskRow) {
 
   attachScheduleLinesAndAliases(details, orderRow, rawLines);
 
+  const tid = details.task_id != null ? parseInt(String(details.task_id), 10) : 0;
+  if (Number.isFinite(tid) && tid > 0) {
+    const { task_photos, proof_images } = await fetchTaskProofPhotosWithUrls(pool, tid);
+    details.task_photos = task_photos;
+    details.proof_images = proof_images;
+  } else {
+    details.task_photos = [];
+    details.proof_images = [];
+  }
+
   return details;
 }
 
@@ -507,6 +549,37 @@ async function getDriverSettingsMap() {
   }
 }
 
+/** Optional COD / payment fields when completing a task (mt_order). */
+async function updateOrderPaymentFields(orderId, payment_type, payment_status) {
+  if (!orderId || orderId <= 0) return;
+  const pt = payment_type != null && String(payment_type).trim() !== '' ? String(payment_type).trim() : null;
+  const ps = payment_status != null && String(payment_status).trim() !== '' ? String(payment_status).trim() : null;
+  if (pt == null && ps == null) return;
+  const pieces = [];
+  const vals = [];
+  if (pt != null) {
+    pieces.push('payment_type = ?');
+    vals.push(pt);
+  }
+  if (ps != null) {
+    pieces.push('payment_status = ?');
+    vals.push(ps);
+  }
+  if (!pieces.length) return;
+  vals.push(orderId);
+  try {
+    await pool.query(`UPDATE mt_order SET ${pieces.join(', ')} WHERE order_id = ?`, vals);
+  } catch (e) {
+    if (e.code === 'ER_BAD_FIELD_ERROR' && /payment_status/i.test(String(e.sqlMessage || ''))) {
+      if (pt != null) {
+        await pool.query('UPDATE mt_order SET payment_type = ? WHERE order_id = ?', [pt, orderId]);
+      }
+    } else if (e.code !== 'ER_BAD_FIELD_ERROR') {
+      throw e;
+    }
+  }
+}
+
 router.post('/GetAppSettings', validateApiKey, optionalDriver, async (req, res) => {
   const settings = await getDriverSettingsMap();
   const driver = req.driver;
@@ -518,6 +591,7 @@ router.post('/GetAppSettings', validateApiKey, optionalDriver, async (req, res) 
   const details = {
     app_language: settings.app_default_language || 'en',
     app_name: appName,
+    allow_task_successful_when: settings.allow_task_successful_when || 'picture_proof',
     mobile_api_url: mobileApiUrl,
     valid_token: !!driver,
     todays_date: todayStr(),
@@ -734,10 +808,40 @@ router.post('/GetTaskDetails', validateApiKey, resolveDriver, async (req, res) =
 });
 
 router.post('/ChangeTaskStatus', validateApiKey, resolveDriver, async (req, res) => {
-  const { task_id, status_raw, reason } = req.body;
+  const { task_id, status_raw, reason, payment_type, payment_status } = req.body;
   const tid = parseInt(task_id, 10);
   if (!tid) return error(res, 'task_id required');
   const status = (status_raw || 'completed').toString().toLowerCase();
+
+  const [[task]] = await pool.query(
+    'SELECT task_id, order_id, driver_id FROM mt_driver_task WHERE task_id = ? LIMIT 1',
+    [tid]
+  );
+  if (!task || task.driver_id !== req.driver.id) {
+    return error(res, 'Task not found or not assigned to you');
+  }
+
+  const settings = await getDriverSettingsMap();
+  const policy = settings.allow_task_successful_when || 'picture_proof';
+  const requiresProof = policy === 'picture_proof' && (status === 'successful' || status === 'delivered');
+  if (requiresProof) {
+    try {
+      const [[row]] = await pool.query(
+        'SELECT COUNT(*) AS c FROM mt_driver_task_photo WHERE task_id = ?',
+        [tid]
+      );
+      const cnt = Number(row?.c ?? 0);
+      if (!cnt) {
+        return error(res, 'Picture proof of delivery is required before marking this task successful');
+      }
+    } catch (e) {
+      if (e.code === 'ER_NO_SUCH_TABLE') {
+        return error(res, 'Picture proof of delivery is required before marking this task successful');
+      }
+      throw e;
+    }
+  }
+
   const [updateResult] = await pool.query(
     'UPDATE mt_driver_task SET status = ?, date_modified = NOW() WHERE task_id = ? AND driver_id = ?',
     [status, tid, req.driver.id]
@@ -745,8 +849,17 @@ router.post('/ChangeTaskStatus', validateApiKey, resolveDriver, async (req, res)
   if (!updateResult.affectedRows) {
     return error(res, 'Task not found or not assigned to you');
   }
+
+  const oid = task.order_id != null ? parseInt(String(task.order_id), 10) : 0;
+  if (Number.isFinite(oid) && oid > 0) {
+    try {
+      await updateOrderPaymentFields(oid, payment_type, payment_status);
+    } catch (_) {
+      /* optional payment update */
+    }
+  }
+
   try {
-    const [[task]] = await pool.query('SELECT order_id FROM mt_driver_task WHERE task_id = ?', [tid]);
     const remarks = reason != null && String(reason).trim() ? String(reason).trim() : '';
     await pool.query(
       'INSERT INTO mt_order_history (order_id, task_id, status, remarks, date_created, update_by_type) VALUES (?, ?, ?, ?, NOW(), ?)',
@@ -838,6 +951,95 @@ router.post('/UploadProfilePhoto', validateApiKey, resolveDriver, upload.single(
   if (err) return error(res, err.message || 'Upload failed');
   next();
 });
+
+/**
+ * Proof of delivery: multipart field "photo", plus task_id (and api_key, token).
+ * File stored under uploads/task/; row in mt_driver_task_photo (photo_name = basename).
+ */
+router.post(
+  '/UploadTaskProof',
+  taskProofUpload.single('photo'),
+  cleanupUploadOnAuthError,
+  validateApiKey,
+  resolveDriver,
+  async (req, res) => {
+    if (!req.file) return error(res, 'No file uploaded');
+    const tid = parseInt(req.body.task_id, 10);
+    if (!tid) {
+      try {
+        fs.unlinkSync(req.file.path);
+      } catch (_) {}
+      return error(res, 'task_id required');
+    }
+    const [[task]] = await pool.query(
+      'SELECT task_id, driver_id FROM mt_driver_task WHERE task_id = ? LIMIT 1',
+      [tid]
+    );
+    if (!task || task.driver_id !== req.driver.id) {
+      try {
+        fs.unlinkSync(req.file.path);
+      } catch (_) {}
+      return error(res, 'Task not found or not assigned to you');
+    }
+    const ext = path.extname(req.file.originalname || '') || '.jpg';
+    const newName = `task_${tid}_${Date.now()}${ext}`;
+    const newPath = path.join(taskProofDir, newName);
+    fs.renameSync(req.file.path, newPath);
+    const photoName = newName;
+    const ip = req.ip || req.connection?.remoteAddress || null;
+    let insertId;
+    try {
+      const [ins] = await pool.query(
+        'INSERT INTO mt_driver_task_photo (task_id, photo_name, date_created, ip_address) VALUES (?, ?, NOW(), ?)',
+        [tid, photoName, ip]
+      );
+      insertId = ins.insertId;
+    } catch (e) {
+      if (e.code === 'ER_BAD_FIELD_ERROR') {
+        try {
+          const [ins2] = await pool.query('INSERT INTO mt_driver_task_photo (task_id, photo_name) VALUES (?, ?)', [
+            tid,
+            photoName,
+          ]);
+          insertId = ins2.insertId;
+        } catch (e2) {
+          try {
+            fs.unlinkSync(newPath);
+          } catch (_) {}
+          return error(res, e2.message || 'Failed to save proof');
+        }
+      } else if (e.code === 'ER_NO_SUCH_TABLE') {
+        try {
+          fs.unlinkSync(newPath);
+        } catch (_) {}
+        return error(res, 'Proof storage is not available');
+      } else {
+        try {
+          fs.unlinkSync(newPath);
+        } catch (_) {}
+        return error(res, e.message || 'Failed to save proof');
+      }
+    }
+    const proof_url = buildTaskProofImageUrl(photoName);
+    return success(res, {
+      id: insertId,
+      task_id: tid,
+      photo_name: photoName,
+      proof_url: proof_url || null,
+    });
+  },
+  (err, req, res, next) => {
+    if (err) {
+      if (req.file?.path) {
+        try {
+          fs.unlinkSync(req.file.path);
+        } catch (_) {}
+      }
+      return error(res, err.message || 'Upload failed');
+    }
+    next();
+  }
+);
 
 // Log map API usage to mt_driver_mapsapicall (map_provider, api_functions, api_response, date_created, date_call, ip_address)
 router.post('/LogMapApiCall', validateApiKey, optionalDriver, async (req, res) => {
