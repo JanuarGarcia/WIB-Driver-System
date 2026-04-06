@@ -42,6 +42,7 @@ export function formatDbTimeTo12h(raw) {
 
 /** True when order has a meaningful scheduled wall time (not empty / not ASAP-only). */
 export function isAdvanceOrderDisplay(input) {
+  if (!input || typeof input !== 'object') return false;
   const timeRaw = rawDeliveryTime(input);
   if (timeRaw === '') return false;
   if (/^asap$/i.test(timeRaw)) return false;
@@ -57,7 +58,14 @@ export function isAdvanceOrderDisplay(input) {
   if (m24) {
     const h = parseInt(m24[1], 10);
     const min = parseInt(m24[2], 10);
-    if (h === 0 && min === 0) return status === 'advance order';
+    if (h === 0 && min === 0) {
+      if (status === 'advance order') return true;
+      if (input.task_source === 'errand') {
+        const eh = String(input.errand_history_status || '').toLowerCase();
+        if (eh.includes('advance')) return true;
+      }
+      return false;
+    }
   }
 
   return true;

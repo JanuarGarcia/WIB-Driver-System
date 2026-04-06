@@ -368,6 +368,14 @@ function clientDisplayPhone(c) {
   return raw;
 }
 
+/** Scheduled delivery wall time from `st_ordernew` (advance / task panel + Scheduled Orders). */
+function pickErrandOrderDeliveryTime(row) {
+  if (!row || typeof row !== 'object') return null;
+  if (row.delivery_time != null && String(row.delivery_time).trim() !== '') return row.delivery_time;
+  if (row.delivery_time_end != null && String(row.delivery_time_end).trim() !== '') return row.delivery_time_end;
+  return null;
+}
+
 /**
  * @param {Record<string, unknown>} row - st_ordernew row
  * @param {Map<string, string>} driverNameById - from mt_driver (primary pool)
@@ -449,6 +457,7 @@ function mapStOrderRowToTaskListRow(
       ? `Errand ${String(row.order_reference).trim()}`
       : `Errand order #${safeId}`;
   const created = row.date_created || row.created_at || row.date_modified || null;
+  const errandDeliveryTime = pickErrandOrderDeliveryTime(row);
 
   const client = Number.isFinite(cid) && cid > 0 ? clientById?.get(String(cid)) : null;
   const customerName = clientDisplayName(client);
@@ -476,6 +485,9 @@ function mapStOrderRowToTaskListRow(
         ? String(clientAddrRow.location_name).trim()
         : null,
     delivery_date: row.delivery_date,
+    delivery_time: errandDeliveryTime,
+    order_delivery_time: errandDeliveryTime,
+    order_delivery_date: row.delivery_date,
     task_lat: taskLat,
     task_lng: taskLng,
     date_created: created,
@@ -765,6 +777,8 @@ function buildErrandTaskDetailPayload(
     }
   }
 
+  const orderDeliveryTime = pickErrandOrderDeliveryTime(row);
+
   const task = {
     task_source: 'errand',
     task_id: safeId > 0 ? -safeId : 0,
@@ -783,6 +797,9 @@ function buildErrandTaskDetailPayload(
         ? String(addr.location_name).trim()
         : null,
     delivery_date: row.delivery_date,
+    delivery_time: orderDeliveryTime,
+    order_delivery_time: orderDeliveryTime,
+    order_delivery_date: row.delivery_date,
     customer_name: custName,
     contact_number: custPhone,
     email_address: custEmail,
@@ -805,7 +822,9 @@ function buildErrandTaskDetailPayload(
     sub_total: row.sub_total,
     total_w_tax: row.total,
     delivery_date: row.delivery_date,
-    delivery_time: row.delivery_time != null ? row.delivery_time : row.delivery_time_end,
+    delivery_time: orderDeliveryTime,
+    order_delivery_time: orderDeliveryTime,
+    order_delivery_date: row.delivery_date,
     date_created: row.date_created || row.created_at,
     contact_number: custPhone,
     order_change: row.amount_due,

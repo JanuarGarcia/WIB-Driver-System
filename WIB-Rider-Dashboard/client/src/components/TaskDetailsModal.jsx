@@ -1024,7 +1024,16 @@ export default function TaskDetailsModal({
         ? formatDateOnly(order.delivery_date)
         : formatDateOnly(task?.delivery_date);
   const advanceLinesModal = order
-    ? getAdvanceOrderLines({ ...order, advance_order_note: task?.advance_order_note }, task?.date_created)
+    ? getAdvanceOrderLines(
+        {
+          ...order,
+          advance_order_note: task?.advance_order_note,
+          task_source: data?.task_source,
+          errand_history_status: task?.errand_history_status,
+          status: task?.status,
+        },
+        task?.date_created
+      )
     : null;
 
   const filteredTimeline = timeline.filter(Boolean);
