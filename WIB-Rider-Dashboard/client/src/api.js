@@ -1,11 +1,12 @@
 import { getToken } from './auth';
 
 // Prefer explicit env-configured base URL (useful for phones / other devices).
-// Fallback: dev hits Node directly; production uses /admin/api (Express mount in WIB-Rider-Backend app.js).
-// /api in prod only works if nginx rewrites /api -> /admin/api (vite dev does that; see vite.config.js).
+// Fallback: dev hits backend directly; production uses /api — the dashboard Node app (server.js) proxies
+// /api/* -> BACKEND_URL/admin/api/*. Do NOT use /admin/api in the browser on rider-dashboard.* or the
+// SPA will serve index.html for those paths (no proxy). Static-only deploys: set VITE_API_URL to full backend + /admin/api.
 const API =
   import.meta.env.VITE_API_URL ||
-  (import.meta.env.DEV ? 'http://localhost:3000/admin/api' : '/admin/api');
+  (import.meta.env.DEV ? 'http://localhost:3000/admin/api' : '/api');
 
 /** Origin where `/uploads/...` is served (matches API app in app.js). */
 export function uploadsOrigin() {

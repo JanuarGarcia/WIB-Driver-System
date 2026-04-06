@@ -226,6 +226,30 @@ app.post('/api/tasks', express.json(), async (req, res) => {
   }
 });
 
+// Proxy: POST /api/* -> BACKEND_URL/admin/api/* (send-push, teams, task actions, etc.)
+app.post('/api/*', express.json({ limit: '2mb' }), async (req, res) => {
+  setNoCache(res);
+  res.set('X-Dashboard-Proxy', '1');
+  const subPath = (req.path || '').replace(/^\/api\/?/, '') || '';
+  const url = `${BACKEND_URL}/admin/api/${subPath}`;
+  try {
+    const response = await axios.post(url, req.body !== undefined ? req.body : {}, {
+      headers: backendHeaders(req),
+      params: req.query,
+      timeout: 60000,
+    });
+    res.status(response.status || 200).json(response.data);
+  } catch (err) {
+    const status = err.response?.status || 500;
+    let data = err.response?.data;
+    if (data != null && typeof data === 'string' && data.trimStart().startsWith('<')) {
+      data = { error: 'Backend returned an error page. Check BACKEND_URL.' };
+    }
+    if (data == null || typeof data !== 'object') data = { error: err.message || 'Request failed' };
+    res.status(status).json(data);
+  }
+});
+
 // Proxy: DELETE /api/tasks/:id (task details delete — was missing; otherwise SPA/HTML broke JSON parse)
 app.delete('/api/tasks/:id', async (req, res) => {
   setNoCache(res);
