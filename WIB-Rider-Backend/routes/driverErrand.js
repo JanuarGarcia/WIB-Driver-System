@@ -181,7 +181,8 @@ async function buildDetailPayloadForOrder(orderId) {
     clientAddressRow,
     latestHistoryStatus,
     orderDetails,
-    orderHistoryRows
+    orderHistoryRows,
+    { forRiderApp: true }
   );
   const proofs = await fetchErrandProofsForOrder(errandWibPool, orderId);
   const taskPhotos = proofs.map((p) => ({

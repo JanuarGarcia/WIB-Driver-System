@@ -10,6 +10,7 @@ const { pool } = require('../config/db');
 const { success, error } = require('../lib/response');
 const { validateApiKey, resolveDriver, optionalDriver } = require('../middleware/auth');
 const { fetchTaskProofPhotosWithUrls, buildTaskProofImageUrl } = require('../lib/taskProof');
+const { fetchDriverMergedOrderHistory } = require('../lib/driverOrderHistory');
 
 const uploadDir = path.join(__dirname, '..', 'uploads', 'profiles');
 if (!fs.existsSync(uploadDir)) {
@@ -550,6 +551,21 @@ async function enrichRiderTaskDetails(pool, taskRow) {
     details.task_photos = [];
     details.proof_images = [];
   }
+
+  /** Activity timeline for Flutter (order_history + aliases; each row has date_created / created_at / …). */
+  let orderHistoryForDriver = [];
+  if (Number.isFinite(tid) && tid > 0) {
+    try {
+      orderHistoryForDriver = await fetchDriverMergedOrderHistory(pool, tid, orderId > 0 ? orderId : null);
+    } catch (e) {
+      if (e.code !== 'ER_NO_SUCH_TABLE' && e.code !== 'ER_BAD_FIELD_ERROR') throw e;
+    }
+  }
+  details.order_history = orderHistoryForDriver;
+  details.orderHistory = orderHistoryForDriver;
+  details.mt_order_history = orderHistoryForDriver;
+  details.order_status_list = orderHistoryForDriver;
+  details.order_status_history = orderHistoryForDriver;
 
   return details;
 }

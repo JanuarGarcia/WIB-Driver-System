@@ -790,22 +790,66 @@ function errandLineFirstLine(text, maxLen) {
   return line;
 }
 
+/** Non-empty trimmed string, first line only (maxLen). */
+function errandPickLabel(v, maxLen) {
+  return errandLineFirstLine(v, maxLen).trim();
+}
+
 /**
- * Human-readable line label for driver app: prefers catalog `item_name`, then descriptions, then line notes.
- * Avoids `Item #0` when `item_id` is 0 and catalog row is missing (Flutter falls back to item_id if name fields are empty).
+ * Human-readable line label for driver app (Flutter: item_name / name / label, else "Item #" + item_id).
+ * Uses line-level columns from `st_ordernew_item` (via `oi.*`), then catalog (`st_item`) under `catalog_*` aliases,
+ * then common ErrandWib text fields. Omits reliance on item_id 0 when names are missing.
  * @param {Record<string, unknown>} row
  */
 function pickErrandLineItemDisplayName(row) {
-  const catalogName =
-    row.item_name != null && String(row.item_name).trim() !== '' ? String(row.item_name).trim() : '';
-  const shortDesc = errandLineFirstLine(row.item_short_description, 240);
-  const longDesc = errandLineFirstLine(row.item_description, 240);
-  const instructions = errandLineFirstLine(row.special_instructions, 240);
+  const tryLabel = (v) => {
+    const t = errandPickLabel(v, 280);
+    if (!t || t === '0') return '';
+    return t;
+  };
+  const catalogName = tryLabel(row.catalog_item_name);
+  const lineItemName = tryLabel(row.item_name);
+  const catShort = tryLabel(row.catalog_short_description);
+  const catLong = tryLabel(row.catalog_description);
+  const lineShort = tryLabel(row.item_short_description);
+  const lineLong = tryLabel(row.item_description);
+  const instructions = tryLabel(row.special_instructions);
+  const orderedKeys = [
+    lineItemName,
+    catalogName,
+    catShort,
+    catLong,
+    lineShort,
+    lineLong,
+    instructions,
+  ];
+  for (const t of orderedKeys) {
+    if (t) return t;
+  }
+  const extraKeys = [
+    'line_item_name',
+    'package_name',
+    'product_name',
+    'service_name',
+    'item_label',
+    'title',
+    'label',
+    'name',
+    'description',
+    'notes',
+    'note',
+    'line_notes',
+    'item_notes',
+    'item_remarks',
+    'remarks',
+    'errand_description',
+    'transaction_description',
+  ];
+  for (const k of extraKeys) {
+    const t = tryLabel(row[k]);
+    if (t) return t;
+  }
   const itemIdNum = row.item_id != null ? parseInt(String(row.item_id), 10) : NaN;
-  if (catalogName) return catalogName;
-  if (shortDesc) return shortDesc;
-  if (longDesc) return longDesc;
-  if (instructions) return instructions;
   if (Number.isFinite(itemIdNum) && itemIdNum > 0) return `Item #${itemIdNum}`;
   return 'Errand service';
 }
@@ -815,6 +859,7 @@ function pickErrandLineItemDisplayName(row) {
  * @param {Record<string, unknown>} row
  */
 function mapErrandOrderLineToOrderDetail(row) {
+  const lineId = row.line_id != null ? row.line_id : row.id;
   const qty = row.qty != null ? Number(row.qty) : 0;
   let unit = row.price != null ? Number(row.price) : null;
   if (unit != null && Number.isNaN(unit)) unit = null;
@@ -824,11 +869,21 @@ function mapErrandOrderLineToOrderDetail(row) {
       ? String(row.special_instructions).trim()
       : null;
   const itemIdNum = row.item_id != null ? parseInt(String(row.item_id), 10) : NaN;
-  const item_id = Number.isFinite(itemIdNum) && itemIdNum > 0 ? itemIdNum : null;
-  return {
-    id: row.line_id,
-    item_id,
-    itemId: item_id,
+  const photoRaw =
+    row.catalog_item_photo != null && String(row.catalog_item_photo).trim() !== ''
+      ? String(row.catalog_item_photo).trim()
+      : row.photo != null && String(row.photo).trim() !== ''
+        ? String(row.photo).trim()
+        : null;
+  const pathRaw =
+    row.catalog_item_path != null && String(row.catalog_item_path).trim() !== ''
+      ? String(row.catalog_item_path).trim()
+      : row.path != null && String(row.path).trim() !== ''
+        ? String(row.path).trim()
+        : null;
+  /** Omit item_id when not a real catalog id — Flutter may use `item_id ?? 0` and show "Item #0". */
+  const out = {
+    id: lineId,
     qty,
     quantity: qty,
     item_name: name,
@@ -841,9 +896,14 @@ function mapErrandOrderLineToOrderDetail(row) {
     order_notes: notes,
     orderNotes: notes,
     item_source: 'errand',
-    photo: row.photo != null ? String(row.photo).trim() : null,
-    path: row.path != null ? String(row.path).trim() : null,
+    photo: photoRaw,
+    path: pathRaw,
   };
+  if (Number.isFinite(itemIdNum) && itemIdNum > 0) {
+    out.item_id = itemIdNum;
+    out.itemId = itemIdNum;
+  }
+  return out;
 }
 
 /**
@@ -852,27 +912,40 @@ function mapErrandOrderLineToOrderDetail(row) {
  * @param {number} orderId
  * @returns {Promise<Record<string, unknown>[]>}
  */
+function filterNonVoidedErrandLines(rows) {
+  return (rows || []).filter((r) => {
+    const v = r.voided_at;
+    if (v == null) return true;
+    const s = String(v).trim();
+    if (s === '' || s.startsWith('0000-00-00')) return true;
+    return false;
+  });
+}
+
 async function fetchErrandOrderLineItems(errandPool, orderId) {
-  const mapRows = (rows) => (rows || []).map(mapErrandOrderLineToOrderDetail);
-  try {
-    const [rows] = await errandPool.query(
-      `SELECT oi.id AS line_id, oi.order_id, oi.item_id, oi.qty, oi.price, oi.discount, oi.discount_type,
-              oi.special_instructions, oi.item_size_id, oi.cat_id,
-              i.item_name, i.photo, i.path, i.item_description, i.item_short_description
+  const mapRows = (rows) => filterNonVoidedErrandLines(rows).map(mapErrandOrderLineToOrderDetail);
+  const sqlFull = `SELECT oi.*,
+              i.item_name AS catalog_item_name,
+              i.item_short_description AS catalog_short_description,
+              i.item_description AS catalog_description,
+              i.photo AS catalog_item_photo,
+              i.path AS catalog_item_path
        FROM st_ordernew_item oi
        LEFT JOIN st_item i ON i.item_id = oi.item_id
-       WHERE oi.order_id = ? AND oi.voided_at IS NULL
-       ORDER BY oi.id ASC`,
-      [orderId]
-    );
+       WHERE oi.order_id = ?
+       ORDER BY oi.id ASC`;
+  try {
+    const [rows] = await errandPool.query(sqlFull, [orderId]);
     return mapRows(rows);
   } catch (e) {
     if (e.code === 'ER_NO_SUCH_TABLE') return [];
     if (e.code === 'ER_BAD_FIELD_ERROR') {
       try {
         const [rows2] = await errandPool.query(
-          `SELECT oi.id AS line_id, oi.order_id, oi.item_id, oi.qty, oi.price, oi.special_instructions,
-                  i.item_name, i.photo, i.path
+          `SELECT oi.*,
+                  i.item_name AS catalog_item_name,
+                  i.photo AS catalog_item_photo,
+                  i.path AS catalog_item_path
            FROM st_ordernew_item oi
            LEFT JOIN st_item i ON i.item_id = oi.item_id
            WHERE oi.order_id = ?
@@ -950,12 +1023,19 @@ function mapErrandHistoryRowForTimeline(row) {
   const lat = row.latitude != null ? parseFloat(String(row.latitude)) : NaN;
   const lng = row.longitude != null ? parseFloat(String(row.longitude)) : NaN;
   const dateCreated = pickErrandHistoryDateCreated(row);
-  return {
+  const statusStr = row.status != null ? String(row.status).trim() : '';
+  /** Flutter TaskOrderHistoryEntry: first non-empty of date_created | dateCreated | created_at | date_updated | updated_at */
+  const out = {
     id: row.id,
     order_id: row.order_id,
-    status: row.status != null ? String(row.status).trim() : '',
+    status: statusStr,
+    status_raw: statusStr,
     remarks: resolved || null,
     date_created: dateCreated,
+    dateCreated,
+    created_at: dateCreated,
+    date_updated: dateCreated,
+    updated_at: dateCreated,
     update_by_name: row.change_by != null ? String(row.change_by).trim() : null,
     update_by_type: row.change_by != null ? String(row.change_by).trim() : null,
     latitude: Number.isFinite(lat) ? lat : null,
@@ -963,6 +1043,7 @@ function mapErrandHistoryRowForTimeline(row) {
     ip_address: row.ip_address != null ? String(row.ip_address).trim() : null,
     errand_history: true,
   };
+  return out;
 }
 
 /**
@@ -1131,6 +1212,7 @@ function computeStOrdernewPaymentFieldsForDriver(row, clientAddressRow) {
  * @param {string|null} [latestHistoryStatus] - latest st_ordernew_history.status for this order
  * @param {Record<string, unknown>[]} [orderDetails] - from fetchErrandOrderLineItems
  * @param {Record<string, unknown>[]} [orderHistoryRows] - from fetchErrandOrderHistory (activity timeline)
+ * @param {{ forRiderApp?: boolean }} [options] - when `forRiderApp`, strip raw `json_details` from `errand_order` so the app uses normalized `order_details` lines with `item_name`
  */
 function buildErrandTaskDetailPayload(
   row,
@@ -1140,7 +1222,8 @@ function buildErrandTaskDetailPayload(
   clientAddressRow,
   latestHistoryStatus,
   orderDetails = [],
-  orderHistoryRows = []
+  orderHistoryRows = [],
+  options = {}
 ) {
   const oid = row.order_id != null ? Number(row.order_id) : NaN;
   const safeId = Number.isFinite(oid) ? oid : 0;
@@ -1298,6 +1381,25 @@ function buildErrandTaskDetailPayload(
 
   const lines = Array.isArray(orderDetails) ? orderDetails : [];
 
+  const historyList = Array.isArray(orderHistoryRows) ? orderHistoryRows : [];
+
+  let errandOrderPayload = row;
+  if (options && options.forRiderApp === true && row && typeof row === 'object') {
+    errandOrderPayload = { ...row };
+    for (const k of [
+      'json_details',
+      'jsonDetails',
+      'cart_details',
+      'cartDetails',
+      'order_json',
+      'orderJson',
+    ]) {
+      if (Object.prototype.hasOwnProperty.call(errandOrderPayload, k)) {
+        delete errandOrderPayload[k];
+      }
+    }
+  }
+
   const clientAddressPayload = addr
     ? {
         address_id: addr.address_id,
@@ -1338,8 +1440,12 @@ function buildErrandTaskDetailPayload(
     orderDetails: lines,
     task_photos: [],
     proof_images: [],
-    order_history: Array.isArray(orderHistoryRows) ? orderHistoryRows : [],
-    errand_order: row,
+    order_history: historyList,
+    orderHistory: historyList,
+    mt_order_history: historyList,
+    order_status_list: historyList,
+    order_status_history: historyList,
+    errand_order: errandOrderPayload,
     client: cl
       ? {
           client_id: cl.client_id,
