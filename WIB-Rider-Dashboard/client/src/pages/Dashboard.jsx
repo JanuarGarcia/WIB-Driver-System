@@ -451,6 +451,7 @@ export default function Dashboard() {
           listRevision={taskListRevision}
           onTaskListInvalidate={bumpTaskLists}
           onQueueCountChange={setDriverQueueCount}
+          riderLocations={locations}
         />
       </div>
     </div>

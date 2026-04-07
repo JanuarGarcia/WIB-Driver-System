@@ -778,6 +778,38 @@ function mapStOrderRowToTaskListRow(
   };
 }
 
+/** First non-empty line, trimmed; optional max length for long descriptions (driver UI). */
+function errandLineFirstLine(text, maxLen) {
+  if (text == null) return '';
+  const t = String(text).trim();
+  if (!t) return '';
+  const line = t.split(/\r?\n/)[0].trim();
+  if (maxLen != null && line.length > maxLen) {
+    return `${line.slice(0, maxLen).trim()}…`;
+  }
+  return line;
+}
+
+/**
+ * Human-readable line label for driver app: prefers catalog `item_name`, then descriptions, then line notes.
+ * Avoids `Item #0` when `item_id` is 0 and catalog row is missing (Flutter falls back to item_id if name fields are empty).
+ * @param {Record<string, unknown>} row
+ */
+function pickErrandLineItemDisplayName(row) {
+  const catalogName =
+    row.item_name != null && String(row.item_name).trim() !== '' ? String(row.item_name).trim() : '';
+  const shortDesc = errandLineFirstLine(row.item_short_description, 240);
+  const longDesc = errandLineFirstLine(row.item_description, 240);
+  const instructions = errandLineFirstLine(row.special_instructions, 240);
+  const itemIdNum = row.item_id != null ? parseInt(String(row.item_id), 10) : NaN;
+  if (catalogName) return catalogName;
+  if (shortDesc) return shortDesc;
+  if (longDesc) return longDesc;
+  if (instructions) return instructions;
+  if (Number.isFinite(itemIdNum) && itemIdNum > 0) return `Item #${itemIdNum}`;
+  return 'Errand service';
+}
+
 /**
  * Map joined `st_ordernew_item` + `st_item` row into `order_details` shape (TaskDetailsModal ordered items).
  * @param {Record<string, unknown>} row
@@ -786,25 +818,28 @@ function mapErrandOrderLineToOrderDetail(row) {
   const qty = row.qty != null ? Number(row.qty) : 0;
   let unit = row.price != null ? Number(row.price) : null;
   if (unit != null && Number.isNaN(unit)) unit = null;
-  const name =
-    row.item_name != null && String(row.item_name).trim() !== ''
-      ? String(row.item_name).trim()
-      : row.item_id != null
-        ? `Item #${row.item_id}`
-        : 'Item';
+  const name = pickErrandLineItemDisplayName(row);
   const notes =
     row.special_instructions != null && String(row.special_instructions).trim() !== ''
       ? String(row.special_instructions).trim()
       : null;
+  const itemIdNum = row.item_id != null ? parseInt(String(row.item_id), 10) : NaN;
+  const item_id = Number.isFinite(itemIdNum) && itemIdNum > 0 ? itemIdNum : null;
   return {
     id: row.line_id,
-    item_id: row.item_id,
+    item_id,
+    itemId: item_id,
     qty,
+    quantity: qty,
     item_name: name,
+    itemName: name,
+    name,
+    label: name,
     item_name_display: name,
     normal_price: unit,
     discounted_price: unit,
     order_notes: notes,
+    orderNotes: notes,
     item_source: 'errand',
     photo: row.photo != null ? String(row.photo).trim() : null,
     path: row.path != null ? String(row.path).trim() : null,
@@ -880,6 +915,32 @@ function resolveErrandHistoryRemarks(remarks, transRaw) {
 }
 
 /**
+ * Best timestamp for timeline (ErrandWib schemas differ: `date_created`, `date_added`, `created_at`, etc.).
+ * @param {Record<string, unknown>} row
+ * @returns {string|null} ISO string when possible (stable JSON for dashboard)
+ */
+function pickErrandHistoryDateCreated(row) {
+  if (!row || typeof row !== 'object') return null;
+  const keys = [
+    'date_created',
+    'created_at',
+    'date_added',
+    'time_stamp',
+    'timestamp',
+    'dt_created',
+    'date_modified',
+  ];
+  for (const k of keys) {
+    const v = row[k];
+    if (v == null) continue;
+    if (v instanceof Date && !Number.isNaN(v.getTime())) return v.toISOString();
+    const s = String(v).trim();
+    if (s !== '') return s;
+  }
+  return null;
+}
+
+/**
  * One `st_ordernew_history` row → `order_history` entry for the dashboard timeline.
  * @param {Record<string, unknown>} row
  */
@@ -888,12 +949,13 @@ function mapErrandHistoryRowForTimeline(row) {
   const resolved = resolveErrandHistoryRemarks(row.remarks, trans);
   const lat = row.latitude != null ? parseFloat(String(row.latitude)) : NaN;
   const lng = row.longitude != null ? parseFloat(String(row.longitude)) : NaN;
+  const dateCreated = pickErrandHistoryDateCreated(row);
   return {
     id: row.id,
     order_id: row.order_id,
     status: row.status != null ? String(row.status).trim() : '',
     remarks: resolved || null,
-    date_created: row.created_at ?? row.date_created ?? null,
+    date_created: dateCreated,
     update_by_name: row.change_by != null ? String(row.change_by).trim() : null,
     update_by_type: row.change_by != null ? String(row.change_by).trim() : null,
     latitude: Number.isFinite(lat) ? lat : null,
@@ -911,48 +973,14 @@ function mapErrandHistoryRowForTimeline(row) {
 async function fetchErrandOrderHistory(errandPool, orderId) {
   const mapRows = (rows) => (rows || []).map(mapErrandHistoryRowForTimeline);
   try {
+    /** Prefer SELECT * so every timestamp column (`date_created`, `date_added`, `created_at`, …) is present for coalescing. */
     const [rows] = await errandPool.query(
-      `SELECT id, order_id, status, remarks, ramarks_trans, change_by, latitude, longitude, ip_address, created_at
-       FROM st_ordernew_history
-       WHERE order_id = ?
-       ORDER BY id ASC`,
+      `SELECT * FROM st_ordernew_history WHERE order_id = ? ORDER BY id ASC`,
       [orderId]
     );
     return mapRows(rows);
   } catch (e) {
     if (e.code === 'ER_NO_SUCH_TABLE') return [];
-    if (e.code === 'ER_BAD_FIELD_ERROR') {
-      try {
-        const [rows2] = await errandPool.query(
-          `SELECT id, order_id, status, remarks, remarks_trans, change_by, latitude, longitude, ip_address, created_at
-           FROM st_ordernew_history
-           WHERE order_id = ?
-           ORDER BY id ASC`,
-          [orderId]
-        );
-        return (rows2 || []).map((r) => mapErrandHistoryRowForTimeline({ ...r, ramarks_trans: r.remarks_trans }));
-      } catch (e2) {
-        if (e2.code === 'ER_BAD_FIELD_ERROR') {
-          try {
-            const [rows3] = await errandPool.query(
-              `SELECT id, order_id, status, remarks, change_by, created_at
-               FROM st_ordernew_history
-               WHERE order_id = ?
-               ORDER BY id ASC`,
-              [orderId]
-            );
-            return (rows3 || []).map((r) =>
-              mapErrandHistoryRowForTimeline({ ...r, ramarks_trans: null, latitude: null, longitude: null, ip_address: null })
-            );
-          } catch (e3) {
-            if (e3.code === 'ER_NO_SUCH_TABLE') return [];
-            throw e3;
-          }
-        }
-        if (e2.code === 'ER_NO_SUCH_TABLE') return [];
-        throw e2;
-      }
-    }
     throw e;
   }
 }

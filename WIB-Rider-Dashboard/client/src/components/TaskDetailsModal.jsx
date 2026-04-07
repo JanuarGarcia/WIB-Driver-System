@@ -1022,7 +1022,8 @@ export default function TaskDetailsModal({
       order_id: row.order_id,
       status: row.status,
       remarks: row.remarks || row.remarks2,
-      date_created: row.date_created,
+      date_created:
+        row.date_created ?? row.created_at ?? row.date_added ?? row.date_modified ?? row.timestamp ?? null,
       reason: row.reason,
       update_by_name: row.update_by_name,
       update_by_type: row.update_by_type,

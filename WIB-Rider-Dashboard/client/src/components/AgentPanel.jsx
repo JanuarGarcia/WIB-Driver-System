@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, forwardRef, useImperativeHandle } from 'react';
+import { useState, useEffect, useRef, useCallback, forwardRef, useImperativeHandle, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { Link, useNavigate } from 'react-router-dom';
 import { api, statusClass, statusLabel, resolveUploadUrl } from '../api';
@@ -7,7 +7,7 @@ import SendPushModal from './SendPushModal';
 import { useTeamFilter } from '../context/TeamFilterContext';
 import { sanitizeLocationDisplayName, sanitizeMerchantDisplayName, shortTaskOrderDigits } from '../utils/displayText';
 import { getAdvanceOrderLines } from '../utils/advanceOrder';
-import { todayDateStrLocal } from '../utils/mapTasks';
+import { todayDateStrLocal, taskDropoffLatLng, riderGpsFromLocations } from '../utils/mapTasks';
 import { isLiveConnection, isOnDuty, isAgentPanelOnline } from '../utils/agentPanelRiders';
 
 const TABS = ['active', 'offline', 'total'];
@@ -27,6 +27,18 @@ function getBearing(fromLat, fromLng, toLat, toLng) {
   const x = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLng);
   let br = (Math.atan2(y, x) * 180) / Math.PI;
   return (br + 360) % 360;
+}
+
+function haversineKm(lat1, lng1, lat2, lng2) {
+  const R = 6371;
+  const toRad = (x) => (x * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
 }
 
 function bearingToCompass(bearing) {
@@ -146,6 +158,32 @@ function queueAssignTaskLines(t) {
   return { title, sub };
 }
 
+function taskMinsWaiting(t) {
+  const created = t.date_created ? new Date(t.date_created) : null;
+  if (!created || Number.isNaN(created.getTime())) return null;
+  return Math.max(0, Math.floor((Date.now() - created.getTime()) / 60000));
+}
+
+function formatTaskWaitingLabel(mins) {
+  if (mins == null) return null;
+  if (mins >= 60) {
+    const h = Math.floor(mins / 60);
+    const m = mins % 60;
+    return m > 0 ? `${h} hr ${m} min${m === 1 ? '' : 's'}` : `${h} hr`;
+  }
+  return `${mins} min${mins === 1 ? '' : 's'}`;
+}
+
+function formatDistanceLabel(km) {
+  if (km == null || !Number.isFinite(km)) return null;
+  if (km < 1) return `${Math.round(km * 1000)} m`;
+  return `${km < 10 ? km.toFixed(1) : Math.round(km)} km`;
+}
+
+function isErrandTaskRow(t) {
+  return t.task_source === 'errand' || Number(t.task_id) < 0;
+}
+
 /** Human-readable waiting duration since joined_at (dispatch scan). */
 function formatQueueWaiting(joinedAt) {
   if (!joinedAt) return '—';
@@ -170,6 +208,8 @@ const AgentPanel = forwardRef(function AgentPanel(
     listRevision = 0,
     onTaskListInvalidate,
     onQueueCountChange,
+    /** Latest GPS from `drivers/locations` — used for “nearest to rider” sort and distance hints. */
+    riderLocations = [],
   },
   ref
 ) {
@@ -197,6 +237,10 @@ const AgentPanel = forwardRef(function AgentPanel(
   const [queueAssignLoading, setQueueAssignLoading] = useState(false);
   const [queueAssignError, setQueueAssignError] = useState(null);
   const [queueAssignSubmitting, setQueueAssignSubmitting] = useState(false);
+  const [queueAssignSearch, setQueueAssignSearch] = useState('');
+  const [queueAssignSort, setQueueAssignSort] = useState('oldest');
+  const [queueAssignKind, setQueueAssignKind] = useState('all');
+  const queueAssignSearchRef = useRef(null);
   /** Per-driver admin push (FCM); same flow as Drivers page / legacy dashboard. */
   const [pushModalDriver, setPushModalDriver] = useState(null);
   const searchInputRef = useRef(null);
@@ -290,6 +334,9 @@ const AgentPanel = forwardRef(function AgentPanel(
           setQueueAssignDriver(null);
           setQueueAssignTasks([]);
           setQueueAssignError(null);
+          setQueueAssignSearch('');
+          setQueueAssignSort('oldest');
+          setQueueAssignKind('all');
         }
         return;
       }
@@ -427,6 +474,9 @@ const AgentPanel = forwardRef(function AgentPanel(
   };
 
   const openQueueAssignModal = useCallback((row) => {
+    setQueueAssignSearch('');
+    setQueueAssignSort('oldest');
+    setQueueAssignKind('all');
     setQueueAssignDriver(row);
     setQueueAssignTasks([]);
     setQueueAssignLoading(true);
@@ -436,7 +486,6 @@ const AgentPanel = forwardRef(function AgentPanel(
       .then((list) => {
         const raw = Array.isArray(list) ? list : [];
         const unassigned = raw.filter((t) => normStatus(t.status) === 'unassigned');
-        unassigned.sort((a, b) => (Number(b.task_id) || 0) - (Number(a.task_id) || 0));
         setQueueAssignTasks(unassigned);
       })
       .catch((err) => {
@@ -450,7 +499,110 @@ const AgentPanel = forwardRef(function AgentPanel(
     setQueueAssignDriver(null);
     setQueueAssignTasks([]);
     setQueueAssignError(null);
+    setQueueAssignSearch('');
+    setQueueAssignSort('oldest');
+    setQueueAssignKind('all');
   }, [queueAssignSubmitting]);
+
+  const openAssignTaskDetailsFromQueue = useCallback(
+    (taskId) => {
+      if (queueAssignSubmitting || taskId == null || !onOpenTaskDetails) return;
+      closeQueueAssignModal();
+      onOpenTaskDetails(taskId);
+    },
+    [queueAssignSubmitting, onOpenTaskDetails, closeQueueAssignModal]
+  );
+
+  const hasRiderGpsForAssign = useMemo(
+    () => Boolean(queueAssignDriver && riderGpsFromLocations(queueAssignDriver, riderLocations)),
+    [queueAssignDriver, riderLocations]
+  );
+
+  useEffect(() => {
+    if (queueAssignSort === 'nearest' && !hasRiderGpsForAssign && queueAssignDriver) {
+      setQueueAssignSort('oldest');
+    }
+  }, [queueAssignSort, hasRiderGpsForAssign, queueAssignDriver]);
+
+  const queueAssignKindCounts = useMemo(() => {
+    let errand = 0;
+    for (const t of queueAssignTasks) {
+      if (isErrandTaskRow(t)) errand += 1;
+    }
+    return {
+      all: queueAssignTasks.length,
+      errand,
+      delivery: queueAssignTasks.length - errand,
+    };
+  }, [queueAssignTasks]);
+
+  const queueAssignDisplayTasks = useMemo(() => {
+    const riderGps = queueAssignDriver ? riderGpsFromLocations(queueAssignDriver, riderLocations) : null;
+    let rows = queueAssignTasks.map((t) => {
+      const mins = taskMinsWaiting(t);
+      const drop = taskDropoffLatLng(t);
+      let distKm = null;
+      if (riderGps && drop) distKm = haversineKm(riderGps.lat, riderGps.lng, drop.lat, drop.lng);
+      const isErrand = isErrandTaskRow(t);
+      const lines = queueAssignTaskLines(t);
+      const merchRaw =
+        t.restaurant_name ||
+        (t.dropoff_merchant && !/^\d+$/.test(String(t.dropoff_merchant).trim()) ? t.dropoff_merchant : null);
+      const merchantName = sanitizeMerchantDisplayName(merchRaw || '') || '';
+      const customerName = sanitizeLocationDisplayName(t.customer_name || '') || '—';
+      return {
+        t,
+        mins,
+        distKm,
+        isErrand,
+        searchBlob: `${lines.title} ${lines.sub} ${t.task_id ?? ''} ${t.order_id ?? ''} ${merchantName} ${customerName}`.toLowerCase(),
+        merchantName: merchantName || '—',
+        customerName,
+      };
+    });
+
+    if (queueAssignKind === 'errand') rows = rows.filter((r) => r.isErrand);
+    else if (queueAssignKind === 'delivery') rows = rows.filter((r) => !r.isErrand);
+
+    const q = queueAssignSearch.trim().toLowerCase();
+    if (q) rows = rows.filter((r) => r.searchBlob.includes(q));
+
+    const sorted = [...rows];
+    if (queueAssignSort === 'oldest') {
+      sorted.sort((a, b) => {
+        const da = a.t.date_created ? new Date(a.t.date_created).getTime() : Number.POSITIVE_INFINITY;
+        const db = b.t.date_created ? new Date(b.t.date_created).getTime() : Number.POSITIVE_INFINITY;
+        return da - db;
+      });
+    } else if (queueAssignSort === 'newest') {
+      sorted.sort((a, b) => {
+        const da = a.t.date_created ? new Date(a.t.date_created).getTime() : 0;
+        const db = b.t.date_created ? new Date(b.t.date_created).getTime() : 0;
+        return db - da;
+      });
+    } else if (queueAssignSort === 'nearest') {
+      sorted.sort((a, b) => {
+        if (a.distKm == null && b.distKm == null) return 0;
+        if (a.distKm == null) return 1;
+        if (b.distKm == null) return -1;
+        return a.distKm - b.distKm;
+      });
+    }
+    return sorted;
+  }, [
+    queueAssignTasks,
+    queueAssignDriver,
+    riderLocations,
+    queueAssignSearch,
+    queueAssignSort,
+    queueAssignKind,
+  ]);
+
+  useEffect(() => {
+    if (!queueAssignDriver || queueAssignLoading) return undefined;
+    const timer = window.setTimeout(() => queueAssignSearchRef.current?.focus(), 80);
+    return () => window.clearTimeout(timer);
+  }, [queueAssignDriver, queueAssignLoading]);
 
   const submitQueueAssign = useCallback(
     async (task) => {
@@ -478,6 +630,9 @@ const AgentPanel = forwardRef(function AgentPanel(
         });
         setQueueAssignDriver(null);
         setQueueAssignTasks([]);
+        setQueueAssignSearch('');
+        setQueueAssignSort('oldest');
+        setQueueAssignKind('all');
         await loadQueue({ silent: true });
         onTaskListInvalidate?.();
         if (allTasksView) fetchAssignedTasks();
@@ -1118,9 +1273,21 @@ const AgentPanel = forwardRef(function AgentPanel(
               onClick={(e) => e.stopPropagation()}
             >
               <div className="driver-queue-assign-modal-head">
-                <h2 id="driver-queue-assign-title" className="driver-queue-assign-modal-title">
-                  Assign to task
-                </h2>
+                <div className="driver-queue-assign-modal-head-text">
+                  <h2 id="driver-queue-assign-title" className="driver-queue-assign-modal-title">
+                    Assign task
+                  </h2>
+                  <p className="driver-queue-assign-modal-sub">
+                    Choose an unassigned order for{' '}
+                    <strong>{queueAssignDriver.full_name || `Driver #${queueAssignDriver.driver_id}`}</strong>
+                    {queueAssignDriver.team_name ? (
+                      <>
+                        {' '}
+                        <span className="driver-queue-assign-modal-team">· {queueAssignDriver.team_name}</span>
+                      </>
+                    ) : null}
+                  </p>
+                </div>
                 <button
                   type="button"
                   className="driver-queue-assign-modal-close"
@@ -1128,16 +1295,17 @@ const AgentPanel = forwardRef(function AgentPanel(
                   disabled={queueAssignSubmitting}
                   aria-label="Close"
                 >
-                  ×
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+                    <path d="M18 6 6 18M6 6l12 12" />
+                  </svg>
                 </button>
               </div>
-              <p className="driver-queue-assign-modal-rider">
-                Rider:{' '}
-                <strong>
-                  {queueAssignDriver.full_name || `Driver #${queueAssignDriver.driver_id}`}
-                </strong>
+              <p className="driver-queue-assign-modal-hint">
+                <span>Showing tasks for {todayStr()}</span>
+                {!queueAssignLoading && !queueAssignError && queueAssignTasks.length > 0 ? (
+                  <span className="driver-queue-assign-count-pill">{queueAssignTasks.length} unassigned</span>
+                ) : null}
               </p>
-              <p className="driver-queue-assign-modal-hint">Unassigned tasks for {todayStr()}</p>
               {queueAssignLoading && (
                 <p className="driver-queue-assign-state">Loading tasks…</p>
               )}
@@ -1149,28 +1317,165 @@ const AgentPanel = forwardRef(function AgentPanel(
               {!queueAssignLoading && !queueAssignError && queueAssignTasks.length === 0 && (
                 <p className="driver-queue-assign-state">No unassigned tasks for today.</p>
               )}
-              {queueAssignTasks.length > 0 && (
-                <ul className="driver-queue-assign-list">
-                  {queueAssignTasks.map((t) => {
-                    const { title, sub } = queueAssignTaskLines(t);
-                    return (
-                      <li key={t.task_id} className="driver-queue-assign-row">
-                        <div className="driver-queue-assign-row-text">
-                          <div className="driver-queue-assign-row-title">{title}</div>
-                          <div className="driver-queue-assign-row-sub">{sub}</div>
-                        </div>
-                        <button
-                          type="button"
-                          className="btn btn-sm btn-primary driver-queue-assign-pick"
+              {!queueAssignLoading && !queueAssignError && queueAssignTasks.length > 0 && (
+                <>
+                  <div className="driver-queue-assign-toolbar">
+                    <div className="driver-queue-assign-search-wrap">
+                      <span className="driver-queue-assign-search-icon" aria-hidden="true">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <circle cx="11" cy="11" r="8" />
+                          <path d="m21 21-4.3-4.3" />
+                        </svg>
+                      </span>
+                      <input
+                        ref={queueAssignSearchRef}
+                        type="search"
+                        className="driver-queue-assign-search"
+                        placeholder="Search order, customer, merchant…"
+                        value={queueAssignSearch}
+                        onChange={(e) => setQueueAssignSearch(e.target.value)}
+                        disabled={queueAssignSubmitting}
+                        aria-label="Filter unassigned tasks"
+                        autoComplete="off"
+                      />
+                    </div>
+                    <div className="driver-queue-assign-filters">
+                      <div className="driver-queue-assign-kind" role="group" aria-label="Task type">
+                        {[
+                          { key: 'all', label: 'All', count: queueAssignKindCounts.all },
+                          { key: 'delivery', label: 'Delivery', count: queueAssignKindCounts.delivery },
+                          { key: 'errand', label: 'Errand', count: queueAssignKindCounts.errand },
+                        ].map(({ key, label, count }) => (
+                          <button
+                            key={key}
+                            type="button"
+                            className={`driver-queue-assign-kind-btn ${queueAssignKind === key ? 'driver-queue-assign-kind-btn--active' : ''}`}
+                            disabled={queueAssignSubmitting}
+                            onClick={() => setQueueAssignKind(key)}
+                          >
+                            {label}
+                            <span className="driver-queue-assign-kind-count">{count}</span>
+                          </button>
+                        ))}
+                      </div>
+                      <label className="driver-queue-assign-sort-label">
+                        <span className="driver-queue-assign-sort-text">Sort</span>
+                        <select
+                          className="driver-queue-assign-sort"
+                          value={queueAssignSort}
                           disabled={queueAssignSubmitting}
-                          onClick={() => submitQueueAssign(t)}
+                          onChange={(e) => setQueueAssignSort(e.target.value)}
+                          aria-label="Sort tasks"
                         >
-                          Assign
-                        </button>
-                      </li>
-                    );
-                  })}
-                </ul>
+                          <option value="oldest">Longest waiting first</option>
+                          <option value="newest">Newest first</option>
+                          {hasRiderGpsForAssign ? <option value="nearest">Nearest to rider</option> : null}
+                        </select>
+                      </label>
+                    </div>
+                  </div>
+                  {queueAssignDisplayTasks.length === 0 ? (
+                    <p className="driver-queue-assign-state">No tasks match your search or filters.</p>
+                  ) : (
+                    <ul className="driver-queue-assign-list" aria-live="polite">
+                      {queueAssignDisplayTasks.map((row) => {
+                        const { t, mins, distKm, isErrand, merchantName, customerName } = row;
+                        const orderDigits = shortTaskOrderDigits(t.order_id, t.task_id);
+                        const dir = getDirectionFromTask(t);
+                        const waitLabel = formatTaskWaitingLabel(mins);
+                        const distLabel = formatDistanceLabel(distKm);
+                        const urgent = mins != null && mins >= 45;
+                        const listKey =
+                          t.task_source === 'errand' ? `errand-${t.order_id ?? t.task_id}` : String(t.task_id);
+                        return (
+                          <li
+                            key={listKey}
+                            className={`driver-queue-assign-row ${urgent ? 'driver-queue-assign-row--urgent' : ''}`}
+                          >
+                            <div className="driver-queue-assign-row-body">
+                              <div className="driver-queue-assign-row-topline">
+                                <div className="driver-queue-assign-dir" title={`Delivery direction: ${directionDisplayLabel(dir)}`}>
+                                  <span className="driver-queue-assign-dir-icon" aria-hidden="true">
+                                    <svg viewBox="0 0 24 24" fill="currentColor" style={{ transform: `rotate(${directionArrowRotation(dir)}deg)` }}>
+                                      <path d="M12 4l-6 8h4v8h4v-8h4L12 4z" />
+                                    </svg>
+                                  </span>
+                                  <span className="driver-queue-assign-dir-label">{directionDisplayLabel(dir)}</span>
+                                </div>
+                                <div className="driver-queue-assign-order-block">
+                                  <span className="driver-queue-assign-order-label">Order</span>
+                                  <span className="driver-queue-assign-order-num">{orderDigits}</span>
+                                  {isErrand ? (
+                                    <span className="driver-queue-assign-errand-badge" title="Errand order (ErrandWib)">
+                                      Errand
+                                    </span>
+                                  ) : null}
+                                </div>
+                              </div>
+                              <div className="driver-queue-assign-merchant">
+                                <span className="driver-queue-assign-line-icon" aria-hidden="true">
+                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                                    <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z" />
+                                  </svg>
+                                </span>
+                                <span className="driver-queue-assign-merchant-text">{merchantName}</span>
+                              </div>
+                              <div className="driver-queue-assign-customer">
+                                <span className="driver-queue-assign-line-icon" aria-hidden="true">
+                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                                    <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z" />
+                                  </svg>
+                                </span>
+                                <span>{customerName}</span>
+                              </div>
+                              <div className="driver-queue-assign-meta">
+                                {waitLabel ? (
+                                  <span className={`driver-queue-assign-meta-pill ${urgent ? 'driver-queue-assign-meta-pill--urgent' : ''}`}>
+                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                                      <path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z" />
+                                    </svg>
+                                    {waitLabel} waiting
+                                  </span>
+                                ) : null}
+                                {distLabel ? (
+                                  <span className="driver-queue-assign-meta-pill driver-queue-assign-meta-pill--distance" title="Straight-line distance from rider’s last GPS to drop-off">
+                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                                      <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z" />
+                                    </svg>
+                                    ~{distLabel}
+                                  </span>
+                                ) : null}
+                                <span className="driver-queue-assign-taskid" title="Internal task id">
+                                  #{t.task_id}
+                                </span>
+                              </div>
+                            </div>
+                            <div className="driver-queue-assign-row-actions">
+                              <button
+                                type="button"
+                                className="btn btn-sm btn-primary driver-queue-assign-pick"
+                                disabled={queueAssignSubmitting}
+                                onClick={() => submitQueueAssign(t)}
+                              >
+                                Assign
+                              </button>
+                              {onOpenTaskDetails ? (
+                                <button
+                                  type="button"
+                                  className="driver-queue-assign-details"
+                                  disabled={queueAssignSubmitting}
+                                  onClick={() => openAssignTaskDetailsFromQueue(t.task_id)}
+                                >
+                                  Details
+                                </button>
+                              ) : null}
+                            </div>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
+                </>
               )}
             </div>
           </div>,
