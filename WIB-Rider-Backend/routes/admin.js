@@ -28,12 +28,14 @@ const {
 const { normalizeIncomingStatusRaw, CANONICAL: ERRAND_CANONICAL_STATUSES } = require('../lib/errandDriverStatus');
 const { success, error } = require('../lib/response');
 const { sendPushToDriver, sendPushToAllDrivers, resetFirebase, initFirebase } = require('../services/fcm');
-const { fetchTaskProofPhotosWithUrls } = require('../lib/taskProof');
+const { fetchTaskProofPhotosWithUrls, buildTaskProofImageUrl } = require('../lib/taskProof');
+const riderNotificationService = require('../services/riderNotification.service');
 const { insertStOrdernewHistoryRow } = require('../lib/errandHistoryInsert');
 const { enrichOrderDetailsWithSubcategoryAddons } = require('../lib/orderDetailAddons');
 const { attachOrderDetailCategories } = require('../lib/orderDetailCategories');
 const {
   notifyAllDashboardAdmins,
+  notifyAllDashboardAdminsFireAndForget,
   foodTaskNotifyFromStatus,
   errandNotifyFromCanonical,
   formatActorFromAdminUser,
@@ -1660,6 +1662,79 @@ async function fetchLatestAdvanceOrderNoteForTask(pool, taskId, orderId) {
   }
 }
 
+function normalizeTimelineNotifyKey(s) {
+  return String(s || '')
+    .toLowerCase()
+    .replace(/\s+/g, '')
+    .replace(/_/g, '');
+}
+
+function historyRowIsRiderAcceptanceForNotify(row) {
+  if (!row || typeof row !== 'object') return false;
+  const parts = [row.status, row.remarks, row.reason, row.notes];
+  const by = String(row.update_by_type || '').toLowerCase();
+  const assignedByDispatcher = by === 'admin' || by === 'merchant';
+  for (const p of parts) {
+    const key = normalizeTimelineNotifyKey(p);
+    if (!key) continue;
+    if (key.includes('taskaccepted') || key.includes('orderaccepted')) return true;
+    if (key === 'acknowledged' || key === 'accepted' || key === 'accept') return true;
+    if (key === 'assigned' && !assignedByDispatcher) return true;
+    if (key === 'orderassigned' || key === 'driverassigned') return true;
+  }
+  return false;
+}
+
+function classifyTimelineHistoryForDashboardNotify(row) {
+  if (!row || typeof row !== 'object') return null;
+  const keys = [
+    normalizeTimelineNotifyKey(row.status),
+    normalizeTimelineNotifyKey(row.remarks),
+    normalizeTimelineNotifyKey(row.reason),
+    normalizeTimelineNotifyKey(row.notes),
+  ].filter(Boolean);
+  if (keys.some((k) => k === 'successful' || k === 'completed' || k === 'delivered')) return 'successful';
+  if (keys.some((k) => k === 'inprogress')) return 'inprogress';
+  if (keys.some((k) => k === 'started')) return 'started';
+  if (historyRowIsRiderAcceptanceForNotify(row)) return 'accepted';
+  if (keys.some((k) => k === 'acknowledged' || k === 'accepted' || k === 'accept')) return 'accepted';
+  return null;
+}
+
+function timelineNotifyPayloadFromCategory(taskId, taskDescription, category) {
+  const label = (taskDescription && String(taskDescription).trim()) || `Task #${taskId}`;
+  if (category === 'accepted') return { title: 'Task accepted', message: label, type: 'task_accepted' };
+  if (category === 'successful') return { title: 'Successful delivery', message: label, type: 'task_done' };
+  if (category === 'started') return { title: 'Rider started', message: label, type: 'new_task' };
+  if (category === 'inprogress') return { title: 'Task in progress', message: label, type: 'new_task' };
+  return null;
+}
+
+function fanOutTimelineMilestonesToRiderNotifications(pool, taskId, taskDescription, newHistoryRows, photoRows) {
+  for (const row of newHistoryRows || []) {
+    const hid = row && row.id != null ? Number(row.id) : NaN;
+    if (!Number.isFinite(hid)) continue;
+    const cat = classifyTimelineHistoryForDashboardNotify(row);
+    if (!cat) continue;
+    const dedupeKey = `mt-h-${hid}`;
+    if (!riderNotificationService.tryConsumeTimelineNotifyKey(dedupeKey)) continue;
+    const payload = timelineNotifyPayloadFromCategory(taskId, taskDescription, cat);
+    if (payload) notifyAllDashboardAdminsFireAndForget(pool, payload);
+  }
+  const label = (taskDescription && String(taskDescription).trim()) || `Task #${taskId}`;
+  for (const ph of photoRows || []) {
+    const pid = ph && ph.id != null ? Number(ph.id) : NaN;
+    if (!Number.isFinite(pid)) continue;
+    const dedupeKey = `mt-p-${pid}`;
+    if (!riderNotificationService.tryConsumeTimelineNotifyKey(dedupeKey)) continue;
+    notifyAllDashboardAdminsFireAndForget(pool, {
+      title: 'Proof of delivery',
+      message: `${label} · Photo uploaded`,
+      type: 'task_done',
+    });
+  }
+}
+
 // ---- Task order history (for activity timeline; client may call when details omit it) ----
 router.get('/tasks/:id/order-history', async (req, res) => {
   const id = parseInt(req.params.id, 10);
@@ -1677,6 +1752,120 @@ router.get('/tasks/:id/order-history', async (req, res) => {
       return res.json([]);
     }
     throw e;
+  }
+});
+
+/**
+ * Poll new activity for one task (merged order history + proof photos). Task Details modal toasts + rider notification inbox.
+ * Query: ?after_history_id=0&after_photo_id=0 — first call returns max cursors only (no events). Later calls use last cursors.
+ */
+router.get('/tasks/:id/timeline-updates', async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!Number.isFinite(id) || id <= 0) {
+    return res.status(400).json({ error: 'Invalid task id' });
+  }
+  const afterHRaw = req.query.after_history_id != null ? parseInt(String(req.query.after_history_id), 10) : 0;
+  const afterPRaw = req.query.after_photo_id != null ? parseInt(String(req.query.after_photo_id), 10) : 0;
+  const afterH = Number.isFinite(afterHRaw) && afterHRaw >= 0 ? afterHRaw : 0;
+  const afterP = Number.isFinite(afterPRaw) && afterPRaw >= 0 ? afterPRaw : 0;
+
+  let orderId = null;
+  let taskDescriptionCached = '';
+  try {
+    const [[t]] = await pool.query('SELECT order_id, task_description FROM mt_driver_task WHERE task_id = ? LIMIT 1', [id]);
+    orderId = t?.order_id ?? null;
+    taskDescriptionCached = t?.task_description != null ? String(t.task_description) : '';
+  } catch (e) {
+    if (e.code !== 'ER_NO_SUCH_TABLE' && e.code !== 'ER_BAD_FIELD_ERROR') {
+      throw e;
+    }
+  }
+
+  try {
+    if (afterH === 0 && afterP === 0) {
+      let maxH = 0;
+      const [[tmax]] = await pool.query(
+        'SELECT COALESCE(MAX(id), 0) AS m FROM mt_order_history WHERE task_id = ?',
+        [id]
+      );
+      maxH = Math.max(maxH, Number(tmax?.m) || 0);
+      const oid =
+        orderId != null && String(orderId).trim() !== '' && String(orderId).trim() !== '0'
+          ? orderId
+          : null;
+      if (oid != null) {
+        const [[omax]] = await pool.query(
+          `SELECT COALESCE(MAX(id), 0) AS m FROM mt_order_history WHERE order_id = ? AND (task_id IS NULL OR task_id = 0 OR CAST(task_id AS UNSIGNED) = 0)`,
+          [oid]
+        );
+        maxH = Math.max(maxH, Number(omax?.m) || 0);
+      }
+      let maxP = 0;
+      try {
+        const [[pmax]] = await pool.query(
+          'SELECT COALESCE(MAX(id), 0) AS m FROM mt_driver_task_photo WHERE task_id = ?',
+          [id]
+        );
+        maxP = Number(pmax?.m) || 0;
+      } catch (e) {
+        if (e.code !== 'ER_NO_SUCH_TABLE' && e.code !== 'ER_BAD_FIELD_ERROR') throw e;
+      }
+      return res.json({
+        cursor_history: maxH,
+        cursor_photo: maxP,
+        history_events: [],
+        photo_events: [],
+      });
+    }
+
+    const taskDescription = taskDescriptionCached;
+
+    const merged = await fetchMergedTaskOrderHistory(pool, id, orderId);
+    const newHistory = (merged || []).filter((r) => r && r.id != null && Number(r.id) > afterH);
+    let nextH = afterH;
+    for (const r of newHistory) {
+      const n = Number(r.id);
+      if (Number.isFinite(n) && n > nextH) nextH = n;
+    }
+
+    let photo_events = [];
+    let nextP = afterP;
+    try {
+      const [photoRows] = await pool.query(
+        'SELECT id, task_id, photo_name, date_created, ip_address FROM mt_driver_task_photo WHERE task_id = ? AND id > ? ORDER BY id ASC',
+        [id, afterP]
+      );
+      photo_events = (photoRows || []).map((row) => ({
+        ...row,
+        proof_url: buildTaskProofImageUrl(row.photo_name),
+      }));
+      for (const r of photo_events) {
+        const n = Number(r.id);
+        if (Number.isFinite(n) && n > nextP) nextP = n;
+      }
+    } catch (e) {
+      if (e.code !== 'ER_NO_SUCH_TABLE' && e.code !== 'ER_BAD_FIELD_ERROR') throw e;
+    }
+
+    fanOutTimelineMilestonesToRiderNotifications(pool, id, taskDescription, newHistory, photo_events);
+
+    return res.json({
+      cursor_history: nextH,
+      cursor_photo: nextP,
+      history_events: newHistory,
+      photo_events,
+    });
+  } catch (e) {
+    if (e.code === 'ER_NO_SUCH_TABLE' || e.code === 'ER_BAD_FIELD_ERROR') {
+      return res.json({
+        cursor_history: afterH,
+        cursor_photo: afterP,
+        history_events: [],
+        photo_events: [],
+      });
+    }
+    console.error('[tasks/:id/timeline-updates]', e.message || e, e.code);
+    return res.status(500).json({ error: e.message || 'Failed to load timeline updates' });
   }
 });
 
@@ -1982,8 +2171,16 @@ router.get('/tasks/:id', async (req, res) => {
     if (advNote) result.task.advance_order_note = advNote;
   } catch (_) {}
 
-  // Proof of delivery: mt_driver_task_photo for this task (+ proof_urls for timeline)
-  const { task_photos, proof_images } = await fetchTaskProofPhotosWithUrls(pool, id);
+  // Proof of delivery: mt_driver_task_photo for this task (+ order-scoped receipt rows), proof_urls for timeline
+  const orderIdForProofs =
+    task.order_id != null && String(task.order_id).trim() !== ''
+      ? parseInt(String(task.order_id), 10)
+      : null;
+  const { task_photos, proof_images } = await fetchTaskProofPhotosWithUrls(
+    pool,
+    id,
+    Number.isFinite(orderIdForProofs) && orderIdForProofs > 0 ? orderIdForProofs : null
+  );
   result.task_photos = task_photos;
   result.proof_images = proof_images;
 

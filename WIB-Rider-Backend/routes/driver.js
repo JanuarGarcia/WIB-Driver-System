@@ -9,7 +9,11 @@ const fs = require('fs');
 const { pool } = require('../config/db');
 const { success, error } = require('../lib/response');
 const { validateApiKey, resolveDriver, optionalDriver } = require('../middleware/auth');
-const { fetchTaskProofPhotosWithUrls, buildTaskProofImageUrl } = require('../lib/taskProof');
+const {
+  fetchTaskProofPhotosWithUrls,
+  buildTaskProofImageUrl,
+  insertDriverTaskPhotoRow,
+} = require('../lib/taskProof');
 const { fetchDriverMergedOrderHistory } = require('../lib/driverOrderHistory');
 const { enrichOrderDetailsWithSubcategoryAddons } = require('../lib/orderDetailAddons');
 const { attachOrderDetailCategories } = require('../lib/orderDetailCategories');
@@ -58,10 +62,19 @@ const taskProofUpload = multer({
 function cleanupUploadOnAuthError(req, res, next) {
   const orig = res.json.bind(res);
   res.json = (body) => {
-    if (req.file?.path && body && body.code === 2) {
-      try {
-        fs.unlinkSync(req.file.path);
-      } catch (_) {}
+    if (body && body.code === 2) {
+      const fromSingle = req.file ? [req.file] : [];
+      let fromMulti = [];
+      if (req.files && typeof req.files === 'object') {
+        fromMulti = Object.values(req.files).flat();
+      }
+      for (const f of [...fromSingle, ...fromMulti]) {
+        if (f?.path) {
+          try {
+            fs.unlinkSync(f.path);
+          } catch (_) {}
+        }
+      }
     }
     return orig(body);
   };
@@ -701,7 +714,11 @@ async function enrichRiderTaskDetails(pool, taskRow) {
 
   const tid = details.task_id != null ? parseInt(String(details.task_id), 10) : 0;
   if (Number.isFinite(tid) && tid > 0) {
-    const { task_photos, proof_images } = await fetchTaskProofPhotosWithUrls(pool, tid);
+    const { task_photos, proof_images } = await fetchTaskProofPhotosWithUrls(
+      pool,
+      tid,
+      orderId > 0 ? orderId : null
+    );
     details.task_photos = task_photos;
     details.proof_images = proof_images;
   } else {
@@ -1248,86 +1265,108 @@ router.post('/UploadProfilePhoto', validateApiKey, resolveDriver, upload.single(
 });
 
 /**
- * Proof of delivery: multipart field "photo", plus task_id (and api_key, token).
- * File stored under uploads/task/; row in mt_driver_task_photo (photo_name = basename).
+ * Proof of receipt / delivery: multipart file field(s) "photo" (legacy), "receipt_photo", "proof_receipt",
+ * "proof_of_receipt", "delivery_photo" — multiple files in one request are each stored as separate rows.
+ * Body: task_id, optional order_id (stored when mt_driver_task_photo.order_id exists).
  */
 router.post(
   '/UploadTaskProof',
-  taskProofUpload.single('photo'),
+  taskProofUpload.fields([
+    { name: 'photo', maxCount: 10 },
+    { name: 'receipt_photo', maxCount: 10 },
+    { name: 'proof_receipt', maxCount: 10 },
+    { name: 'proof_of_receipt', maxCount: 10 },
+    { name: 'delivery_photo', maxCount: 10 },
+  ]),
   cleanupUploadOnAuthError,
   validateApiKey,
   resolveDriver,
   async (req, res) => {
-    if (!req.file) return error(res, 'No file uploaded');
+    const groups = req.files && typeof req.files === 'object' ? req.files : {};
+    const ordered = [
+      ...(groups.photo || []),
+      ...(groups.receipt_photo || []),
+      ...(groups.proof_receipt || []),
+      ...(groups.proof_of_receipt || []),
+      ...(groups.delivery_photo || []),
+    ];
+    if (!ordered.length) return error(res, 'No file uploaded');
     const tid = parseInt(req.body.task_id, 10);
     if (!tid) {
-      try {
-        fs.unlinkSync(req.file.path);
-      } catch (_) {}
+      for (const f of ordered) {
+        try {
+          if (f?.path) fs.unlinkSync(f.path);
+        } catch (_) {}
+      }
       return error(res, 'task_id required');
     }
     const [[task]] = await pool.query(
-      'SELECT task_id, driver_id FROM mt_driver_task WHERE task_id = ? LIMIT 1',
+      'SELECT task_id, driver_id, order_id FROM mt_driver_task WHERE task_id = ? LIMIT 1',
       [tid]
     );
     if (!task || task.driver_id !== req.driver.id) {
-      try {
-        fs.unlinkSync(req.file.path);
-      } catch (_) {}
+      for (const f of ordered) {
+        try {
+          if (f?.path) fs.unlinkSync(f.path);
+        } catch (_) {}
+      }
       return error(res, 'Task not found or not assigned to you');
     }
-    const ext = path.extname(req.file.originalname || '') || '.jpg';
-    const newName = `task_${tid}_${Date.now()}${ext}`;
-    const newPath = path.join(taskProofDir, newName);
-    fs.renameSync(req.file.path, newPath);
-    const photoName = newName;
+    const bodyOid = parseInt(String(req.body.order_id ?? req.body.orderId ?? ''), 10);
+    const taskOid = task.order_id != null ? parseInt(String(task.order_id), 10) : NaN;
+    const orderIdForRow = Number.isFinite(bodyOid) && bodyOid > 0 ? bodyOid : Number.isFinite(taskOid) && taskOid > 0 ? taskOid : null;
     const ip = req.ip || req.connection?.remoteAddress || null;
-    let insertId;
+
+    const conn = await pool.getConnection();
+    const savedDisk = [];
     try {
-      const [ins] = await pool.query(
-        'INSERT INTO mt_driver_task_photo (task_id, photo_name, date_created, ip_address) VALUES (?, ?, NOW(), ?)',
-        [tid, photoName, ip]
-      );
-      insertId = ins.insertId;
-    } catch (e) {
-      if (e.code === 'ER_BAD_FIELD_ERROR') {
-        try {
-          const [ins2] = await pool.query('INSERT INTO mt_driver_task_photo (task_id, photo_name) VALUES (?, ?)', [
-            tid,
-            photoName,
-          ]);
-          insertId = ins2.insertId;
-        } catch (e2) {
-          try {
-            fs.unlinkSync(newPath);
-          } catch (_) {}
-          return error(res, e2.message || 'Failed to save proof');
-        }
-      } else if (e.code === 'ER_NO_SUCH_TABLE') {
-        try {
-          fs.unlinkSync(newPath);
-        } catch (_) {}
-        return error(res, 'Proof storage is not available');
-      } else {
-        try {
-          fs.unlinkSync(newPath);
-        } catch (_) {}
-        return error(res, e.message || 'Failed to save proof');
+      await conn.beginTransaction();
+      const proofs = [];
+      for (let i = 0; i < ordered.length; i += 1) {
+        const file = ordered[i];
+        const ext = path.extname(file.originalname || '') || '.jpg';
+        const newName = `task_${tid}_${Date.now()}_${i}_${Math.random().toString(36).slice(2, 8)}${ext}`;
+        const newPath = path.join(taskProofDir, newName);
+        fs.renameSync(file.path, newPath);
+        savedDisk.push(newPath);
+        const insertId = await insertDriverTaskPhotoRow(conn, tid, newName, ip, orderIdForRow);
+        const proof_url = buildTaskProofImageUrl(newName);
+        proofs.push({
+          id: insertId,
+          task_id: tid,
+          photo_name: newName,
+          proof_url: proof_url || null,
+        });
       }
+      await conn.commit();
+      if (proofs.length === 1) {
+        return success(res, proofs[0]);
+      }
+      return success(res, { proofs });
+    } catch (e) {
+      try {
+        await conn.rollback();
+      } catch (_) {}
+      for (const p of savedDisk) {
+        try {
+          fs.unlinkSync(p);
+        } catch (_) {}
+      }
+      if (e.code === 'ER_NO_SUCH_TABLE') {
+        return error(res, 'Proof storage is not available');
+      }
+      return error(res, e.message || 'Failed to save proof');
+    } finally {
+      conn.release();
     }
-    const proof_url = buildTaskProofImageUrl(photoName);
-    return success(res, {
-      id: insertId,
-      task_id: tid,
-      photo_name: photoName,
-      proof_url: proof_url || null,
-    });
   },
   (err, req, res, next) => {
     if (err) {
-      if (req.file?.path) {
+      const groups = req.files && typeof req.files === 'object' ? req.files : {};
+      const ordered = Object.values(groups).flat();
+      for (const f of ordered) {
         try {
-          fs.unlinkSync(req.file.path);
+          if (f?.path) fs.unlinkSync(f.path);
         } catch (_) {}
       }
       return error(res, err.message || 'Upload failed');

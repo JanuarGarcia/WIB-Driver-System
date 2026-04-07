@@ -10,6 +10,26 @@ const crypto = require('crypto');
 /** @type {RiderNotification[]} */
 let notifications = [];
 
+/** Dedupe timeline-driven fan-out when multiple dispatchers poll the same task (in-memory, single process). */
+const timelineNotifyDedupeKeys = new Set();
+const TIMELINE_NOTIFY_DEDUPE_CAP = 8000;
+
+/**
+ * @param {string} key e.g. `mt-h-<history_id>` or `mt-p-<photo_id>`
+ * @returns {boolean} true if this is the first time for this key (caller should notify)
+ */
+function tryConsumeTimelineNotifyKey(key) {
+  const k = String(key || '').trim();
+  if (!k) return false;
+  if (timelineNotifyDedupeKeys.has(k)) return false;
+  timelineNotifyDedupeKeys.add(k);
+  while (timelineNotifyDedupeKeys.size > TIMELINE_NOTIFY_DEDUPE_CAP) {
+    const first = timelineNotifyDedupeKeys.values().next().value;
+    timelineNotifyDedupeKeys.delete(first);
+  }
+  return true;
+}
+
 function newId() {
   return `n-${Date.now()}-${crypto.randomBytes(6).toString('hex')}`;
 }
@@ -70,5 +90,6 @@ module.exports = {
   listUnreadForRider,
   markViewedForRider,
   createForRider,
+  tryConsumeTimelineNotifyKey,
   _clearAll,
 };

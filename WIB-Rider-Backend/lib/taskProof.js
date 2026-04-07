@@ -60,22 +60,99 @@ function buildTaskProofImageUrl(photoName) {
   return baseUrl ? `${baseUrl}${rel}` : rel;
 }
 
-async function fetchTaskProofPhotosWithUrls(pool, taskId) {
+/**
+ * @param {import('mysql2/promise').Pool} pool
+ * @param {number} taskId
+ * @param {number|null|undefined} [orderId] When set, also loads rows tied to the order but not this task
+ *   (e.g. proof-of-receipt saved with order_id and task_id NULL/0 — same pattern as mt_order_history).
+ */
+async function fetchTaskProofPhotosWithUrls(pool, taskId, orderId) {
+  const byId = new Map();
+  const mergeRows = (photoRows) => {
+    for (const row of photoRows || []) {
+      if (!row || row.id == null) continue;
+      byId.set(Number(row.id), row);
+    }
+  };
   try {
     const [photoRows] = await pool.query(
-      'SELECT id, task_id, photo_name, date_created, ip_address FROM mt_driver_task_photo WHERE task_id = ? ORDER BY date_created ASC',
+      'SELECT id, task_id, photo_name, date_created, ip_address FROM mt_driver_task_photo WHERE task_id = ?',
       [taskId]
     );
-    const rows = photoRows || [];
-    const task_photos = rows.map((row) => ({
-      ...row,
-      proof_url: buildTaskProofImageUrl(row.photo_name),
-    }));
-    const proof_images = task_photos.map((r) => r.proof_url).filter(Boolean);
-    return { task_photos, proof_images };
+    mergeRows(photoRows);
   } catch (e) {
     if (e.code === 'ER_NO_SUCH_TABLE' || e.code === 'ER_BAD_FIELD_ERROR') {
       return { task_photos: [], proof_images: [] };
+    }
+    throw e;
+  }
+
+  const oid =
+    orderId != null && String(orderId).trim() !== '' && String(orderId).trim() !== '0'
+      ? parseInt(String(orderId), 10)
+      : NaN;
+  if (Number.isFinite(oid) && oid > 0) {
+    try {
+      const [orderScoped] = await pool.query(
+        `SELECT id, task_id, photo_name, date_created, ip_address FROM mt_driver_task_photo
+         WHERE order_id = ? AND (task_id IS NULL OR task_id = 0)`,
+        [oid]
+      );
+      mergeRows(orderScoped);
+    } catch (e) {
+      if (e.code !== 'ER_BAD_FIELD_ERROR' && e.code !== 'ER_NO_SUCH_TABLE') throw e;
+    }
+  }
+
+  const rows = Array.from(byId.values()).sort((a, b) => {
+    const ta = a.date_created ? new Date(a.date_created).getTime() : 0;
+    const tb = b.date_created ? new Date(b.date_created).getTime() : 0;
+    if (ta !== tb) return ta - tb;
+    return Number(a.id) - Number(b.id);
+  });
+  const task_photos = rows.map((row) => ({
+    ...row,
+    proof_url: buildTaskProofImageUrl(row.photo_name),
+  }));
+  const proof_images = task_photos.map((r) => r.proof_url).filter(Boolean);
+  return { task_photos, proof_images };
+}
+
+/**
+ * Insert one proof row; includes order_id when the column exists and a positive orderId is provided.
+ * @param {import('mysql2/promise').Pool|import('mysql2/promise').PoolConnection} executor
+ * @returns {Promise<number|undefined>} insertId when available
+ */
+async function insertDriverTaskPhotoRow(executor, taskId, photoName, ip, orderId) {
+  const ipVal = ip || null;
+  const oid =
+    orderId != null && String(orderId).trim() !== '' && String(orderId).trim() !== '0'
+      ? parseInt(String(orderId), 10)
+      : NaN;
+  try {
+    if (Number.isFinite(oid) && oid > 0) {
+      const [ins] = await executor.query(
+        'INSERT INTO mt_driver_task_photo (task_id, order_id, photo_name, date_created, ip_address) VALUES (?, ?, ?, NOW(), ?)',
+        [taskId, oid, photoName, ipVal]
+      );
+      return ins.insertId;
+    }
+  } catch (e) {
+    if (e.code !== 'ER_BAD_FIELD_ERROR') throw e;
+  }
+  try {
+    const [ins] = await executor.query(
+      'INSERT INTO mt_driver_task_photo (task_id, photo_name, date_created, ip_address) VALUES (?, ?, NOW(), ?)',
+      [taskId, photoName, ipVal]
+    );
+    return ins.insertId;
+  } catch (e) {
+    if (e.code === 'ER_BAD_FIELD_ERROR') {
+      const [ins2] = await executor.query('INSERT INTO mt_driver_task_photo (task_id, photo_name) VALUES (?, ?)', [
+        taskId,
+        photoName,
+      ]);
+      return ins2.insertId;
     }
     throw e;
   }
@@ -85,4 +162,5 @@ module.exports = {
   buildTaskProofImageUrl,
   fetchTaskProofPhotosWithUrls,
   sanitizeTaskProofFileName,
+  insertDriverTaskPhotoRow,
 };

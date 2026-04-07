@@ -7,6 +7,7 @@ import {
   statusDisplayClass,
   userFacingApiError,
 } from '../api';
+import { RIDER_NOTIFICATIONS_POLL_EVENT } from '../hooks/useNotifications';
 import { sanitizeLocationDisplayName, pickLocalizedMenuString } from '../utils/displayText';
 import { getAdvanceOrderLines, formatDbTimeTo12h } from '../utils/advanceOrder';
 import MapView from './MapView';
@@ -151,6 +152,24 @@ function historyRowIsRiderAcceptance(row) {
     if (key === 'orderassigned' || key === 'driverassigned') return true;
   }
   return false;
+}
+
+/** Timeline poll / toast: accepted, started, in progress, successful (matches server fan-out). */
+function classifyHistoryRowForTimelineNotify(row) {
+  if (!row || typeof row !== 'object') return null;
+  const keys = [
+    normalizeTimelineStatusKey(row.status),
+    normalizeTimelineStatusKey(row.description),
+    normalizeTimelineStatusKey(row.remarks),
+    normalizeTimelineStatusKey(row.reason),
+    normalizeTimelineStatusKey(row.notes),
+  ].filter(Boolean);
+  if (keys.some((k) => k === 'successful' || k === 'completed' || k === 'delivered')) return 'successful';
+  if (keys.some((k) => k === 'inprogress')) return 'inprogress';
+  if (keys.some((k) => k === 'started')) return 'started';
+  if (historyRowIsRiderAcceptance(row)) return 'accepted';
+  if (keys.some((k) => k === 'acknowledged' || k === 'accepted' || k === 'accept')) return 'accepted';
+  return null;
 }
 
 /**
@@ -540,6 +559,10 @@ export default function TaskDetailsModal({
   const [locationPreview, setLocationPreview] = useState(null);
   const [directionsContext, setDirectionsContext] = useState(null);
   const errandMapFocusedForTaskIdRef = useRef(null);
+  const timelinePollInitRef = useRef(false);
+  const timelineCursorHRef = useRef(0);
+  const timelineCursorPRef = useRef(0);
+  const timelineToastedRef = useRef(new Set());
 
   useEffect(() => {
     errandMapFocusedForTaskIdRef.current = null;
@@ -558,6 +581,10 @@ export default function TaskDetailsModal({
 
   useEffect(() => {
     if (!taskId) {
+      timelinePollInitRef.current = false;
+      timelineCursorHRef.current = 0;
+      timelineCursorPRef.current = 0;
+      timelineToastedRef.current = new Set();
       setData(null);
       setOrderHistory([]);
       setOrderHistoryProofImages([]);
@@ -572,6 +599,10 @@ export default function TaskDetailsModal({
       setDirectionsContext(null);
       return;
     }
+    timelinePollInitRef.current = false;
+    timelineCursorHRef.current = 0;
+    timelineCursorPRef.current = 0;
+    timelineToastedRef.current = new Set();
     setData(null);
     setOrderHistory([]);
     setOrderHistoryProofImages([]);
@@ -685,6 +716,117 @@ export default function TaskDetailsModal({
         setOrderHistoryProofImages([]);
       });
   }, [taskId, data?.task, data?.order_history, data?.mt_order_history]);
+
+  useEffect(() => {
+    if (!taskId || Number(taskId) < 0) return undefined;
+    if (data?.task_source === 'errand') return undefined;
+    if (!data?.task) return undefined;
+
+    let cancelled = false;
+    const pollMs = 12_000;
+
+    const mergeHistory = (rows) => {
+      setOrderHistory((prev) => {
+        const m = new Map((prev || []).filter(Boolean).map((r) => [Number(r.id), r]));
+        for (const row of rows) {
+          if (row && row.id != null) m.set(Number(row.id), row);
+        }
+        return Array.from(m.values()).sort((a, b) => {
+          const ta = a.date_created ? new Date(a.date_created).getTime() : 0;
+          const tb = b.date_created ? new Date(b.date_created).getTime() : 0;
+          if (ta !== tb) return ta - tb;
+          return Number(a.id) - Number(b.id);
+        });
+      });
+    };
+
+    const mergePhotos = (photos) => {
+      setData((prev) => {
+        if (!prev) return prev;
+        const existing = Array.isArray(prev.task_photos) ? prev.task_photos : [];
+        const m = new Map(existing.map((p) => [Number(p.id), p]));
+        for (const p of photos) {
+          if (p && p.id != null) m.set(Number(p.id), p);
+        }
+        const task_photos = Array.from(m.values()).sort((a, b) => {
+          const da = a.date_created ? new Date(a.date_created).getTime() : 0;
+          const db = b.date_created ? new Date(b.date_created).getTime() : 0;
+          return da - db;
+        });
+        const proof_images = task_photos.map((r) => r.proof_url).filter(Boolean);
+        return { ...prev, task_photos, proof_images };
+      });
+    };
+
+    async function tick() {
+      if (cancelled || document.visibilityState !== 'visible') return;
+      try {
+        const afterH = timelinePollInitRef.current ? timelineCursorHRef.current : 0;
+        const afterP = timelinePollInitRef.current ? timelineCursorPRef.current : 0;
+        const qs = new URLSearchParams({
+          after_history_id: String(afterH),
+          after_photo_id: String(afterP),
+        });
+        const res = await api(`tasks/${taskId}/timeline-updates?${qs.toString()}`);
+        if (cancelled || !res || typeof res !== 'object') return;
+
+        const curH = Number(res.cursor_history) || 0;
+        const curP = Number(res.cursor_photo) || 0;
+        const hist = Array.isArray(res.history_events) ? res.history_events : [];
+        const photos = Array.isArray(res.photo_events) ? res.photo_events : [];
+
+        if (!timelinePollInitRef.current) {
+          timelinePollInitRef.current = true;
+          timelineCursorHRef.current = curH;
+          timelineCursorPRef.current = curP;
+          return;
+        }
+
+        let notifyBell = false;
+        for (const row of hist) {
+          const hid = row.id != null ? Number(row.id) : NaN;
+          if (!Number.isFinite(hid)) continue;
+          const key = `h-${hid}`;
+          if (timelineToastedRef.current.has(key)) continue;
+          const cat = classifyHistoryRowForTimelineNotify(row);
+          if (!cat) continue;
+          timelineToastedRef.current.add(key);
+          notifyBell = true;
+        }
+
+        for (const ph of photos) {
+          const pid = ph.id != null ? Number(ph.id) : NaN;
+          if (!Number.isFinite(pid)) continue;
+          const key = `p-${pid}`;
+          if (timelineToastedRef.current.has(key)) continue;
+          timelineToastedRef.current.add(key);
+          notifyBell = true;
+        }
+
+        timelineCursorHRef.current = curH;
+        timelineCursorPRef.current = curP;
+        if (hist.length) mergeHistory(hist);
+        if (photos.length) mergePhotos(photos);
+
+        if (notifyBell) {
+          try {
+            window.dispatchEvent(new CustomEvent(RIDER_NOTIFICATIONS_POLL_EVENT, { detail: { delayMs: 200 } }));
+          } catch (_) {
+            /* ignore */
+          }
+        }
+      } catch (_) {
+        /* ignore transient errors */
+      }
+    }
+
+    tick();
+    const intervalId = setInterval(tick, pollMs);
+    return () => {
+      cancelled = true;
+      clearInterval(intervalId);
+    };
+  }, [taskId, data?.task, data?.task_source]);
 
   const taskStartMapCoords = useMemo(() => {
     if (!taskId) return null;
