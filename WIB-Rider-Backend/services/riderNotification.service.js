@@ -1,14 +1,18 @@
 /**
- * In-memory rider (dashboard admin) notifications — swap for DB later.
- * Scoped by riderId (never from client body).
+ * In-memory rider (dashboard admin) notifications — no DB table.
+ * Single Node process only: PM2 cluster / multiple API instances each have their own empty store.
  */
+
+const crypto = require('crypto');
 
 /** @typedef {{ id: string, riderId: string, title: string, message: string, type: string, viewed: boolean, createdAt: Date }} RiderNotification */
 
 /** @type {RiderNotification[]} */
 let notifications = [];
 
-let idCounter = 1;
+function newId() {
+  return `n-${Date.now()}-${crypto.randomBytes(6).toString('hex')}`;
+}
 
 /**
  * @param {string} riderId
@@ -22,7 +26,7 @@ function listUnreadForRider(riderId) {
 /**
  * @param {string} riderId
  * @param {string[]} notificationIds
- * @returns {number} count marked
+ * @returns {number}
  */
 function markViewedForRider(riderId, notificationIds) {
   const rid = String(riderId);
@@ -45,12 +49,11 @@ function markViewedForRider(riderId, notificationIds) {
  */
 function createForRider(riderId, payload) {
   const rid = String(riderId);
-  const id = `n-${Date.now()}-${idCounter++}`;
   const row = {
-    id,
+    id: newId(),
     riderId: rid,
     title: (payload?.title || 'Notification').toString().trim() || 'Notification',
-    message: (payload?.message || '').toString(),
+    message: payload?.message != null ? String(payload.message) : '',
     type: (payload?.type || 'info').toString().trim() || 'info',
     viewed: false,
     createdAt: new Date(),
@@ -59,7 +62,6 @@ function createForRider(riderId, payload) {
   return row;
 }
 
-/** Test helper: reset store (optional). */
 function _clearAll() {
   notifications = [];
 }

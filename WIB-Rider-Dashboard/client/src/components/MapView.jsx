@@ -111,7 +111,7 @@ function MapLegend() {
         <li className="map-legend-item">
           <span className="map-legend-swatch map-legend-swatch--errand" aria-hidden />
           <span className="map-legend-text">
-            <strong>Errand order</strong>
+            <strong>Mangan Order</strong>
             <span className="map-legend-desc">ErrandWib drop-off</span>
           </span>
         </li>

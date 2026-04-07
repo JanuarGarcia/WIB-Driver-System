@@ -1231,7 +1231,7 @@ export default function TaskDetailsModal({
       >
         <div className="modal-header">
           <h3>
-            {isErrandTask ? 'Errand order' : 'Task ID'} :{' '}
+            {isErrandTask ? 'Mangan Order' : 'Task ID'} :{' '}
             {isErrandTask && task?.st_order_id != null
               ? task.st_order_id
               : task?.task_id ?? taskId ?? '…'}
@@ -1698,7 +1698,7 @@ export default function TaskDetailsModal({
           >
             <div className="modal-header">
               <h3 id="task-assign-modal-title">
-                {isErrandTask ? 'Errand order' : 'Task ID'} :{' '}
+                {isErrandTask ? 'Mangan Order' : 'Task ID'} :{' '}
                 {isErrandTask && task?.st_order_id != null ? task.st_order_id : task?.task_id ?? taskId ?? '…'}
               </h3>
               <button
@@ -1813,7 +1813,7 @@ export default function TaskDetailsModal({
           >
             <div className="modal-header">
               <h3 id="task-change-status-modal-title">
-                {isErrandTask ? 'Errand order' : 'Task ID'} : {taskManagementDisplayId ?? '…'}
+                {isErrandTask ? 'Mangan Order' : 'Task ID'} : {taskManagementDisplayId ?? '…'}
               </h3>
               <button
                 type="button"

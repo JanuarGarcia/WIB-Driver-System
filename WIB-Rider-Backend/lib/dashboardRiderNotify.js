@@ -1,5 +1,5 @@
 /**
- * Fan-out dashboard (dispatcher) notifications: in-memory store polled by WIB Rider Dashboard.
+ * Fan-out dashboard (dispatcher) notifications — in-memory store (see riderNotification.service).
  * riderId === mt_admin_user.admin_id
  */
 
@@ -87,7 +87,14 @@ function foodTaskNotifyFromStatus(taskId, orderId, taskDescription, rawStatus) {
   if (norm === 'started' || norm === 'inprogress' || norm === 'in_progress') {
     return { title: 'Task in progress', message: `${label}${ordBit}`, type: 'new_task' };
   }
-  if (norm === 'unassigned' || norm === 'cancelled' || norm === 'canceled' || norm === 'declined' || norm === 'failed') {
+  if (
+    norm === 'unassigned' ||
+    norm === 'cancelled' ||
+    norm === 'canceled' ||
+    norm === 'declined' ||
+    norm === 'failed' ||
+    norm === 'rejected'
+  ) {
     const pretty = norm.charAt(0).toUpperCase() + norm.slice(1).replace(/_/g, ' ');
     return { title: `Task ${pretty}`, message: `${label}${ordBit}`, type: 'default' };
   }

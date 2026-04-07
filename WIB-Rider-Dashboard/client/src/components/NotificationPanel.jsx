@@ -46,11 +46,16 @@ function typeMeta(type) {
 /**
  * Dropdown list of session notifications — WIB dashboard styling.
  */
-export default function NotificationPanel({ items, onMarkAllRead }) {
+export default function NotificationPanel({ items, pollError, onMarkAllRead }) {
   const count = items?.length ?? 0;
 
   return (
     <div className="rider-notif-panel" role="region" aria-label="Notifications">
+      {pollError ? (
+        <div className="rider-notif-panel__error" role="alert">
+          {pollError}
+        </div>
+      ) : null}
       <header className="rider-notif-panel__header">
         <div className="rider-notif-panel__header-text">
           <h2 className="rider-notif-panel__title">Notifications</h2>

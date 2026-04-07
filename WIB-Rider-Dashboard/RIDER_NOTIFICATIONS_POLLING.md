@@ -6,7 +6,7 @@ Simple in-app alerts for the **WIB Rider Dashboard**: poll every **10s** (or **4
 
 Files:
 
-- `services/riderNotification.service.js` — in-memory store
+- `services/riderNotification.service.js` — in-memory store (no DB table; use a **single** API Node process, or notifications may look empty under PM2 cluster / multiple instances)
 - `lib/dashboardRiderNotify.js` — fan-out to every **active** `mt_admin_user` (dashboard dispatchers)
 - `controllers/riderNotifications.controller.js`
 - `routes/riderNotifications.routes.js`

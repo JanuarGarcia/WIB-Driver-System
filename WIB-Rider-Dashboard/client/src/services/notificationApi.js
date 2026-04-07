@@ -1,4 +1,5 @@
 import { getToken } from '../auth';
+import { looksLikeHtmlResponse } from '../api';
 
 /* Dev: same-origin /api → Vite proxy (vite.config.js) → backend /admin/api. Override with VITE_API_URL if needed. */
 const API_BASE = import.meta.env.VITE_API_URL || '/api';
@@ -18,8 +19,22 @@ export async function fetchRiderNotifications() {
     headers: authHeaders(),
     credentials: 'same-origin',
   });
-  const data = await r.json().catch(() => ({}));
+  const text = await r.text();
+  if (looksLikeHtmlResponse(text)) {
+    throw new Error(
+      'Notifications API returned a web page (wrong URL or /api not proxied to the rider API). Check hosting and VITE_API_URL.'
+    );
+  }
+  let data = {};
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch {
+    throw new Error('Notifications API returned invalid JSON.');
+  }
   if (!r.ok) throw new Error(typeof data.error === 'string' ? data.error : r.statusText || 'Request failed');
+  if (data.notifications != null && !Array.isArray(data.notifications)) {
+    throw new Error('Notifications API returned an unexpected shape.');
+  }
   return data;
 }
 
@@ -34,7 +49,16 @@ export async function markRiderNotificationsViewed(notificationIds) {
     credentials: 'same-origin',
     body: JSON.stringify({ notificationIds }),
   });
-  const data = await r.json().catch(() => ({}));
+  const text = await r.text();
+  if (looksLikeHtmlResponse(text)) {
+    throw new Error('Mark-viewed API returned HTML instead of JSON.');
+  }
+  let data = {};
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch {
+    throw new Error('Mark-viewed API returned invalid JSON.');
+  }
   if (!r.ok) throw new Error(typeof data.error === 'string' ? data.error : r.statusText || 'Request failed');
   return data;
 }

@@ -48,8 +48,10 @@ export function setSoundPreference(on) {
  */
 export function useNotifications() {
   const [items, setItems] = useState([]);
+  const [pollError, setPollError] = useState(null);
   const audioRef = useRef(null);
   const mountedRef = useRef(true);
+  const pollErrorLoggedRef = useRef(false);
 
   /** Bell badge: items not yet acknowledged (panel opened) or cleared. */
   const unreadCount = useMemo(() => items.filter((i) => i && !i.localRead).length, [items]);
@@ -76,11 +78,37 @@ export function useNotifications() {
     setItems((prev) => prev.map((p) => ({ ...p, localRead: true })));
   }, []);
 
+  /** Browsers often block autoplay; a click on the bell counts as a gesture so later poll sounds can play. */
+  const primeNotificationSound = useCallback(() => {
+    if (!isSoundOn() || !audioRef.current) return;
+    const el = audioRef.current;
+    try {
+      el.volume = 0.001;
+      el.play()
+        .then(() => {
+          el.pause();
+          el.currentTime = 0;
+          el.volume = 0.35;
+        })
+        .catch(() => {
+          el.volume = 0.35;
+        });
+    } catch {
+      try {
+        el.volume = 0.35;
+      } catch {
+        /* ignore */
+      }
+    }
+  }, []);
+
   const pollTick = useCallback(async () => {
     if (!mountedRef.current) return;
     if (!isAuthenticated()) {
       processedIdsGlobal.clear();
       setItems([]);
+      setPollError(null);
+      pollErrorLoggedRef.current = false;
       return;
     }
 
@@ -88,6 +116,8 @@ export function useNotifications() {
     pollInFlight = true;
     try {
       const data = await fetchRiderNotifications();
+      setPollError(null);
+      pollErrorLoggedRef.current = false;
       const list = Array.isArray(data.notifications) ? data.notifications : [];
       const fresh = list.filter((n) => n && n.id != null && !processedIdsGlobal.has(String(n.id)));
       if (fresh.length === 0) return;
@@ -129,8 +159,16 @@ export function useNotifications() {
           (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
         );
       });
-    } catch {
-      /* silent background poll */
+    } catch (err) {
+      const msg =
+        err && typeof err === 'object' && typeof err.message === 'string'
+          ? err.message
+          : 'Could not load notifications.';
+      setPollError(msg);
+      if (!pollErrorLoggedRef.current) {
+        pollErrorLoggedRef.current = true;
+        console.warn('[rider-notifications]', msg);
+      }
     } finally {
       pollInFlight = false;
     }
@@ -201,8 +239,10 @@ export function useNotifications() {
   return {
     items,
     unreadCount,
+    pollError,
     acknowledgePanelOpen,
     markAllRead,
     pollNow: pollTick,
+    primeNotificationSound,
   };
 }

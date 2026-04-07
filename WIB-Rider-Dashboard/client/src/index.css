@@ -1511,6 +1511,19 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
   background: linear-gradient(90deg, var(--color-primary), var(--color-primary-light, var(--color-primary)));
   opacity: 0.95;
 }
+.rider-notif-panel__error {
+  flex-shrink: 0;
+  padding: 0.65rem 1rem;
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  color: #b91c1c;
+  background: rgba(220, 38, 38, 0.08);
+  border-bottom: 1px solid var(--border-soft);
+}
+[data-theme="dark"] .rider-notif-panel__error {
+  color: #fca5a5;
+  background: rgba(248, 113, 113, 0.12);
+}
 .rider-notif-panel__header {
   display: flex;
   align-items: flex-start;

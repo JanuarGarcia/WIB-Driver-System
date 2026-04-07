@@ -1366,7 +1366,7 @@ const AgentPanel = forwardRef(function AgentPanel(
                         {[
                           { key: 'all', label: 'All', count: queueAssignKindCounts.all },
                           { key: 'delivery', label: 'Delivery', count: queueAssignKindCounts.delivery },
-                          { key: 'errand', label: 'Errand', count: queueAssignKindCounts.errand },
+                          { key: 'errand', label: 'MANGAN', count: queueAssignKindCounts.errand },
                         ].map(({ key, label, count }) => (
                           <button
                             key={key}
@@ -1428,8 +1428,8 @@ const AgentPanel = forwardRef(function AgentPanel(
                                   <span className="driver-queue-assign-order-label">Order</span>
                                   <span className="driver-queue-assign-order-num">{orderDigits}</span>
                                   {isErrand ? (
-                                    <span className="driver-queue-assign-errand-badge" title="Errand order (ErrandWib)">
-                                      Errand
+                                    <span className="driver-queue-assign-errand-badge" title="Mangan Order (ErrandWib)">
+                                      MANGAN
                                     </span>
                                   ) : null}
                                 </div>

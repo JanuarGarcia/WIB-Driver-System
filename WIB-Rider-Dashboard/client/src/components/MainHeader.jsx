@@ -40,7 +40,14 @@ export default function MainHeader({ onMenuClick, onOpenNewTask }) {
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const notifRef = useRef(null);
 
-  const { items: riderNotifications, unreadCount, markAllRead, acknowledgePanelOpen } = useNotifications();
+  const {
+    items: riderNotifications,
+    unreadCount,
+    pollError,
+    markAllRead,
+    acknowledgePanelOpen,
+    primeNotificationSound,
+  } = useNotifications();
 
   useEffect(() => {
     if (!notificationsOpen) return;
@@ -104,10 +111,13 @@ export default function MainHeader({ onMenuClick, onOpenNewTask }) {
           <NotificationBell
             unreadCount={unreadCount}
             isOpen={notificationsOpen}
-            onToggle={() => setNotificationsOpen((o) => !o)}
+            onToggle={() => {
+              primeNotificationSound();
+              setNotificationsOpen((o) => !o);
+            }}
           />
           {notificationsOpen ? (
-            <NotificationPanel items={riderNotifications} onMarkAllRead={handleMarkAllRead} />
+            <NotificationPanel items={riderNotifications} pollError={pollError} onMarkAllRead={handleMarkAllRead} />
           ) : null}
         </div>
         <Link to="/settings" className="main-header-icon" aria-label="Settings" title="App settings, map keys, and preferences">

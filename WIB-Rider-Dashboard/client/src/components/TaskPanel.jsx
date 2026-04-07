@@ -836,8 +836,8 @@ export default function TaskPanel({ onOpenTaskDetails, onFocusTaskOnMap, listRev
                       <span className="task-card-v2-order-label">Order No.</span>
                       <span className="task-card-v2-order-num">{shortTaskOrderDigits(t.order_id, t.task_id)}</span>
                       {t.task_source === 'errand' && (
-                        <span className="task-card-v2-errand-badge" title="Errand order (ErrandWib)">
-                          Errand
+                        <span className="task-card-v2-errand-badge" title="Mangan Order (ErrandWib)">
+                          MANGAN
                         </span>
                       )}
                     </span>

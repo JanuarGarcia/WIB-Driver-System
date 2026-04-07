@@ -128,7 +128,7 @@ export default function DriverDetailsModal({
 
           {!state.loading && !state.error && summaryDriver?.driver_source === 'errand' && (
             <p className="agent-detail-modal-subtitle">
-              Errand rider (ErrandWib). Task history for this rider is on errand orders, not the food-delivery task list
+              Mangan rider (ErrandWib). Task history for this rider is on Mangan orders, not the food-delivery task list
               below.
             </p>
           )}
