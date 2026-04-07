@@ -808,9 +808,22 @@ export default function TaskDetailsModal({
     setDeleteConfirmOpen(false);
   };
 
+  const resolveErrandOrderId = () => {
+    const tid = Number(taskId);
+    if (Number.isFinite(tid) && tid < 0) return Math.abs(tid);
+    const st = data?.task?.st_order_id;
+    if (data?.task_source === 'errand' && st != null) {
+      const n = parseInt(String(st), 10);
+      if (Number.isFinite(n) && n > 0) return n;
+    }
+    return null;
+  };
+
   const confirmDeleteTask = () => {
+    const errandOid = resolveErrandOrderId();
     setActionLoading(true);
-    api(`tasks/${taskId}`, { method: 'DELETE' })
+    const delPath = errandOid != null ? `errand-orders/${errandOid}` : `tasks/${taskId}`;
+    api(delPath, { method: 'DELETE' })
       .then(() => {
         setDeleteConfirmOpen(false);
         onTaskListInvalidate?.();
@@ -842,13 +855,17 @@ export default function TaskDetailsModal({
     e.preventDefault();
     const status = (changeStatusValue || '').trim();
     if (!status) return;
+    const errandOid = resolveErrandOrderId();
+    const statusPath =
+      errandOid != null ? `errand-orders/${errandOid}/status` : `tasks/${taskId}/status`;
+    const refreshPath = errandOid != null ? `errand-orders/${errandOid}` : `tasks/${taskId}`;
     setActionLoading(true);
-    api(`tasks/${taskId}/status`, { method: 'PUT', body: JSON.stringify({ status, reason: (changeStatusReason || '').trim() || undefined }) })
+    api(statusPath, { method: 'PUT', body: JSON.stringify({ status, reason: (changeStatusReason || '').trim() || undefined }) })
       .then(() => {
         setChangeStatusOpen(false);
         setChangeStatusValue('');
         setChangeStatusReason('');
-        return api(`tasks/${taskId}`)
+        return api(refreshPath)
           .then((res) => {
             if (res && typeof res === 'object' && !res.error) setData(res);
             onTaskListInvalidate?.();
@@ -914,11 +931,13 @@ export default function TaskDetailsModal({
     e.preventDefault();
     const t = data?.task ?? data;
     if (!t) return;
+    const errandOid = resolveErrandOrderId();
     const origDriver = t.driver_id != null ? Number(t.driver_id) : 0;
     const origTeam = t.team_id != null ? Number(t.team_id) : 0;
     const newDriver = editDriverId ? parseInt(editDriverId, 10) : 0;
     const newTeam = editTeamId ? parseInt(editTeamId, 10) : 0;
     const assignChanged =
+      errandOid == null &&
       newDriver > 0 &&
       newTeam > 0 &&
       (newDriver !== origDriver || newTeam !== origTeam);
@@ -933,7 +952,10 @@ export default function TaskDetailsModal({
     };
 
     setActionLoading(true);
-    api(`tasks/${taskId}`, { method: 'PUT', body: JSON.stringify(body) })
+    const savePath = errandOid != null ? `errand-orders/${errandOid}` : `tasks/${taskId}`;
+    const refreshPath = errandOid != null ? `errand-orders/${errandOid}` : `tasks/${taskId}`;
+
+    api(savePath, { method: 'PUT', body: JSON.stringify(body) })
       .then(() => {
         if (assignChanged) {
           return api(`tasks/${taskId}/assign`, {
@@ -941,8 +963,9 @@ export default function TaskDetailsModal({
             body: JSON.stringify({ driver_id: newDriver, team_id: newTeam }),
           });
         }
+        return undefined;
       })
-      .then(() => api(`tasks/${taskId}`))
+      .then(() => api(refreshPath))
       .then((res) => {
         if (res && typeof res === 'object' && !res.error) setData(res);
         setEditOpen(false);
@@ -965,6 +988,15 @@ export default function TaskDetailsModal({
 
   const task = data && (data.task ?? data);
   const isErrandTask = data?.task_source === 'errand' || Number(taskId) < 0;
+  const taskManagementDisplayId = (() => {
+    if (isErrandTask) {
+      if (task?.st_order_id != null) return task.st_order_id;
+      const t = Number(taskId);
+      if (Number.isFinite(t) && t < 0) return Math.abs(t);
+      return taskId;
+    }
+    return task?.task_id ?? taskId;
+  })();
   const order = data?.order ?? null;
   const orderDetails = Array.isArray(data?.order_details) ? data.order_details : [];
   const merchant = data?.merchant ?? null;
@@ -1568,10 +1600,10 @@ export default function TaskDetailsModal({
                     )}
                   </>
                 )}
-                {!isErrandTask && !changeStatusOpen && !editOpen && !assignOpen && (
-                  <button type="button" className="btn" onClick={openEdit} disabled={actionLoading}>Edit</button>
+                {!changeStatusOpen && !editOpen && !assignOpen && (
+                  <button type="button" className="btn" onClick={openEdit} disabled={actionLoading}>Edit task</button>
                 )}
-                {!isErrandTask && !changeStatusOpen && !editOpen && !assignOpen && (
+                {!changeStatusOpen && !editOpen && !assignOpen && (
                   <button type="button" className="btn" onClick={openChangeStatus} disabled={actionLoading}>Change status</button>
                 )}
                 {directionsMapSettings && (
@@ -1582,9 +1614,7 @@ export default function TaskDetailsModal({
                 {directionsUrl && (
                   <a href={directionsUrl} target="_blank" rel="noopener noreferrer" className="btn">Open in Google Maps</a>
                 )}
-                {!isErrandTask && (
-                  <button type="button" className="btn" onClick={openDeleteConfirm} disabled={actionLoading}>Delete task</button>
-                )}
+                <button type="button" className="btn" onClick={openDeleteConfirm} disabled={actionLoading}>Delete task</button>
                 <button type="button" className="btn" onClick={handleClose}>Close</button>
               </div>
             </>
@@ -1719,7 +1749,9 @@ export default function TaskDetailsModal({
             onClick={(e) => e.stopPropagation()}
           >
             <div className="modal-header">
-              <h3 id="task-change-status-modal-title">Task ID : {task?.task_id ?? taskId ?? '…'}</h3>
+              <h3 id="task-change-status-modal-title">
+                {isErrandTask ? 'Errand order' : 'Task ID'} : {taskManagementDisplayId ?? '…'}
+              </h3>
               <button
                 type="button"
                 className="task-detail-edit-modal-close"
@@ -1808,8 +1840,8 @@ export default function TaskDetailsModal({
                 This removes the task from the system permanently. Orders or history linked to it may be affected.
               </p>
               <div className="task-delete-confirm-id-row">
-                <span className="task-delete-confirm-id-label">Task ID</span>
-                <span className="task-delete-confirm-id-value">#{task?.task_id ?? taskId}</span>
+                <span className="task-delete-confirm-id-label">{isErrandTask ? 'Order' : 'Task ID'}</span>
+                <span className="task-delete-confirm-id-value">#{taskManagementDisplayId ?? taskId}</span>
               </div>
               <div className="task-detail-delete-confirm-actions">
                 <button
@@ -1845,7 +1877,10 @@ export default function TaskDetailsModal({
             <h1 id="task-edit-modal-title" className="new-task-modal-title">
               Edit task
               {task?.task_id != null ? (
-                <span className="task-detail-edit-task-id"> · Task ID {task.task_id}</span>
+                <span className="task-detail-edit-task-id">
+                  {' '}
+                  · {isErrandTask ? 'Order' : 'Task ID'} {taskManagementDisplayId ?? task.task_id}
+                </span>
               ) : null}
             </h1>
             <button type="button" className="new-task-modal-close" onClick={() => setEditOpen(false)} aria-label="Close" disabled={actionLoading}>

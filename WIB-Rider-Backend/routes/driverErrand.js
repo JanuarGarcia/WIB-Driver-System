@@ -15,6 +15,9 @@ const {
   fetchErrandClientAddressesByClientIds,
   fetchErrandLatestHistoryStatusByOrderIds,
   pickClientAddressRow,
+  fetchErrandStDriversByIds,
+  fetchMtDriverTeamNamesByIds,
+  resolveErrandDriverDetail,
 } = require('../lib/errandOrders');
 const { normalizeIncomingStatusRaw } = require('../lib/errandDriverStatus');
 const {
@@ -132,15 +135,9 @@ async function loadErrandOrderRow(orderId) {
 async function buildDetailPayloadForOrder(orderId) {
   const row = await loadErrandOrderRow(orderId);
   if (!row) return null;
-  let driverName = null;
   const did = orderDriverId(row);
-  if (did != null && did > 0) {
-    const [[d]] = await pool.query(
-      `SELECT CONCAT(COALESCE(first_name,''), ' ', COALESCE(last_name,'')) AS full_name FROM mt_driver WHERE driver_id = ? LIMIT 1`,
-      [did]
-    );
-    driverName = d?.full_name != null ? String(d.full_name).trim() : null;
-  }
+  const driverDetail =
+    did != null && did > 0 ? await resolveErrandDriverDetail(errandWibPool, pool, did) : null;
   let merchantRow = null;
   if (row.merchant_id != null && String(row.merchant_id).trim() !== '') {
     const mid = parseInt(String(row.merchant_id), 10);
@@ -177,7 +174,7 @@ async function buildDetailPayloadForOrder(orderId) {
   ]);
   const payload = buildErrandTaskDetailPayload(
     row,
-    driverName,
+    driverDetail,
     merchantRow,
     clientRow,
     clientAddressRow,
@@ -324,7 +321,19 @@ router.post('/GetErrandOrders', validateApiKey, resolveDriver, async (req, res) 
     ]
       .map((id) => parseInt(String(id), 10))
       .filter((n) => Number.isFinite(n));
-    const driverNameById = await fetchDriverNameMap(driverIds);
+    const errandDriverById = await fetchErrandStDriversByIds(errandWibPool, driverIds);
+    const needMtNames = driverIds.filter(
+      (id) => !errandDriverById.has(String(id)) || !errandDriverById.get(String(id))?.full_name
+    );
+    const mtDriverNameById = await fetchDriverNameMap(needMtNames);
+    const teamIdsForErrand = [
+      ...new Set(
+        [...errandDriverById.values()]
+          .map((v) => v.team_id)
+          .filter((tid) => tid != null && Number.isFinite(tid) && tid > 0)
+      ),
+    ];
+    const teamNameById = await fetchMtDriverTeamNamesByIds(pool, teamIdsForErrand);
     const merchantIds = list
       .map((r) => r.merchant_id)
       .filter((id) => id != null && String(id).trim() !== '')
@@ -345,7 +354,16 @@ router.post('/GetErrandOrders', validateApiKey, resolveDriver, async (req, res) 
       .filter((n) => Number.isFinite(n) && n > 0);
     const latestHistoryStatusByOrderId = await fetchErrandLatestHistoryStatusByOrderIds(errandWibPool, orderIds);
     const data = list.map((r) =>
-      mapStOrderRowToTaskListRow(r, driverNameById, merchantById, clientById, clientAddressesByClientId, latestHistoryStatusByOrderId)
+      mapStOrderRowToTaskListRow(
+        r,
+        errandDriverById,
+        mtDriverNameById,
+        merchantById,
+        clientById,
+        clientAddressesByClientId,
+        latestHistoryStatusByOrderId,
+        teamNameById
+      )
     );
     for (const row of data) {
       if (row.order_id != null) {
@@ -566,7 +584,7 @@ router.post(
         if (e.code === 'ER_NO_SUCH_TABLE') {
           return error(
             res,
-            'Proof storage not configured — run WIB-Rider-Backend/sql/wib_errand_driver_proof.sql on the ErrandWib database (creates wib_errand_driver_proof or mt_errand_driver_proof)'
+            'Proof storage not configured — run WIB-Rider-Backend/sql/st_driver_errand_photo.sql on the ErrandWib database (or legacy sql/wib_errand_driver_proof.sql)'
           );
         }
         return error(res, e.message || 'Failed to save proof');

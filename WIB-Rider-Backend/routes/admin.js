@@ -17,7 +17,11 @@ const {
   fetchErrandClientAddressesByClientIds,
   fetchErrandLatestHistoryStatusByOrderIds,
   pickClientAddressRow,
+  fetchErrandStDriversByIds,
+  fetchMtDriverTeamNamesByIds,
+  resolveErrandDriverDetail,
 } = require('../lib/errandOrders');
+const { normalizeIncomingStatusRaw, CANONICAL: ERRAND_CANONICAL_STATUSES } = require('../lib/errandDriverStatus');
 const { success, error } = require('../lib/response');
 const { sendPushToDriver, sendPushToAllDrivers, resetFirebase, initFirebase } = require('../services/fcm');
 const { fetchTaskProofPhotosWithUrls } = require('../lib/taskProof');
@@ -2079,18 +2083,32 @@ router.get('/tasks', async (req, res) => {
             list.map((r) => r.driver_id).filter((id) => id != null && String(id).trim() !== '')
           ),
         ].map((id) => parseInt(String(id), 10)).filter((n) => Number.isFinite(n));
-        const driverNameById = new Map();
-        if (driverIds.length) {
-          const ph = driverIds.map(() => '?').join(',');
-          const [drows] = await pool.query(
-            `SELECT driver_id, CONCAT(COALESCE(first_name,''), ' ', COALESCE(last_name,'')) AS full_name
-             FROM mt_driver WHERE driver_id IN (${ph})`,
-            driverIds
-          );
-          for (const d of drows || []) {
-            driverNameById.set(String(d.driver_id), String(d.full_name || '').trim() || null);
+        const errandDriverById = await fetchErrandStDriversByIds(errandWibPool, driverIds);
+        const needMtNames = driverIds.filter((id) => !errandDriverById.has(String(id)) || !errandDriverById.get(String(id))?.full_name);
+        const mtDriverNameById = new Map();
+        if (needMtNames.length) {
+          const ph = needMtNames.map(() => '?').join(',');
+          try {
+            const [drows] = await pool.query(
+              `SELECT driver_id, CONCAT(COALESCE(first_name,''), ' ', COALESCE(last_name,'')) AS full_name
+               FROM mt_driver WHERE driver_id IN (${ph})`,
+              needMtNames
+            );
+            for (const d of drows || []) {
+              mtDriverNameById.set(String(d.driver_id), String(d.full_name || '').trim() || null);
+            }
+          } catch (_) {
+            /* optional */
           }
         }
+        const teamIdsForErrand = [
+          ...new Set(
+            [...errandDriverById.values()]
+              .map((v) => v.team_id)
+              .filter((tid) => tid != null && Number.isFinite(tid) && tid > 0)
+          ),
+        ];
+        const teamNameById = await fetchMtDriverTeamNamesByIds(pool, teamIdsForErrand);
         const merchantIds = list
           .map((r) => r.merchant_id)
           .filter((id) => id != null && String(id).trim() !== '')
@@ -2113,11 +2131,13 @@ router.get('/tasks', async (req, res) => {
         const errandMapped = list.map((r) =>
           mapStOrderRowToTaskListRow(
             r,
-            driverNameById,
+            errandDriverById,
+            mtDriverNameById,
             merchantById,
             clientById,
             clientAddressesByClientId,
-            latestHistoryStatusByOrderId
+            latestHistoryStatusByOrderId,
+            teamNameById
           )
         );
         rows = [...rows, ...errandMapped].sort((a, b) => {
@@ -2222,22 +2242,58 @@ router.put('/tasks/:id/assign', express.json(), async (req, res) => {
   }
 });
 
-// ---- Errand DB (wheninba_ErrandWib.st_ordernew): detail + assign (driver IDs match mt_driver on primary DB) ----
+// ---- Errand DB (wheninba_ErrandWib.st_ordernew): detail + assign (drivers: st_driver on ErrandWib; optional mt_driver name fallback) ----
+
+/**
+ * Append admin/dispatcher timeline row to st_ordernew_history (schema variants).
+ * @param {import('mysql2/promise').Pool} errandPool
+ * @param {number} orderId
+ * @param {string} statusCanonical
+ * @param {string} [remarks]
+ */
+async function appendErrandAdminHistory(errandPool, orderId, statusCanonical, remarks) {
+  const st = String(statusCanonical || '').trim().toLowerCase() || 'updated';
+  const rem = remarks != null && String(remarks).trim() ? String(remarks).trim() : '';
+
+  /** @type {[string, unknown[]][]} */
+  const attempts = [];
+  if (rem) {
+    attempts.push([
+      'INSERT INTO st_ordernew_history (order_id, status, remarks, date_created) VALUES (?, ?, ?, NOW())',
+      [orderId, st, rem],
+    ]);
+    attempts.push([
+      'INSERT INTO st_ordernew_history (order_id, status, remarks, date_added) VALUES (?, ?, ?, NOW())',
+      [orderId, st, rem],
+    ]);
+  }
+  attempts.push(
+    ['INSERT INTO st_ordernew_history (order_id, status, date_created) VALUES (?, ?, NOW())', [orderId, st]],
+    ['INSERT INTO st_ordernew_history (order_id, status, date_added) VALUES (?, ?, NOW())', [orderId, st]],
+    ['INSERT INTO st_ordernew_history (order_id, status) VALUES (?, ?)', [orderId, st]]
+  );
+
+  for (const [sql, params] of attempts) {
+    try {
+      await errandPool.query(sql, params);
+      return;
+    } catch (_) {
+      /* schema differs — try next */
+    }
+  }
+}
+
 router.get('/errand-orders/:orderId', async (req, res) => {
   const orderId = parseInt(req.params.orderId, 10);
   if (!Number.isFinite(orderId)) return res.status(400).json({ error: 'Invalid order id' });
   try {
     const [[row]] = await errandWibPool.query('SELECT * FROM st_ordernew WHERE order_id = ? LIMIT 1', [orderId]);
     if (!row) return res.status(404).json({ error: 'Errand order not found' });
-    let driverName = null;
+    let driverDetail = null;
     if (row.driver_id != null && String(row.driver_id).trim() !== '') {
       const did = parseInt(String(row.driver_id), 10);
       if (Number.isFinite(did)) {
-        const [[d]] = await pool.query(
-          `SELECT CONCAT(COALESCE(first_name,''), ' ', COALESCE(last_name,'')) AS full_name FROM mt_driver WHERE driver_id = ? LIMIT 1`,
-          [did]
-        );
-        driverName = d?.full_name != null ? String(d.full_name).trim() : null;
+        driverDetail = await resolveErrandDriverDetail(errandWibPool, pool, did);
       }
     }
     let merchantRow = null;
@@ -2277,7 +2333,7 @@ router.get('/errand-orders/:orderId', async (req, res) => {
     return res.json(
       buildErrandTaskDetailPayload(
         row,
-        driverName,
+        driverDetail,
         merchantRow,
         clientRow,
         clientAddressRow,
@@ -2346,6 +2402,239 @@ router.put('/errand-orders/:orderId/assign', express.json(), async (req, res) =>
           'UPDATE failed — check st_ordernew columns (driver_id, delivery_status, assigned_at, date_modified).',
       });
     }
+    if (e.code === 'ER_NO_SUCH_TABLE') {
+      return res.status(503).json({ error: 'Errand orders table not found' });
+    }
+    throw e;
+  }
+});
+
+router.put('/errand-orders/:orderId', express.json(), async (req, res) => {
+  const orderId = parseInt(req.params.orderId, 10);
+  if (!Number.isFinite(orderId)) return res.status(400).json({ error: 'Invalid order id' });
+  const body = req.body || {};
+  try {
+    const [[orderRow]] = await errandWibPool.query('SELECT * FROM st_ordernew WHERE order_id = ? LIMIT 1', [orderId]);
+    if (!orderRow) return res.status(404).json({ error: 'Errand order not found' });
+
+    let didSomething = false;
+
+    const splitCustomerName = (full) => {
+      const s = String(full ?? '').trim();
+      if (!s) return { first_name: '', last_name: '' };
+      const i = s.indexOf(' ');
+      if (i === -1) return { first_name: s, last_name: '' };
+      return { first_name: s.slice(0, i).trim(), last_name: s.slice(i + 1).trim() };
+    };
+
+    const toMysqlDatetime = (v) => {
+      if (v == null || v === '') return null;
+      const s = String(v).trim();
+      if (s.length >= 16 && s[10] === 'T') return `${s.slice(0, 10)} ${s.slice(11, 16)}:00`;
+      if (s.length >= 10) return `${s.slice(0, 10)} 00:00:00`;
+      return s;
+    };
+
+    const cid =
+      orderRow.client_id != null && String(orderRow.client_id).trim() !== ''
+        ? parseInt(String(orderRow.client_id), 10)
+        : NaN;
+
+    if (Number.isFinite(cid) && cid > 0) {
+      const cUp = [];
+      const cParams = [];
+      if (body.customer_name !== undefined) {
+        const { first_name: fn, last_name: ln } = splitCustomerName(body.customer_name);
+        cUp.push('first_name = ?', 'last_name = ?');
+        cParams.push(fn || null, ln || null);
+      }
+      if (body.email_address !== undefined) {
+        cUp.push('email_address = ?');
+        cParams.push(String(body.email_address || '').trim() || null);
+      }
+      if (body.contact_number !== undefined) {
+        const ph = String(body.contact_number || '').trim() || null;
+        cUp.push('contact_phone = ?');
+        cParams.push(ph);
+      }
+      if (cUp.length) {
+        await errandWibPool.query(`UPDATE st_client SET ${cUp.join(', ')} WHERE client_id = ?`, [...cParams, cid]);
+        didSomething = true;
+      }
+
+      if (body.delivery_address !== undefined) {
+        const addrMap = await fetchErrandClientAddressesByClientIds(errandWibPool, [cid]);
+        const addrList = addrMap.get(String(cid)) || [];
+        const addrRow = pickClientAddressRow(orderRow, addrList);
+        const aid = addrRow?.address_id != null ? parseInt(String(addrRow.address_id), 10) : NaN;
+        const fa = String(body.delivery_address || '').trim();
+        if (fa && Number.isFinite(aid)) {
+          for (const col of ['formatted_address', 'formattedAddress', 'address1']) {
+            try {
+              await errandWibPool.query(`UPDATE st_client_address SET ${col} = ? WHERE address_id = ?`, [fa, aid]);
+              didSomething = true;
+              break;
+            } catch (_) {
+              /* column name differs */
+            }
+          }
+        }
+      }
+    } else if (body.delivery_address !== undefined && String(body.delivery_address || '').trim() !== '') {
+      const fa = String(body.delivery_address).trim();
+      try {
+        await errandWibPool.query(
+          'UPDATE st_ordernew SET formatted_address = ?, date_modified = NOW() WHERE order_id = ?',
+          [fa, orderId]
+        );
+        didSomething = true;
+      } catch (_) {
+        /* optional column */
+      }
+    }
+
+    if (body.delivery_date !== undefined) {
+      const mysqlDt = toMysqlDatetime(body.delivery_date);
+      try {
+        await errandWibPool.query(
+          'UPDATE st_ordernew SET delivery_date = ?, date_modified = NOW() WHERE order_id = ?',
+          [mysqlDt, orderId]
+        );
+        didSomething = true;
+      } catch (_) {
+        /* optional */
+      }
+    }
+
+    if (body.task_description !== undefined && String(body.task_description || '').trim() !== '') {
+      const t = String(body.task_description).trim();
+      for (const col of ['delivery_instruction', 'special_instructions', 'admin_notes', 'order_notes', 'notes']) {
+        try {
+          await errandWibPool.query(
+            `UPDATE st_ordernew SET ${col} = ?, date_modified = NOW() WHERE order_id = ?`,
+            [t, orderId]
+          );
+          didSomething = true;
+          break;
+        } catch (_) {
+          /* try next column */
+        }
+      }
+    }
+
+    if (!didSomething) return res.status(400).json({ error: 'No fields to update' });
+    return res.json({ ok: true });
+  } catch (e) {
+    if (e.code === 'ER_NO_SUCH_TABLE') {
+      return res.status(503).json({ error: 'Errand orders table not found' });
+    }
+    throw e;
+  }
+});
+
+router.put('/errand-orders/:orderId/status', express.json(), async (req, res) => {
+  const orderId = parseInt(req.params.orderId, 10);
+  if (!Number.isFinite(orderId)) return res.status(400).json({ error: 'Invalid order id' });
+  const { status, reason } = req.body || {};
+  const raw = (status || '').toString().trim();
+  if (!raw) return res.status(400).json({ error: 'status required' });
+  const canon = normalizeIncomingStatusRaw(raw);
+  if (!canon || !ERRAND_CANONICAL_STATUSES.has(canon)) {
+    return res.status(400).json({
+      error: `Invalid status. Allowed: ${[...ERRAND_CANONICAL_STATUSES].sort().join(', ')}`,
+    });
+  }
+  const remarks = reason != null && String(reason).trim() ? String(reason).trim() : '';
+
+  try {
+    const [[row]] = await errandWibPool.query('SELECT order_id FROM st_ordernew WHERE order_id = ? LIMIT 1', [orderId]);
+    if (!row) return res.status(404).json({ error: 'Errand order not found' });
+
+    let result;
+    if (canon === 'unassigned' || canon === 'cancelled' || canon === 'declined') {
+      try {
+        [result] = await errandWibPool.query(
+          `UPDATE st_ordernew SET driver_id = NULL, delivery_status = ?, date_modified = NOW() WHERE order_id = ?`,
+          [canon, orderId]
+        );
+      } catch (e) {
+        if (e.code === 'ER_BAD_FIELD_ERROR') {
+          [result] = await errandWibPool.query(
+            `UPDATE st_ordernew SET driver_id = 0, delivery_status = ?, date_modified = NOW() WHERE order_id = ?`,
+            [canon, orderId]
+          );
+        } else {
+          throw e;
+        }
+      }
+    } else {
+      try {
+        [result] = await errandWibPool.query(
+          `UPDATE st_ordernew SET delivery_status = ?, date_modified = NOW() WHERE order_id = ?`,
+          [canon, orderId]
+        );
+      } catch (e) {
+        if (e.code === 'ER_BAD_FIELD_ERROR') {
+          [result] = await errandWibPool.query(
+            `UPDATE st_ordernew SET delivery_status = ? WHERE order_id = ?`,
+            [canon, orderId]
+          );
+        } else {
+          throw e;
+        }
+      }
+    }
+    if (!result.affectedRows) return res.status(404).json({ error: 'Errand order not found' });
+
+    await appendErrandAdminHistory(errandWibPool, orderId, canon, remarks);
+    return res.json({ ok: true, status: canon });
+  } catch (e) {
+    if (e.errno === 1265 || (e.message && /Data truncated|Incorrect.*enum/i.test(String(e.message)))) {
+      return res.status(400).json({
+        error:
+          'This status is not allowed by the errand database for delivery_status. Use a value your schema accepts or extend the column.',
+      });
+    }
+    if (e.code === 'ER_NO_SUCH_TABLE') {
+      return res.status(503).json({ error: 'Errand orders table not found' });
+    }
+    throw e;
+  }
+});
+
+router.delete('/errand-orders/:orderId', async (req, res) => {
+  const orderId = parseInt(req.params.orderId, 10);
+  if (!Number.isFinite(orderId)) return res.status(400).json({ error: 'Invalid order id' });
+  try {
+    const [[row]] = await errandWibPool.query('SELECT order_id FROM st_ordernew WHERE order_id = ? LIMIT 1', [orderId]);
+    if (!row) return res.status(404).json({ error: 'Errand order not found' });
+
+    await appendErrandAdminHistory(errandWibPool, orderId, 'cancelled', 'Task deleted by admin');
+
+    let result;
+    try {
+      [result] = await errandWibPool.query(
+        `UPDATE st_ordernew SET driver_id = NULL, delivery_status = 'cancelled', date_modified = NOW() WHERE order_id = ?`,
+        [orderId]
+      );
+    } catch (e) {
+      if (e.code === 'ER_BAD_FIELD_ERROR') {
+        [result] = await errandWibPool.query(
+          `UPDATE st_ordernew SET driver_id = 0, delivery_status = 'cancelled', date_modified = NOW() WHERE order_id = ?`,
+          [orderId]
+        );
+      } else {
+        throw e;
+      }
+    }
+    if (!result.affectedRows) return res.status(404).json({ error: 'Errand order not found' });
+    try {
+      await errandWibPool.query(`UPDATE st_ordernew SET status = 'cancelled' WHERE order_id = ?`, [orderId]);
+    } catch (_) {
+      /* status column may be missing or enum */
+    }
+    return res.json({ ok: true });
+  } catch (e) {
     if (e.code === 'ER_NO_SUCH_TABLE') {
       return res.status(503).json({ error: 'Errand orders table not found' });
     }

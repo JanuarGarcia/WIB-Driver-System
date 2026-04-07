@@ -69,6 +69,162 @@ function driverDisplayName(map, driverId) {
   return map.get(k) || null;
 }
 
+/** E.164-style phone from ErrandWib `st_driver` (`phone_prefix` + `phone`). */
+function errandDriverPhoneFromRow(d) {
+  if (!d || typeof d !== 'object') return null;
+  const raw = d.phone != null ? String(d.phone).trim() : '';
+  if (!raw) return null;
+  const prefix = d.phone_prefix != null ? String(d.phone_prefix).trim().replace(/\D/g, '') : '';
+  if (raw.startsWith('+')) {
+    let digits = raw.slice(1).replace(/\D/g, '');
+    if (prefix === '63' && digits.startsWith('6363')) {
+      digits = `63${digits.slice(4)}`;
+    }
+    return digits ? `+${digits}` : raw;
+  }
+  let digits = raw.replace(/\D/g, '');
+  if (!digits) return null;
+  if (prefix && digits.startsWith(prefix)) {
+    return `+${digits}`;
+  }
+  if (prefix === '63' && digits.startsWith('0') && digits.length >= 10) {
+    return `+63${digits.slice(1)}`;
+  }
+  if (prefix) {
+    return `+${prefix}${digits}`;
+  }
+  if (digits.startsWith('63')) {
+    return `+${digits}`;
+  }
+  return raw;
+}
+
+/**
+ * Batch-load ErrandWib `st_driver` rows for task list / detail (names, phone, team, verification).
+ * @param {import('mysql2/promise').Pool} errandPool
+ * @param {number[]} driverIds
+ * @returns {Promise<Map<string, { full_name: string|null, driver_phone: string|null, verification_code: string|null, team_id: number|null, photo: string|null }>>}
+ */
+async function fetchErrandStDriversByIds(errandPool, driverIds) {
+  const map = new Map();
+  if (!errandPool) return map;
+  const uniq = [
+    ...new Set(
+      driverIds
+        .map((n) => parseInt(String(n), 10))
+        .filter((n) => Number.isFinite(n) && n > 0)
+    ),
+  ];
+  if (!uniq.length) return map;
+  const ph = uniq.map(() => '?').join(',');
+  const attempts = [
+    `SELECT driver_id, first_name, last_name, phone_prefix, phone, photo, team_id, verification_code FROM st_driver WHERE driver_id IN (${ph})`,
+    `SELECT driver_id, first_name, last_name, phone_prefix, phone, photo, team_id FROM st_driver WHERE driver_id IN (${ph})`,
+    `SELECT driver_id, first_name, last_name, phone FROM st_driver WHERE driver_id IN (${ph})`,
+  ];
+  for (const sql of attempts) {
+    try {
+      const [rows] = await errandPool.query(sql, uniq);
+      for (const r of rows || []) {
+        if (r.driver_id == null) continue;
+        const fn = r.first_name != null ? String(r.first_name).trim() : '';
+        const ln = r.last_name != null ? String(r.last_name).trim() : '';
+        const full = [fn, ln].filter(Boolean).join(' ').trim() || null;
+        const tid = r.team_id != null ? parseInt(String(r.team_id), 10) : NaN;
+        const team_id = Number.isFinite(tid) && tid > 0 ? tid : null;
+        const hasVer = Object.prototype.hasOwnProperty.call(r, 'verification_code');
+        map.set(String(r.driver_id), {
+          full_name: full,
+          driver_phone: errandDriverPhoneFromRow(r),
+          verification_code:
+            hasVer && r.verification_code != null && String(r.verification_code).trim() !== ''
+              ? String(r.verification_code).trim()
+              : null,
+          team_id,
+          photo: r.photo != null && String(r.photo).trim() !== '' ? String(r.photo).trim() : null,
+        });
+      }
+      return map;
+    } catch (e) {
+      if (e.code === 'ER_NO_SUCH_TABLE') return map;
+      if (e.code !== 'ER_BAD_FIELD_ERROR') throw e;
+    }
+  }
+  return map;
+}
+
+/**
+ * @param {import('mysql2/promise').Pool|null|undefined} mainPool
+ * @param {number[]} teamIds
+ * @returns {Promise<Map<string, string>>}
+ */
+async function fetchMtDriverTeamNamesByIds(mainPool, teamIds) {
+  const map = new Map();
+  if (!mainPool) return map;
+  const uniq = [
+    ...new Set(teamIds.map((n) => parseInt(String(n), 10)).filter((n) => Number.isFinite(n) && n > 0)),
+  ];
+  if (!uniq.length) return map;
+  const ph = uniq.map(() => '?').join(',');
+  try {
+    const [rows] = await mainPool.query(
+      `SELECT team_id, team_name FROM mt_driver_team WHERE team_id IN (${ph})`,
+      uniq
+    );
+    for (const r of rows || []) {
+      if (r.team_id == null) continue;
+      const name = r.team_name != null ? String(r.team_name).trim() : '';
+      if (name) map.set(String(r.team_id), name);
+    }
+  } catch (_) {
+    /* optional */
+  }
+  return map;
+}
+
+/**
+ * Driver block for errand task detail: prefers ErrandWib `st_driver`, falls back to primary `mt_driver` name only.
+ * @param {import('mysql2/promise').Pool} errandPool
+ * @param {import('mysql2/promise').Pool|null|undefined} mainPool
+ * @param {number|null|undefined} driverId
+ * @returns {Promise<null|{ driver_name: string|null, driver_phone: string|null, verification_code: string|null, team_id: number|null, team_name: string|null, driver_profile_photo: string|null }>}
+ */
+async function resolveErrandDriverDetail(errandPool, mainPool, driverId) {
+  if (!Number.isFinite(driverId) || driverId <= 0) return null;
+  const map = await fetchErrandStDriversByIds(errandPool, [driverId]);
+  const st = map.get(String(driverId));
+  let driver_name = st?.full_name ?? null;
+  const driver_phone = st?.driver_phone ?? null;
+  const verification_code = st?.verification_code ?? null;
+  const team_id = st?.team_id ?? null;
+  const driver_profile_photo = st?.photo ?? null;
+  if (!driver_name && mainPool) {
+    try {
+      const [[d]] = await mainPool.query(
+        `SELECT CONCAT(COALESCE(first_name,''), ' ', COALESCE(last_name,'')) AS full_name FROM mt_driver WHERE driver_id = ? LIMIT 1`,
+        [driverId]
+      );
+      driver_name = d?.full_name != null ? String(d.full_name).trim() : null;
+    } catch (_) {
+      /* optional */
+    }
+  }
+  let team_name = null;
+  if (team_id != null && mainPool) {
+    const tm = await fetchMtDriverTeamNamesByIds(mainPool, [team_id]);
+    team_name = tm.get(String(team_id)) || null;
+  }
+  if (!driver_name && !driver_phone && !verification_code && !team_id && !driver_profile_photo) return null;
+  return {
+    driver_name,
+    driver_phone,
+    verification_code,
+    team_id,
+    team_name,
+    driver_profile_photo,
+  };
+}
+
 /** Prefer pickup merchant coords; else use coordinates on the order row (ErrandWib `st_ordernew` varies by schema). */
 function coordsFromOrderRow(row) {
   if (!row || typeof row !== 'object') return null;
@@ -325,26 +481,41 @@ function pickErrandOrderDeliveryTime(row) {
 
 /**
  * @param {Record<string, unknown>} row - st_ordernew row
- * @param {Map<string, string>} driverNameById - from mt_driver (primary pool)
+ * @param {Map<string, { full_name: string|null, driver_phone: string|null, verification_code: string|null, team_id: number|null, photo: string|null }>} errandDriverById - from st_driver (ErrandWib)
+ * @param {Map<string, string|null>} [mtDriverNameById] - legacy fallback from mt_driver (primary DB)
  * @param {Map<string, Record<string, unknown>>} merchantById - from st_merchant (ErrandWib), keyed by merchant_id string
  * @param {Map<string, Record<string, unknown>>} [clientById] - from st_client (ErrandWib), keyed by client_id string
  * @param {Map<string, Record<string, unknown>[]>} [clientAddressesByClientId] - from st_client_address, keyed by client_id string
  * @param {Map<string, string>} [latestHistoryStatusByOrderId] - latest st_ordernew_history.status per order_id
+ * @param {Map<string, string>} [teamNameById] - from mt_driver_team (primary DB), keyed by team_id string
  */
 function mapStOrderRowToTaskListRow(
   row,
-  driverNameById,
+  errandDriverById,
+  mtDriverNameById,
   merchantById,
   clientById,
   clientAddressesByClientId,
-  latestHistoryStatusByOrderId
+  latestHistoryStatusByOrderId,
+  teamNameById
 ) {
   const oid = row.order_id != null ? Number(row.order_id) : NaN;
   const safeId = Number.isFinite(oid) ? oid : 0;
   const driverId = row.driver_id != null ? parseInt(String(row.driver_id), 10) : null;
-  const driverName = Number.isFinite(driverId)
-    ? driverDisplayName(driverNameById, driverId)
-    : null;
+  const stDriver =
+    Number.isFinite(driverId) && driverId > 0 && errandDriverById
+      ? errandDriverById.get(String(driverId))
+      : null;
+  const mtMap = mtDriverNameById && typeof mtDriverNameById.get === 'function' ? mtDriverNameById : new Map();
+  const driverName = stDriver?.full_name || (Number.isFinite(driverId) ? driverDisplayName(mtMap, driverId) : null);
+  const driverPhone = stDriver?.driver_phone ?? null;
+  const verificationCode = stDriver?.verification_code ?? null;
+  const driverTeamId = stDriver?.team_id ?? null;
+  const teamName =
+    driverTeamId != null && teamNameById && typeof teamNameById.get === 'function'
+      ? teamNameById.get(String(driverTeamId)) || null
+      : null;
+  const driverPhoto = stDriver?.photo ?? null;
   const mid = row.merchant_id != null ? parseInt(String(row.merchant_id), 10) : null;
   const merch = Number.isFinite(mid) ? merchantById?.get(String(mid)) : null;
   const restaurantName =
@@ -465,7 +636,11 @@ function mapStOrderRowToTaskListRow(
       : null,
     driver_id: Number.isFinite(driverId) ? driverId : null,
     driver_name: driverName,
-    driver_profile_photo: null,
+    driver_phone: driverPhone,
+    verification_code: verificationCode,
+    team_id: driverTeamId,
+    team_name: teamName,
+    driver_profile_photo: driverPhoto,
     payment_type,
     payment_status: payment_status_norm,
     order_payment_status: payment_status_norm,
@@ -656,6 +831,8 @@ async function fetchErrandOrderHistory(errandPool, orderId) {
 
 /**
  * Build GET /errand-orders/:id detail payload (mirrors task modal shape partially).
+ * @param {Record<string, unknown>} row - st_ordernew
+ * @param {null|{ driver_name: string|null, driver_phone: string|null, verification_code: string|null, team_id: number|null, team_name: string|null, driver_profile_photo: string|null }} driverDetail - from st_driver (+ team name)
  * @param {Record<string, unknown>|null} merchantRow - st_merchant row or null
  * @param {Record<string, unknown>|null} clientRow - st_client row or null
  * @param {Record<string, unknown>|null} [clientAddressRow] - chosen st_client_address row or null
@@ -665,7 +842,7 @@ async function fetchErrandOrderHistory(errandPool, orderId) {
  */
 function buildErrandTaskDetailPayload(
   row,
-  driverName,
+  driverDetail,
   merchantRow,
   clientRow,
   clientAddressRow,
@@ -779,8 +956,12 @@ function buildErrandTaskDetailPayload(
     order_payment_status: payment_status_norm,
     restaurant_name: restaurantName,
     driver_id: Number.isFinite(driverId) ? driverId : null,
-    driver_name: driverName || null,
-    driver_phone: null,
+    driver_name: driverDetail?.driver_name ?? null,
+    driver_phone: driverDetail?.driver_phone ?? null,
+    verification_code: driverDetail?.verification_code ?? null,
+    team_id: driverDetail?.team_id ?? null,
+    team_name: driverDetail?.team_name ?? null,
+    driver_profile_photo: driverDetail?.driver_profile_photo ?? null,
     task_lat: taskLat,
     task_lng: taskLng,
     date_created: row.date_created || row.created_at || null,
@@ -874,4 +1055,7 @@ module.exports = {
   fetchErrandClientAddressesByClientIds,
   fetchErrandLatestHistoryStatusByOrderIds,
   pickClientAddressRow,
+  fetchErrandStDriversByIds,
+  fetchMtDriverTeamNamesByIds,
+  resolveErrandDriverDetail,
 };
