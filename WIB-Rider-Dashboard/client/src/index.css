@@ -8089,6 +8089,42 @@ tr:hover { background: var(--bg-hover) !important; }
 [data-theme="dark"] .order-ref-item-line-total {
   color: var(--text-dark);
 }
+/* Line-item add-ons (mt_order_details.addon JSON) — indented under main row, matches order-ref density */
+.order-ref-addon-list {
+  list-style: none;
+  margin: 0.4rem 0 0;
+  padding: 0.35rem 0 0.15rem 0.65rem;
+  border-left: 2px solid var(--color-primary-tint);
+}
+.order-ref-addon-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  font-size: 0.8125rem;
+  line-height: 1.4;
+  margin-top: 0.3rem;
+}
+.order-ref-addon-row:first-child {
+  margin-top: 0;
+}
+.order-ref-addon-label {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-secondary);
+}
+.order-ref-addon-price {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted-strong, var(--text-muted));
+  white-space: nowrap;
+  font-weight: 500;
+}
+[data-theme="dark"] .order-ref-addon-label {
+  color: var(--text-secondary);
+}
+[data-theme="dark"] .order-ref-addon-price {
+  color: var(--text-muted-strong);
+}
 .order-summary-block--ref {
   border-top: none;
   padding-top: 0.35rem;

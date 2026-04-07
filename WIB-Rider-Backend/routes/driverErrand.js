@@ -27,6 +27,7 @@ const {
   countErrandProofForOrder,
   insertErrandProofRow,
 } = require('../lib/errandProof');
+const { insertStOrdernewHistoryRow } = require('../lib/errandHistoryInsert');
 
 const router = express.Router();
 
@@ -171,7 +172,7 @@ async function buildDetailPayloadForOrder(orderId) {
   }
   const [orderDetails, orderHistoryRows] = await Promise.all([
     fetchErrandOrderLineItems(errandWibPool, orderId),
-    fetchErrandOrderHistory(errandWibPool, orderId),
+    fetchErrandOrderHistory(errandWibPool, orderId, row),
   ]);
   const payload = buildErrandTaskDetailPayload(
     row,
@@ -217,45 +218,13 @@ async function appendErrandDriverHistory(errandPool, orderId, statusCanonical, r
   const latRaw = latitude != null && String(latitude).trim() !== '' ? parseFloat(latitude) : NaN;
   const lngRaw = longitude != null && String(longitude).trim() !== '' ? parseFloat(longitude) : NaN;
   const hasGeo = Number.isFinite(latRaw) && Number.isFinite(lngRaw);
-
-  /** @type {[string, unknown[]][]} */
-  const attempts = [];
-  if (rem && hasGeo) {
-    attempts.push([
-      'INSERT INTO st_ordernew_history (order_id, status, remarks, date_created, latitude, longitude) VALUES (?, ?, ?, NOW(), ?, ?)',
-      [orderId, st, rem, latRaw, lngRaw],
-    ]);
-  }
-  if (rem) {
-    attempts.push([
-      'INSERT INTO st_ordernew_history (order_id, status, remarks, date_created) VALUES (?, ?, ?, NOW())',
-      [orderId, st, rem],
-    ]);
-    attempts.push([
-      'INSERT INTO st_ordernew_history (order_id, status, remarks, date_added) VALUES (?, ?, ?, NOW())',
-      [orderId, st, rem],
-    ]);
-  }
-  if (hasGeo) {
-    attempts.push([
-      'INSERT INTO st_ordernew_history (order_id, status, date_created, latitude, longitude) VALUES (?, ?, NOW(), ?, ?)',
-      [orderId, st, latRaw, lngRaw],
-    ]);
-  }
-  attempts.push(
-    ['INSERT INTO st_ordernew_history (order_id, status, date_created) VALUES (?, ?, NOW())', [orderId, st]],
-    ['INSERT INTO st_ordernew_history (order_id, status, date_added) VALUES (?, ?, NOW())', [orderId, st]],
-    ['INSERT INTO st_ordernew_history (order_id, status) VALUES (?, ?)', [orderId, st]]
-  );
-
-  for (const [sql, params] of attempts) {
-    try {
-      await errandPool.query(sql, params);
-      return;
-    } catch (_) {
-      /* schema differs — try next */
-    }
-  }
+  await insertStOrdernewHistoryRow(errandPool, {
+    orderId,
+    status: st,
+    remarks: rem || undefined,
+    latitude: hasGeo ? latRaw : undefined,
+    longitude: hasGeo ? lngRaw : undefined,
+  });
 }
 
 /** Optional payment fields on ErrandWib `st_ordernew` (mirrors mt_order update on ChangeTaskStatus). */

@@ -11,6 +11,8 @@ const { success, error } = require('../lib/response');
 const { validateApiKey, resolveDriver, optionalDriver } = require('../middleware/auth');
 const { fetchTaskProofPhotosWithUrls, buildTaskProofImageUrl } = require('../lib/taskProof');
 const { fetchDriverMergedOrderHistory } = require('../lib/driverOrderHistory');
+const { enrichOrderDetailsWithSubcategoryAddons } = require('../lib/orderDetailAddons');
+const { attachOrderDetailCategories } = require('../lib/orderDetailCategories');
 
 const uploadDir = path.join(__dirname, '..', 'uploads', 'profiles');
 if (!fs.existsSync(uploadDir)) {
@@ -535,6 +537,19 @@ async function enrichRiderTaskDetails(pool, taskRow) {
     try {
       const [lines] = await pool.query('SELECT * FROM mt_order_details WHERE order_id = ? ORDER BY id ASC', [orderId]);
       rawLines = lines || [];
+    } catch (e) {
+      if (e.code !== 'ER_NO_SUCH_TABLE' && e.code !== 'ER_BAD_FIELD_ERROR') throw e;
+    }
+  }
+
+  if (rawLines.length > 0) {
+    try {
+      rawLines = await attachOrderDetailCategories(pool, rawLines, merchantId);
+    } catch (e) {
+      if (e.code !== 'ER_NO_SUCH_TABLE' && e.code !== 'ER_BAD_FIELD_ERROR') throw e;
+    }
+    try {
+      rawLines = await enrichOrderDetailsWithSubcategoryAddons(pool, rawLines);
     } catch (e) {
       if (e.code !== 'ER_NO_SUCH_TABLE' && e.code !== 'ER_BAD_FIELD_ERROR') throw e;
     }

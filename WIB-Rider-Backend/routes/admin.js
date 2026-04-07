@@ -29,6 +29,9 @@ const { normalizeIncomingStatusRaw, CANONICAL: ERRAND_CANONICAL_STATUSES } = req
 const { success, error } = require('../lib/response');
 const { sendPushToDriver, sendPushToAllDrivers, resetFirebase, initFirebase } = require('../services/fcm');
 const { fetchTaskProofPhotosWithUrls } = require('../lib/taskProof');
+const { insertStOrdernewHistoryRow } = require('../lib/errandHistoryInsert');
+const { enrichOrderDetailsWithSubcategoryAddons } = require('../lib/orderDetailAddons');
+const { attachOrderDetailCategories } = require('../lib/orderDetailCategories');
 
 const ADMIN_SECRET = process.env.ADMIN_SECRET || '';
 
@@ -64,197 +67,6 @@ const uploadProfile = multer({
     else cb(new Error('Only images allowed'));
   },
 });
-
-/**
- * Merge category rows into best map (lowest cat_sequence wins per item_id).
- */
-function mergeOrderItemCategoryMap(best, rows, itemIdKey, nameKey, seqKey) {
-  for (const row of rows || []) {
-    const iid = row[itemIdKey];
-    const name = row[nameKey];
-    if (iid == null || !name || !String(name).trim()) continue;
-    const seqRaw = row[seqKey];
-    const seqN = seqRaw != null && String(seqRaw).trim() !== '' && Number.isFinite(Number(seqRaw)) ? Number(seqRaw) : 999999;
-    const k = String(iid);
-    const n = String(name).trim();
-    const prev = best.get(k);
-    if (!prev || seqN < prev.seq) best.set(k, { name: n, seq: seqN });
-  }
-}
-
-/**
- * Resolve category / subcategory / display names for mt_order_details lines:
- * mt_category_translation, mt_item_relationship_category, mt_item_relationship_subcategory,
- * mt_item_relationship_subcategory_item (parent inheritance), mt_item_translation.
- */
-async function attachOrderDetailCategories(pool, detailRows, merchantId) {
-  if (!Array.isArray(detailRows) || detailRows.length === 0) return detailRows;
-  const itemIds = [];
-  const seen = new Set();
-  for (const r of detailRows) {
-    const id = r.item_id ?? r.menu_item_id ?? r.itemId;
-    if (id == null || String(id).trim() === '') continue;
-    if (String(id).trim() === '0') continue;
-    const key = String(id);
-    if (seen.has(key)) continue;
-    seen.add(key);
-    itemIds.push(id);
-  }
-  if (itemIds.length === 0) return detailRows;
-
-  const ph = itemIds.map(() => '?').join(',');
-  const mid = merchantId != null && merchantId !== '' ? Number(merchantId) : null;
-  const midOk = mid != null && Number.isFinite(mid);
-
-  const bestCat = new Map();
-
-  const tryBlock = async (fn) => {
-    try {
-      await fn();
-    } catch (e) {
-      if (e.code !== 'ER_NO_SUCH_TABLE' && e.code !== 'ER_BAD_FIELD_ERROR') throw e;
-    }
-  };
-
-  await tryBlock(async () => {
-    const sql = `SELECT ct.item_id AS tid,
-        COALESCE(NULLIF(TRIM(c.category_name_trans), ''), NULLIF(TRIM(c.category_name), '')) AS resolved_category,
-        COALESCE(c.sequence, 999999) AS cat_sequence
-       FROM mt_category_translation ct
-       LEFT JOIN mt_category c ON c.cat_id = ct.cat_id
-       WHERE ct.item_id IN (${ph})`;
-    if (midOk) {
-      const [rows] = await pool.query(`${sql} AND ct.merchant_id = ? ORDER BY ct.item_id ASC, cat_sequence ASC, ct.id ASC`, [...itemIds, mid]);
-      mergeOrderItemCategoryMap(bestCat, rows, 'tid', 'resolved_category', 'cat_sequence');
-    }
-    const [rowsAll] = await pool.query(`${sql} ORDER BY ct.item_id ASC, cat_sequence ASC, ct.id ASC`, itemIds);
-    mergeOrderItemCategoryMap(bestCat, rowsAll, 'tid', 'resolved_category', 'cat_sequence');
-  });
-
-  await tryBlock(async () => {
-    const sql = `SELECT irc.item_id AS tid,
-        COALESCE(NULLIF(TRIM(c.category_name_trans), ''), NULLIF(TRIM(c.category_name), '')) AS resolved_category,
-        COALESCE(c.sequence, 999999) AS cat_sequence
-       FROM mt_item_relationship_category irc
-       LEFT JOIN mt_category c ON c.cat_id = irc.cat_id
-       WHERE irc.item_id IN (${ph})`;
-    if (midOk) {
-      const [rows] = await pool.query(`${sql} AND irc.merchant_id = ? ORDER BY irc.item_id ASC, cat_sequence ASC, irc.id ASC`, [...itemIds, mid]);
-      mergeOrderItemCategoryMap(bestCat, rows, 'tid', 'resolved_category', 'cat_sequence');
-    }
-    const [rowsAll] = await pool.query(`${sql} ORDER BY irc.item_id ASC, cat_sequence ASC, irc.id ASC`, itemIds);
-    mergeOrderItemCategoryMap(bestCat, rowsAll, 'tid', 'resolved_category', 'cat_sequence');
-  });
-
-  const parentBySub = new Map();
-  await tryBlock(async () => {
-    let sql = `SELECT sub_item_id AS sid, item_id AS pid FROM mt_item_relationship_subcategory_item WHERE sub_item_id IN (${ph})`;
-    const params = [...itemIds];
-    if (midOk) {
-      sql += ' AND merchant_id = ?';
-      params.push(mid);
-    }
-    const [rows] = await pool.query(`${sql} ORDER BY id ASC`, params);
-    for (const r of rows || []) {
-      if (r.sid == null || r.pid == null) continue;
-      const ks = String(r.sid);
-      if (!parentBySub.has(ks)) parentBySub.set(ks, String(r.pid));
-    }
-  });
-
-  for (let pass = 0; pass < Math.min(itemIds.length, 8); pass += 1) {
-    let changed = false;
-    for (const id of itemIds) {
-      const ks = String(id);
-      if (bestCat.has(ks)) continue;
-      const pid = parentBySub.get(ks);
-      if (!pid) continue;
-      const p = bestCat.get(pid);
-      if (p) {
-        bestCat.set(ks, { name: p.name, seq: p.seq + 1000 + pass });
-        changed = true;
-      }
-    }
-    if (!changed) break;
-  }
-
-  const bestSub = new Map();
-  const mergeSub = (rows, nameCol, seqCol) => {
-    for (const row of rows || []) {
-      const iid = row.tid;
-      const name = row[nameCol];
-      if (iid == null || !name || !String(name).trim()) continue;
-      const seqN = row[seqCol] != null && Number.isFinite(Number(row[seqCol])) ? Number(row[seqCol]) : 999999;
-      const k = String(iid);
-      const n = String(name).trim();
-      const prev = bestSub.get(k);
-      if (!prev || seqN < prev.seq) bestSub.set(k, { name: n, seq: seqN });
-    }
-  };
-
-  await tryBlock(async () => {
-    const sql = `SELECT irs.item_id AS tid,
-        COALESCE(NULLIF(TRIM(s.subcategory_name), ''), NULLIF(TRIM(s.sub_cat_name), ''), NULLIF(TRIM(s.name), '')) AS sub_name,
-        COALESCE(irs.id, 0) AS sub_row_id
-       FROM mt_item_relationship_subcategory irs
-       LEFT JOIN mt_subcategory s ON s.subcat_id = irs.subcat_id
-       WHERE irs.item_id IN (${ph})`;
-    const params = midOk ? [...itemIds, mid] : [...itemIds];
-    const [rows] = await pool.query(
-      midOk ? `${sql} AND irs.merchant_id = ? ORDER BY irs.item_id ASC, irs.id ASC` : `${sql} ORDER BY irs.item_id ASC, irs.id ASC`,
-      params
-    );
-    mergeSub(rows, 'sub_name', 'sub_row_id');
-  });
-
-  for (let pass = 0; pass < Math.min(itemIds.length, 8); pass += 1) {
-    let changed = false;
-    for (const id of itemIds) {
-      const ks = String(id);
-      if (bestSub.has(ks)) continue;
-      const pid = parentBySub.get(ks);
-      if (!pid) continue;
-      const p = bestSub.get(pid);
-      if (p) {
-        bestSub.set(ks, { name: p.name, seq: p.seq + 1000 });
-        changed = true;
-      }
-    }
-    if (!changed) break;
-  }
-
-  const nameTrans = new Map();
-  await tryBlock(async () => {
-    const [trows] = await pool.query(
-      `SELECT item_id AS tid, item_name AS tname, language AS lang
-       FROM mt_item_translation
-       WHERE item_id IN (${ph})
-       ORDER BY item_id ASC,
-         CASE WHEN LOWER(TRIM(COALESCE(language,''))) = 'en' THEN 0 ELSE 1 END,
-         id ASC`,
-      itemIds
-    );
-    for (const r of trows || []) {
-      const k = String(r.tid);
-      if (!r.tname || !String(r.tname).trim()) continue;
-      if (!nameTrans.has(k)) nameTrans.set(k, String(r.tname).trim());
-    }
-  });
-
-  return detailRows.map((r) => {
-    const idVal = r.item_id ?? r.menu_item_id ?? r.itemId;
-    if (idVal == null || String(idVal).trim() === '' || String(idVal).trim() === '0') return { ...r };
-    const k = String(idVal);
-    const existingCat = r.category_name != null && String(r.category_name).trim() !== '' ? String(r.category_name).trim() : '';
-    const cat = existingCat || bestCat.get(k)?.name || r.category_name;
-    const sub = bestSub.get(k)?.name;
-    const tname = nameTrans.get(k);
-    const out = { ...r, category_name: cat || r.category_name };
-    if (sub && String(sub).trim()) out.subcategory_name = String(sub).trim();
-    if (tname) out.item_name_display = tname;
-    return out;
-  });
-}
 
 /** Validate password against stored hash (bcrypt, md5, or plain). */
 async function checkPassword(password, stored) {
@@ -1806,7 +1618,13 @@ router.get('/tasks/:id', async (req, res) => {
       if (result.order) {
         const [detailRows] = await pool.query('SELECT * FROM mt_order_details WHERE order_id = ? ORDER BY id', [orderId]);
         const merchantId = result.order.merchant_id;
-        result.order_details = await attachOrderDetailCategories(pool, detailRows || [], merchantId);
+        let withCats = await attachOrderDetailCategories(pool, detailRows || [], merchantId);
+        try {
+          withCats = await enrichOrderDetailsWithSubcategoryAddons(pool, withCats);
+        } catch (e) {
+          if (e.code !== 'ER_NO_SUCH_TABLE' && e.code !== 'ER_BAD_FIELD_ERROR') throw e;
+        }
+        result.order_details = withCats;
         if (merchantId) {
           const [merchantRows] = await pool.query('SELECT merchant_id, restaurant_name, restaurant_phone, contact_name, contact_phone, contact_email, street, city, state, post_code FROM mt_merchant WHERE merchant_id = ? LIMIT 1', [merchantId]);
           result.merchant = merchantRows.length ? merchantRows[0] : null;
@@ -2304,33 +2122,11 @@ router.put('/tasks/:id/assign', express.json(), async (req, res) => {
 async function appendErrandAdminHistory(errandPool, orderId, statusCanonical, remarks) {
   const st = String(statusCanonical || '').trim().toLowerCase() || 'updated';
   const rem = remarks != null && String(remarks).trim() ? String(remarks).trim() : '';
-
-  /** @type {[string, unknown[]][]} */
-  const attempts = [];
-  if (rem) {
-    attempts.push([
-      'INSERT INTO st_ordernew_history (order_id, status, remarks, date_created) VALUES (?, ?, ?, NOW())',
-      [orderId, st, rem],
-    ]);
-    attempts.push([
-      'INSERT INTO st_ordernew_history (order_id, status, remarks, date_added) VALUES (?, ?, ?, NOW())',
-      [orderId, st, rem],
-    ]);
-  }
-  attempts.push(
-    ['INSERT INTO st_ordernew_history (order_id, status, date_created) VALUES (?, ?, NOW())', [orderId, st]],
-    ['INSERT INTO st_ordernew_history (order_id, status, date_added) VALUES (?, ?, NOW())', [orderId, st]],
-    ['INSERT INTO st_ordernew_history (order_id, status) VALUES (?, ?)', [orderId, st]]
-  );
-
-  for (const [sql, params] of attempts) {
-    try {
-      await errandPool.query(sql, params);
-      return;
-    } catch (_) {
-      /* schema differs — try next */
-    }
-  }
+  await insertStOrdernewHistoryRow(errandPool, {
+    orderId,
+    status: st,
+    remarks: rem || undefined,
+  });
 }
 
 router.get('/errand-orders/:orderId', async (req, res) => {
@@ -2378,7 +2174,7 @@ router.get('/errand-orders/:orderId', async (req, res) => {
     }
     const [orderDetails, orderHistoryRows] = await Promise.all([
       fetchErrandOrderLineItems(errandWibPool, orderId),
-      fetchErrandOrderHistory(errandWibPool, orderId),
+      fetchErrandOrderHistory(errandWibPool, orderId, row),
     ]);
     return res.json(
       buildErrandTaskDetailPayload(

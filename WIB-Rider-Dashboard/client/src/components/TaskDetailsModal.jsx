@@ -301,7 +301,8 @@ function parseTipPercentRaw(raw) {
 function formatOrderTipRow(order) {
   const empty = { label: 'Tips', summaryLabel: 'TIPS', display: '—' };
   if (!order || typeof order !== 'object') return empty;
-  const valRaw = order.cart_tip_value ?? order.tip_value;
+  const valRaw =
+    order.cart_tip_value ?? order.courier_tip ?? order.courirer_tip ?? order.tip_value;
   const pctRaw =
     order.cart_tip_percentage
     ?? order.tip_percentage
@@ -323,6 +324,45 @@ function formatOrderTipRow(order) {
   const summaryLabel = pctLabel ? `TIPS ${pctLabel}%` : 'TIPS';
   const display = !Number.isNaN(valNum) ? `₱${valNum.toFixed(2)}` : '—';
   return { label, summaryLabel, display };
+}
+
+/**
+ * `mt_order_details.addon` JSON array (e.g. [{ addon_name, addon_category, price }]).
+ * @returns {{ category: string|null, name: string, qty: number, price: number }[]}
+ */
+function parseOrderLineAddonsFromItem(item) {
+  if (!item || typeof item !== 'object') return [];
+  let raw = item.addons;
+  if (raw == null && item.addon != null) {
+    const s = String(item.addon).trim();
+    if (s.startsWith('[') || s.startsWith('{')) {
+      try {
+        raw = JSON.parse(s);
+      } catch {
+        return [];
+      }
+    } else {
+      return [];
+    }
+  }
+  if (raw == null) return [];
+  const arr = Array.isArray(raw) ? raw : [raw];
+  const out = [];
+  arr.forEach((a, idx) => {
+    if (!a || typeof a !== 'object') return;
+    const nameRaw = a.addon_name ?? a.name ?? a.item_name ?? a.label ?? a.title;
+    if (nameRaw == null || String(nameRaw).trim() === '') return;
+    const name = String(nameRaw).trim();
+    const catRaw = a.addon_category ?? a.category ?? a.addon_type ?? null;
+    const category = catRaw != null && String(catRaw).trim() !== '' ? String(catRaw).trim() : null;
+    const q = Number(a.qty ?? a.quantity ?? a.qty_ordered ?? 1);
+    const qty = Number.isFinite(q) && q > 0 ? Math.floor(q) : 1;
+    const pRaw = a.price ?? a.addon_price ?? a.subtotal ?? a.sub_total ?? a.amount ?? a.total ?? 0;
+    const p = Number(pRaw);
+    const price = Number.isFinite(p) ? p : 0;
+    out.push({ category, name, qty, price });
+  });
+  return out;
 }
 
 /** Normalize photo filename: strip wrapping <>, basename token, duplicate extension (.jpg.jpg -> .jpg). */
@@ -1527,6 +1567,7 @@ export default function TaskDetailsModal({
                                     const sizePart = item.size
                                       ? ` (${displaySanitized(sizePick || item.size) || sizePick || item.size})`
                                       : '';
+                                    const addonLines = parseOrderLineAddonsFromItem(item);
                                     return (
                                       <li key={item.id ?? item._idx} className="order-ref-item-row">
                                         <div className="order-ref-item-line">
@@ -1540,6 +1581,24 @@ export default function TaskDetailsModal({
                                           </div>
                                           <span className="order-ref-item-line-total">{subtotalStr}</span>
                                         </div>
+                                        {addonLines.length > 0 ? (
+                                          <ul className="order-ref-addon-list" aria-label="Add-ons">
+                                            {addonLines.map((ad, ai) => {
+                                              const nameDisp = displaySanitized(ad.name) || ad.name;
+                                              const catDisp = ad.category ? displaySanitized(ad.category) || ad.category : null;
+                                              const left =
+                                                ad.qty > 1
+                                                  ? `${ad.qty}× ${catDisp ? `${catDisp} · ` : ''}${nameDisp}`
+                                                  : `${catDisp ? `${catDisp} · ` : ''}${nameDisp}`;
+                                              return (
+                                                <li key={ai} className="order-ref-addon-row">
+                                                  <span className="order-ref-addon-label">{left}</span>
+                                                  <span className="order-ref-addon-price">₱{ad.price.toFixed(2)}</span>
+                                                </li>
+                                              );
+                                            })}
+                                          </ul>
+                                        ) : null}
                                         {item.order_notes && (
                                           <div className="order-item-notes">{displaySanitized(item.order_notes) || item.order_notes}</div>
                                         )}
@@ -1554,9 +1613,12 @@ export default function TaskDetailsModal({
                       );
                     })()}
                     {(order?.sub_total != null || order?.total_w_tax != null) && (() => {
-                      const convRaw = order.packaging != null && String(order.packaging).trim() !== ''
-                        ? order.packaging
-                        : order.convenience_fee;
+                      const convRaw =
+                        order.packaging != null && String(order.packaging).trim() !== ''
+                          ? order.packaging
+                          : order.packaging_fee != null && String(order.packaging_fee).trim() !== ''
+                            ? order.packaging_fee
+                            : order.convenience_fee;
                       const convNum = convRaw != null && String(convRaw).trim() !== '' ? Number(convRaw) : NaN;
                       const convenienceDisplay = !Number.isNaN(convNum) ? `₱${convNum.toFixed(2)}` : '—';
                       const tipRow = formatOrderTipRow(order);

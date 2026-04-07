@@ -998,6 +998,7 @@ function pickErrandHistoryDateCreated(row) {
     'date_created',
     'created_at',
     'date_added',
+    'updated_at',
     'time_stamp',
     'timestamp',
     'dt_created',
@@ -1014,15 +1015,58 @@ function pickErrandHistoryDateCreated(row) {
 }
 
 /**
+ * When a history row was inserted as `(order_id, status)` only, all event times are NULL.
+ * Use `st_ordernew` driver-milestone times so the dashboard still shows a reasonable clock time.
+ * @param {Record<string, unknown>|null|undefined} orderRow
+ * @param {unknown} statusRaw
+ */
+function pickStOrdernewFallbackTimeForHistory(orderRow, statusRaw) {
+  if (!orderRow || typeof orderRow !== 'object') return null;
+  const norm = String(statusRaw || '')
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, '')
+    .replace(/_/g, '');
+  const milestones = new Set([
+    'acknowledged',
+    'assigned',
+    'started',
+    'inprogress',
+    'successful',
+    'delivered',
+    'completed',
+    'cancelled',
+    'pickedup',
+    'pickup',
+    'ontheway',
+    'enroute',
+  ]);
+  if (!milestones.has(norm)) return null;
+  const keys = ['assigned_at', 'date_modified', 'updated_at', 'date_updated', 'date_created', 'created_at'];
+  for (const k of keys) {
+    const v = orderRow[k];
+    if (v == null) continue;
+    if (v instanceof Date && !Number.isNaN(v.getTime())) return v.toISOString();
+    const s = String(v).trim();
+    if (s !== '' && !s.startsWith('0000-00-00')) return s;
+  }
+  return null;
+}
+
+/**
  * One `st_ordernew_history` row → `order_history` entry for the dashboard timeline.
  * @param {Record<string, unknown>} row
+ * @param {Record<string, unknown>|null|undefined} [stOrderRow] `st_ordernew` for fallback times
  */
-function mapErrandHistoryRowForTimeline(row) {
+function mapErrandHistoryRowForTimeline(row, stOrderRow = null) {
   const trans = row.ramarks_trans ?? row.remarks_trans;
   const resolved = resolveErrandHistoryRemarks(row.remarks, trans);
   const lat = row.latitude != null ? parseFloat(String(row.latitude)) : NaN;
   const lng = row.longitude != null ? parseFloat(String(row.longitude)) : NaN;
-  const dateCreated = pickErrandHistoryDateCreated(row);
+  let dateCreated = pickErrandHistoryDateCreated(row);
+  if (!dateCreated && stOrderRow) {
+    dateCreated = pickStOrdernewFallbackTimeForHistory(stOrderRow, row.status);
+  }
   const statusStr = row.status != null ? String(row.status).trim() : '';
   /** Flutter TaskOrderHistoryEntry: first non-empty of date_created | dateCreated | created_at | date_updated | updated_at */
   const out = {
@@ -1050,16 +1094,16 @@ function mapErrandHistoryRowForTimeline(row) {
  * Activity timeline rows from `st_ordernew_history` (ErrandWib).
  * @param {import('mysql2/promise').Pool} errandPool
  * @param {number} orderId
+ * @param {Record<string, unknown>|null|undefined} [stOrderRow] optional `st_ordernew` row for fallback timestamps on legacy history rows
  */
-async function fetchErrandOrderHistory(errandPool, orderId) {
-  const mapRows = (rows) => (rows || []).map(mapErrandHistoryRowForTimeline);
+async function fetchErrandOrderHistory(errandPool, orderId, stOrderRow = null) {
   try {
     /** Prefer SELECT * so every timestamp column (`date_created`, `date_added`, `created_at`, …) is present for coalescing. */
     const [rows] = await errandPool.query(
       `SELECT * FROM st_ordernew_history WHERE order_id = ? ORDER BY id ASC`,
       [orderId]
     );
-    return mapRows(rows);
+    return (rows || []).map((r) => mapErrandHistoryRowForTimeline(r, stOrderRow));
   } catch (e) {
     if (e.code === 'ER_NO_SUCH_TABLE') return [];
     throw e;
@@ -1124,12 +1168,15 @@ function computeStOrdernewPaymentFieldsForDriver(row, clientAddressRow) {
   else if (errandNonZeroMoney(row.convenience_fee)) convenience_fee = pickErrandMoneyStr(row.convenience_fee);
   else if (errandNonZeroMoney(row.platform_fee)) convenience_fee = pickErrandMoneyStr(row.platform_fee);
   else if (errandNonZeroMoney(row.application_fee)) convenience_fee = pickErrandMoneyStr(row.application_fee);
+  else if (errandNonZeroMoney(row.packaging_fee)) convenience_fee = pickErrandMoneyStr(row.packaging_fee);
   else if (clientAddressRow && errandNonZeroMoney(clientAddressRow.service_fee)) {
     convenience_fee = pickErrandMoneyStr(clientAddressRow.service_fee);
   }
 
+  /** ErrandWib `st_ordernew`: `packaging_fee` is the customer “convenience” line (dashboard + driver app). */
   const service_fee =
     pickErrandMoneyStr(row.service_fee) ||
+    pickErrandMoneyStr(row.packaging_fee) ||
     (clientAddressRow ? pickErrandMoneyStr(clientAddressRow.service_fee) : null);
 
   const order_delivery_charge =
@@ -1155,6 +1202,8 @@ function computeStOrdernewPaymentFieldsForDriver(row, clientAddressRow) {
 
   const tipVal =
     pickErrandMoneyStr(row.cart_tip_value) ||
+    pickErrandMoneyStr(row.courier_tip) ||
+    pickErrandMoneyStr(row.courirer_tip) ||
     pickErrandMoneyStr(row.tip_amount) ||
     pickErrandMoneyStr(row.tip_value) ||
     pickErrandMoneyStr(row.tip);
@@ -1166,6 +1215,9 @@ function computeStOrdernewPaymentFieldsForDriver(row, clientAddressRow) {
     pickErrandMoneyStr(row.delivery_charge) ||
     pickErrandMoneyStr(row.customer_delivery_charge) ||
     order_delivery_charge;
+
+  const packagingStr = pickErrandMoneyStr(row.packaging_fee);
+  const courierTipStr = pickErrandMoneyStr(row.courier_tip) || pickErrandMoneyStr(row.courirer_tip);
 
   return {
     order_subtotal: sub_total,
@@ -1181,10 +1233,14 @@ function computeStOrdernewPaymentFieldsForDriver(row, clientAddressRow) {
     deliveryCharge: delivery_charge,
     customer_delivery_charge: pickErrandMoneyStr(row.customer_delivery_charge),
     customerDeliveryCharge: pickErrandMoneyStr(row.customer_delivery_charge),
+    /** Dashboard order summary checks `order.packaging` before `convenience_fee`. */
+    packaging: packagingStr,
+    packaging_fee: packagingStr,
     convenience_fee,
     convenienceFee: convenience_fee,
     service_fee,
     serviceFee: service_fee,
+    courier_tip: courierTipStr,
     card_fee: pickErrandMoneyStr(row.card_fee),
     cardFee: pickErrandMoneyStr(row.card_fee),
     cart_tip_percentage: tipPct,
