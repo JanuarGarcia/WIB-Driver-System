@@ -18,8 +18,12 @@ const {
   fetchErrandLatestHistoryStatusByOrderIds,
   pickClientAddressRow,
   fetchErrandStDriversByIds,
+  attachErrandDriverGroups,
   fetchMtDriverTeamNamesByIds,
   resolveErrandDriverDetail,
+  buildErrandPseudoRowsForAgentDashboard,
+  fetchErrandOrderTaskCountsByDriver,
+  fetchErrandDriverLocationsForMap,
 } = require('../lib/errandOrders');
 const { normalizeIncomingStatusRaw, CANONICAL: ERRAND_CANONICAL_STATUSES } = require('../lib/errandDriverStatus');
 const { success, error } = require('../lib/response');
@@ -1061,7 +1065,7 @@ function mapDriverRowToAgentDriver(r, dateOnly, trackingType, taskCountByDriver,
     [r.first_name, r.last_name].filter(Boolean).join(' ').trim() ||
     null;
 
-  return {
+  const out = {
     driver_id: r.driver_id,
     id: r.driver_id,
     username: r.username ?? null,
@@ -1090,6 +1094,8 @@ function mapDriverRowToAgentDriver(r, dateOnly, trackingType, taskCountByDriver,
     device: r.device_platform || r.device_type || null,
     platform: (r.device_platform || r.device_type || 'android').toString().toLowerCase(),
   };
+  if (r.driver_source === 'errand') out.driver_source = 'errand';
+  return out;
 }
 
 /**
@@ -1103,18 +1109,38 @@ async function buildAgentDashboardDetails(transactionDate, trackingType, filters
   const nowSec = Math.floor(now.getTime() / 1000);
   const dateOnly = (transactionDate || now.toISOString().slice(0, 10)).slice(0, 10);
 
-  const rows = await fetchDriverRowsForAgentDashboard(filters);
-
-  const driverIds = (rows || []).map((r) => r.driver_id).filter(Boolean);
-  const taskCountByDriver = {};
-  if (driverIds.length > 0) {
+  let rows = await fetchDriverRowsForAgentDashboard(filters);
+  const noTeamFilter = filters.team_id == null || filters.team_id === '';
+  if (noTeamFilter && errandWibPool) {
     try {
-      const placeholders = driverIds.map(() => '?').join(',');
+      const errPseudo = await buildErrandPseudoRowsForAgentDashboard(errandWibPool, filters);
+      const mtIdSet = new Set((rows || []).map((r) => String(r.driver_id)));
+      const extra = errPseudo.filter((r) => !mtIdSet.has(String(r.driver_id)));
+      rows = [...(rows || []), ...extra];
+    } catch (_) {
+      /* optional */
+    }
+  }
+
+  const mtDriverIds = (rows || []).filter((r) => r.driver_source !== 'errand').map((r) => r.driver_id).filter(Boolean);
+  const errDriverIds = (rows || []).filter((r) => r.driver_source === 'errand').map((r) => r.driver_id).filter(Boolean);
+  const taskCountByDriver = {};
+  if (mtDriverIds.length > 0) {
+    try {
+      const placeholders = mtDriverIds.map(() => '?').join(',');
       const [taskRows] = await pool.query(
         `SELECT driver_id, COUNT(*) AS cnt FROM mt_driver_task WHERE driver_id IN (${placeholders}) AND (delivery_date = ? OR DATE(delivery_date) = ?) GROUP BY driver_id`,
-        [...driverIds, dateOnly, dateOnly]
+        [...mtDriverIds, dateOnly, dateOnly]
       );
       for (const tr of taskRows || []) taskCountByDriver[tr.driver_id] = tr.cnt;
+    } catch (_) {}
+  }
+  if (errandWibPool && errDriverIds.length > 0) {
+    try {
+      const ec = await fetchErrandOrderTaskCountsByDriver(errandWibPool, errDriverIds, dateOnly);
+      for (const [k, v] of Object.entries(ec)) {
+        taskCountByDriver[Number(k)] = v;
+      }
     } catch (_) {}
   }
 
@@ -1349,6 +1375,29 @@ router.get('/drivers/locations', async (req, res) => {
           updated_at: r.updated_at,
           active_merchant_id: r.active_merchant_id != null ? r.active_merchant_id : null,
         };
+      }
+    }
+    if (!Number.isFinite(teamId) && errandWibPool) {
+      try {
+        const errLocs = await fetchErrandDriverLocationsForMap(errandWibPool, includeOffline);
+        for (const loc of errLocs || []) {
+          if (loc.driver_id == null) continue;
+          const k = String(loc.driver_id);
+          if (byDriver[k]) continue;
+          byDriver[k] = {
+            driver_id: loc.driver_id,
+            team_id: loc.team_id,
+            full_name: loc.full_name,
+            on_duty: loc.on_duty,
+            lat: loc.lat,
+            lng: loc.lng,
+            updated_at: loc.updated_at,
+            active_merchant_id: loc.active_merchant_id ?? null,
+            driver_source: loc.driver_source ?? 'errand',
+          };
+        }
+      } catch (_) {
+        /* optional */
       }
     }
     return res.json(Object.values(byDriver));
@@ -2084,6 +2133,7 @@ router.get('/tasks', async (req, res) => {
           ),
         ].map((id) => parseInt(String(id), 10)).filter((n) => Number.isFinite(n));
         const errandDriverById = await fetchErrandStDriversByIds(errandWibPool, driverIds);
+        await attachErrandDriverGroups(errandWibPool, errandDriverById);
         const needMtNames = driverIds.filter((id) => !errandDriverById.has(String(id)) || !errandDriverById.get(String(id))?.full_name);
         const mtDriverNameById = new Map();
         if (needMtNames.length) {

@@ -122,6 +122,123 @@ function numOrZero(v) {
   return Number.isFinite(n) ? n : null;
 }
 
+/** True when numeric value is non-zero (used to pick a “real” fee among several DB columns). */
+function isNonZeroMoney(v) {
+  const n = numOrZero(v);
+  return n != null && n !== 0;
+}
+
+/**
+ * Payment scalars for driver task JSON (root + nested order/mt_order). Matches Flutter normalization keys.
+ * @param {Record<string, unknown>|null|undefined} orderRow mt_order
+ * @param {Record<string, unknown>|null|undefined} deliveryRow mt_order_delivery_address (optional)
+ * @returns {Record<string, string|null>}
+ */
+function computeMtOrderPaymentFieldsForDriver(orderRow, deliveryRow) {
+  const empty = {
+    order_subtotal: null,
+    sub_total: null,
+    subtotal: null,
+    subTotal: null,
+    total_w_tax: null,
+    totalWTax: null,
+    totalWithTax: null,
+    order_total_amount: null,
+    order_delivery_charge: null,
+    delivery_charge: null,
+    deliveryCharge: null,
+    customer_delivery_charge: null,
+    customerDeliveryCharge: null,
+    convenience_fee: null,
+    convenienceFee: null,
+    service_fee: null,
+    serviceFee: null,
+    card_fee: null,
+    cardFee: null,
+    cart_tip_percentage: null,
+    cartTipPercentage: null,
+    cart_tip_value: null,
+    cartTipValue: null,
+    delivery_fee: null,
+    deliveryFee: null,
+    rider_fee: null,
+    riderFee: null,
+    driver_fee: null,
+    driverFee: null,
+    driver_delivery_fee: null,
+    driverDeliveryFee: null,
+  };
+  if (!orderRow || typeof orderRow !== 'object') return empty;
+
+  let convenience_fee = null;
+  if (isNonZeroMoney(orderRow.card_fee)) convenience_fee = pickMoneyStr(orderRow.card_fee);
+  else if (isNonZeroMoney(orderRow.service_fee)) convenience_fee = pickMoneyStr(orderRow.service_fee);
+  else if (isNonZeroMoney(orderRow.convenience_fee)) convenience_fee = pickMoneyStr(orderRow.convenience_fee);
+  else if (isNonZeroMoney(orderRow.platform_fee)) convenience_fee = pickMoneyStr(orderRow.platform_fee);
+  else if (isNonZeroMoney(orderRow.application_fee)) convenience_fee = pickMoneyStr(orderRow.application_fee);
+  else if (deliveryRow && isNonZeroMoney(deliveryRow.service_fee)) convenience_fee = pickMoneyStr(deliveryRow.service_fee);
+
+  const service_fee =
+    pickMoneyStr(orderRow.service_fee) || (deliveryRow ? pickMoneyStr(deliveryRow.service_fee) : null);
+  const card_fee = pickMoneyStr(orderRow.card_fee);
+
+  const order_delivery_charge =
+    pickMoneyStr(orderRow.delivery_charge) ||
+    pickMoneyStr(orderRow.customer_delivery_charge) ||
+    pickMoneyStr(orderRow.shipping_fee) ||
+    pickMoneyStr(orderRow.delivery_fee);
+
+  const delivery_fee =
+    pickMoneyStr(orderRow.task_fee) ||
+    pickMoneyStr(orderRow.rider_fee) ||
+    pickMoneyStr(orderRow.driver_fee) ||
+    pickMoneyStr(orderRow.driver_delivery_fee);
+
+  const tipPct =
+    orderRow.cart_tip_percentage != null && String(orderRow.cart_tip_percentage).trim() !== ''
+      ? String(orderRow.cart_tip_percentage)
+      : null;
+
+  const sub_total = pickMoneyStr(orderRow.sub_total);
+  const total_w_tax = pickMoneyStr(orderRow.total_w_tax);
+  const delivery_charge =
+    pickMoneyStr(orderRow.delivery_charge) || pickMoneyStr(orderRow.customer_delivery_charge) || order_delivery_charge;
+
+  return {
+    order_subtotal: sub_total,
+    sub_total,
+    subtotal: sub_total,
+    subTotal: sub_total,
+    total_w_tax,
+    totalWTax: total_w_tax,
+    totalWithTax: total_w_tax,
+    order_total_amount: total_w_tax != null ? total_w_tax : sub_total,
+    order_delivery_charge,
+    delivery_charge,
+    deliveryCharge: delivery_charge,
+    customer_delivery_charge: pickMoneyStr(orderRow.customer_delivery_charge),
+    customerDeliveryCharge: pickMoneyStr(orderRow.customer_delivery_charge),
+    convenience_fee,
+    convenienceFee: convenience_fee,
+    service_fee,
+    serviceFee: service_fee,
+    card_fee,
+    cardFee: card_fee,
+    cart_tip_percentage: tipPct,
+    cartTipPercentage: tipPct,
+    cart_tip_value: pickMoneyStr(orderRow.cart_tip_value),
+    cartTipValue: pickMoneyStr(orderRow.cart_tip_value),
+    delivery_fee,
+    deliveryFee: delivery_fee,
+    rider_fee: delivery_fee,
+    riderFee: delivery_fee,
+    driver_fee: delivery_fee,
+    driverFee: delivery_fee,
+    driver_delivery_fee: delivery_fee,
+    driverDeliveryFee: delivery_fee,
+  };
+}
+
 function truthyAsap(v) {
   if (v == null || v === '') return false;
   if (typeof v === 'boolean') return v;
@@ -193,8 +310,9 @@ function mapDetailRowForRider(row) {
  * @param {Record<string, unknown>} details task row (mutated)
  * @param {Record<string, unknown>|null} orderRow mt_order row or null
  * @param {unknown[]} rawLineRows mt_order_details rows
+ * @param {Record<string, unknown>|null} [deliveryRow] mt_order_delivery_address — improves convenience_fee when fee lives only here
  */
-function attachScheduleLinesAndAliases(details, orderRow, rawLineRows) {
+function attachScheduleLinesAndAliases(details, orderRow, rawLineRows, deliveryRow = null) {
   const lines = Array.isArray(rawLineRows) ? rawLineRows.map(mapDetailRowForRider) : [];
   details.order_line_items = lines;
   details.orderLineItems = lines;
@@ -257,22 +375,8 @@ function attachScheduleLinesAndAliases(details, orderRow, rawLineRows) {
   }
 
   if (orderRow) {
-    const tipPct =
-      orderRow.cart_tip_percentage != null && String(orderRow.cart_tip_percentage).trim() !== ''
-        ? String(orderRow.cart_tip_percentage)
-        : null;
-    orderBase.sub_total = pickMoneyStr(orderRow.sub_total);
-    orderBase.subTotal = orderBase.sub_total;
-    orderBase.total_w_tax = pickMoneyStr(orderRow.total_w_tax);
-    orderBase.totalWTax = orderBase.total_w_tax;
-    orderBase.delivery_charge = pickMoneyStr(orderRow.delivery_charge);
-    orderBase.deliveryCharge = orderBase.delivery_charge;
-    orderBase.card_fee = pickMoneyStr(orderRow.card_fee);
-    orderBase.cardFee = orderBase.card_fee;
-    orderBase.cart_tip_percentage = tipPct;
-    orderBase.cartTipPercentage = tipPct;
-    orderBase.cart_tip_value = pickMoneyStr(orderRow.cart_tip_value);
-    orderBase.cartTipValue = orderBase.cart_tip_value;
+    const pay = computeMtOrderPaymentFieldsForDriver(orderRow, deliveryRow);
+    Object.assign(orderBase, pay);
   }
 
   details.order = orderBase;
@@ -416,36 +520,13 @@ async function enrichRiderTaskDetails(pool, taskRow) {
 
   if (deliveryRow) {
     details.order_delivery_address = { ...deliveryRow };
+    details.mt_order_delivery_address = details.order_delivery_address;
+    details.orderDeliveryAddress = details.order_delivery_address;
   }
 
   if (orderRow) {
-    const cardN = numOrZero(orderRow.card_fee);
-    const svcN = numOrZero(deliveryRow?.service_fee);
-    let convenienceFee = null;
-    if (cardN != null && cardN !== 0) convenienceFee = pickMoneyStr(orderRow.card_fee);
-    else if (svcN != null && svcN !== 0) convenienceFee = pickMoneyStr(deliveryRow.service_fee);
-
-    const tipPct =
-      orderRow.cart_tip_percentage != null && String(orderRow.cart_tip_percentage).trim() !== ''
-        ? String(orderRow.cart_tip_percentage)
-        : null;
-
-    details.order_subtotal = pickMoneyStr(orderRow.sub_total);
-    details.order_delivery_charge = pickMoneyStr(orderRow.delivery_charge);
-    details.convenience_fee = convenienceFee;
-    details.cart_tip_percentage = tipPct;
-    details.cart_tip_value = pickMoneyStr(orderRow.cart_tip_value);
-    const totalW = pickMoneyStr(orderRow.total_w_tax);
-    details.order_total_amount = totalW != null ? totalW : pickMoneyStr(orderRow.sub_total);
-
-    details.order = {
-      sub_total: pickMoneyStr(orderRow.sub_total),
-      total_w_tax: pickMoneyStr(orderRow.total_w_tax),
-      delivery_charge: pickMoneyStr(orderRow.delivery_charge),
-      card_fee: pickMoneyStr(orderRow.card_fee),
-      cart_tip_percentage: tipPct,
-      cart_tip_value: pickMoneyStr(orderRow.cart_tip_value),
-    };
+    const pay = computeMtOrderPaymentFieldsForDriver(orderRow, deliveryRow);
+    Object.assign(details, pay);
   }
 
   let rawLines = [];
@@ -458,7 +539,7 @@ async function enrichRiderTaskDetails(pool, taskRow) {
     }
   }
 
-  attachScheduleLinesAndAliases(details, orderRow, rawLines);
+  attachScheduleLinesAndAliases(details, orderRow, rawLines, deliveryRow);
 
   const tid = details.task_id != null ? parseInt(String(details.task_id), 10) : 0;
   if (Number.isFinite(tid) && tid > 0) {

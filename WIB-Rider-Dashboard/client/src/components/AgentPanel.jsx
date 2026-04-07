@@ -1185,22 +1185,28 @@ const AgentPanel = forwardRef(function AgentPanel(
           onClose={() => setSelectedDriver(null)}
           onOpenTaskDetails={onOpenTaskDetails}
           footer={
-            <>
-              <Link to="/drivers" className="agent-detail-modal-btn agent-detail-modal-btn--primary">
-                View in drivers table
-              </Link>
-              <button
-                type="button"
-                className="agent-detail-modal-btn"
-                onClick={() => {
-                  const d = selectedDriver;
-                  setSelectedDriver(null);
-                  openSendPushForDriver(d);
-                }}
-              >
-                Send Push
+            selectedDriver?.driver_source === 'errand' ? (
+              <button type="button" className="agent-detail-modal-btn" onClick={() => setSelectedDriver(null)}>
+                Close
               </button>
-            </>
+            ) : (
+              <>
+                <Link to="/drivers" className="agent-detail-modal-btn agent-detail-modal-btn--primary">
+                  View in drivers table
+                </Link>
+                <button
+                  type="button"
+                  className="agent-detail-modal-btn"
+                  onClick={() => {
+                    const d = selectedDriver;
+                    setSelectedDriver(null);
+                    openSendPushForDriver(d);
+                  }}
+                >
+                  Send Push
+                </button>
+              </>
+            )
           }
         />
       )}

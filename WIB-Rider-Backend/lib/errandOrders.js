@@ -154,6 +154,117 @@ async function fetchErrandStDriversByIds(errandPool, driverIds) {
 }
 
 /**
+ * One primary errand driver group per driver (ErrandWib `st_driver_group` + relation table).
+ * Picks the relation with latest `date_created`, then lowest `group_id` on tie.
+ * Tries `st_driver_group_relations` then `st_driver_group_relation`.
+ * @param {import('mysql2/promise').Pool} errandPool
+ * @param {number[]} driverIds
+ * @returns {Promise<Map<string, { group_id: number|null, group_name: string|null, color_hex: string|null }>>}
+ */
+async function fetchErrandDriverPrimaryGroupByDriverIds(errandPool, driverIds) {
+  const out = new Map();
+  if (!errandPool) return out;
+  const uniq = [
+    ...new Set(
+      driverIds
+        .map((n) => parseInt(String(n), 10))
+        .filter((n) => Number.isFinite(n) && n > 0)
+    ),
+  ];
+  if (!uniq.length) return out;
+  const ph = uniq.map(() => '?').join(',');
+  const relTables = ['st_driver_group_relations', 'st_driver_group_relation'];
+
+  const reduceRows = (rows) => {
+    /** @type {Map<string, Record<string, unknown>>} */
+    const best = new Map();
+    const rowTime = (r) => {
+      const raw = r.rel_date_created ?? r.date_created;
+      if (raw == null) return 0;
+      const t = new Date(raw).getTime();
+      return Number.isFinite(t) ? t : 0;
+    };
+    const rowGid = (r) => {
+      const n = r.group_id != null ? parseInt(String(r.group_id), 10) : NaN;
+      return Number.isFinite(n) ? n : 999999;
+    };
+    for (const r of rows || []) {
+      if (r.driver_id == null) continue;
+      const did = String(r.driver_id);
+      const prev = best.get(did);
+      if (!prev) {
+        best.set(did, r);
+        continue;
+      }
+      const ta = rowTime(r);
+      const tb = rowTime(prev);
+      if (ta > tb || (ta === tb && rowGid(r) < rowGid(prev))) {
+        best.set(did, r);
+      }
+    }
+    for (const [did, r] of best) {
+      const gid = r.group_id != null ? parseInt(String(r.group_id), 10) : NaN;
+      const name = r.group_name != null ? String(r.group_name).trim() : '';
+      const hex = r.color_hex != null ? String(r.color_hex).trim() : '';
+      out.set(did, {
+        group_id: Number.isFinite(gid) ? gid : null,
+        group_name: name || null,
+        color_hex: hex || null,
+      });
+    }
+  };
+
+  for (const relTable of relTables) {
+    const attempts = [
+      `SELECT r.driver_id, r.group_id, r.date_created AS rel_date_created, g.group_name, g.color_hex
+       FROM ${relTable} r
+       INNER JOIN st_driver_group g ON g.group_id = r.group_id
+       WHERE r.driver_id IN (${ph})`,
+      `SELECT r.driver_id, r.group_id, g.group_name, g.color_hex
+       FROM ${relTable} r
+       INNER JOIN st_driver_group g ON g.group_id = r.group_id
+       WHERE r.driver_id IN (${ph})`,
+    ];
+    for (const sql of attempts) {
+      try {
+        const [rows] = await errandPool.query(sql, uniq);
+        reduceRows(rows);
+        return out;
+      } catch (e) {
+        if (e.code === 'ER_NO_SUCH_TABLE') {
+          break;
+        }
+        if (e.code === 'ER_BAD_FIELD_ERROR') {
+          continue;
+        }
+        throw e;
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * Mutates values from `fetchErrandStDriversByIds` with `errand_group_id`, `errand_group_name`, `errand_group_color_hex`.
+ * @param {import('mysql2/promise').Pool} errandPool
+ * @param {Map<string, Record<string, unknown>>} errandDriverById
+ */
+async function attachErrandDriverGroups(errandPool, errandDriverById) {
+  if (!errandPool || !errandDriverById || errandDriverById.size === 0) return;
+  const ids = [...errandDriverById.keys()]
+    .map((k) => parseInt(String(k), 10))
+    .filter((n) => Number.isFinite(n) && n > 0);
+  const gMap = await fetchErrandDriverPrimaryGroupByDriverIds(errandPool, ids);
+  for (const [did, row] of errandDriverById) {
+    const g = gMap.get(did);
+    if (!g) continue;
+    row.errand_group_id = g.group_id;
+    row.errand_group_name = g.group_name;
+    row.errand_group_color_hex = g.color_hex;
+  }
+}
+
+/**
  * @param {import('mysql2/promise').Pool|null|undefined} mainPool
  * @param {number[]} teamIds
  * @returns {Promise<Map<string, string>>}
@@ -214,7 +325,19 @@ async function resolveErrandDriverDetail(errandPool, mainPool, driverId) {
     const tm = await fetchMtDriverTeamNamesByIds(mainPool, [team_id]);
     team_name = tm.get(String(team_id)) || null;
   }
-  if (!driver_name && !driver_phone && !verification_code && !team_id && !driver_profile_photo) return null;
+  const gMap = await fetchErrandDriverPrimaryGroupByDriverIds(errandPool, [driverId]);
+  const g = gMap.get(String(driverId));
+  if (g?.group_name) team_name = g.group_name;
+  if (
+    !driver_name &&
+    !driver_phone &&
+    !verification_code &&
+    !team_id &&
+    !driver_profile_photo &&
+    !team_name
+  ) {
+    return null;
+  }
   return {
     driver_name,
     driver_phone,
@@ -511,10 +634,15 @@ function mapStOrderRowToTaskListRow(
   const driverPhone = stDriver?.driver_phone ?? null;
   const verificationCode = stDriver?.verification_code ?? null;
   const driverTeamId = stDriver?.team_id ?? null;
-  const teamName =
-    driverTeamId != null && teamNameById && typeof teamNameById.get === 'function'
-      ? teamNameById.get(String(driverTeamId)) || null
+  const errandGroupName =
+    stDriver?.errand_group_name != null && String(stDriver.errand_group_name).trim()
+      ? String(stDriver.errand_group_name).trim()
       : null;
+  const teamName =
+    errandGroupName ||
+    (driverTeamId != null && teamNameById && typeof teamNameById.get === 'function'
+      ? teamNameById.get(String(driverTeamId)) || null
+      : null);
   const driverPhoto = stDriver?.photo ?? null;
   const mid = row.merchant_id != null ? parseInt(String(row.merchant_id), 10) : null;
   const merch = Number.isFinite(mid) ? merchantById?.get(String(mid)) : null;
@@ -829,6 +957,142 @@ async function fetchErrandOrderHistory(errandPool, orderId) {
   }
 }
 
+function pickErrandMoneyStr(v) {
+  if (v == null || v === '') return null;
+  return String(v);
+}
+
+function errandNonZeroMoney(v) {
+  if (v == null || v === '') return false;
+  const n = Number(v);
+  return Number.isFinite(n) && n !== 0;
+}
+
+/**
+ * Payment scalars for errand driver detail — same key names / nesting as GetTaskDetails (order / mt_order / task root).
+ * @param {Record<string, unknown>|null|undefined} row - st_ordernew
+ * @param {Record<string, unknown>|null|undefined} clientAddressRow - st_client_address (optional; service_fee fallback)
+ */
+function computeStOrdernewPaymentFieldsForDriver(row, clientAddressRow) {
+  const z = {
+    order_subtotal: null,
+    sub_total: null,
+    subtotal: null,
+    subTotal: null,
+    total_w_tax: null,
+    totalWTax: null,
+    totalWithTax: null,
+    order_total_amount: null,
+    order_delivery_charge: null,
+    delivery_charge: null,
+    deliveryCharge: null,
+    customer_delivery_charge: null,
+    customerDeliveryCharge: null,
+    convenience_fee: null,
+    convenienceFee: null,
+    service_fee: null,
+    serviceFee: null,
+    card_fee: null,
+    cardFee: null,
+    cart_tip_percentage: null,
+    cartTipPercentage: null,
+    cart_tip_value: null,
+    cartTipValue: null,
+    delivery_fee: null,
+    deliveryFee: null,
+    rider_fee: null,
+    riderFee: null,
+    driver_fee: null,
+    driverFee: null,
+    driver_delivery_fee: null,
+    driverDeliveryFee: null,
+  };
+  if (!row || typeof row !== 'object') return z;
+
+  let convenience_fee = null;
+  if (errandNonZeroMoney(row.card_fee)) convenience_fee = pickErrandMoneyStr(row.card_fee);
+  else if (errandNonZeroMoney(row.service_fee)) convenience_fee = pickErrandMoneyStr(row.service_fee);
+  else if (errandNonZeroMoney(row.convenience_fee)) convenience_fee = pickErrandMoneyStr(row.convenience_fee);
+  else if (errandNonZeroMoney(row.platform_fee)) convenience_fee = pickErrandMoneyStr(row.platform_fee);
+  else if (errandNonZeroMoney(row.application_fee)) convenience_fee = pickErrandMoneyStr(row.application_fee);
+  else if (clientAddressRow && errandNonZeroMoney(clientAddressRow.service_fee)) {
+    convenience_fee = pickErrandMoneyStr(clientAddressRow.service_fee);
+  }
+
+  const service_fee =
+    pickErrandMoneyStr(row.service_fee) ||
+    (clientAddressRow ? pickErrandMoneyStr(clientAddressRow.service_fee) : null);
+
+  const order_delivery_charge =
+    pickErrandMoneyStr(row.delivery_charge) ||
+    pickErrandMoneyStr(row.customer_delivery_charge) ||
+    pickErrandMoneyStr(row.shipping_fee) ||
+    pickErrandMoneyStr(row.delivery_fee);
+
+  const delivery_fee =
+    pickErrandMoneyStr(row.task_fee) ||
+    pickErrandMoneyStr(row.rider_fee) ||
+    pickErrandMoneyStr(row.driver_fee) ||
+    pickErrandMoneyStr(row.driver_delivery_fee);
+
+  const tipPct =
+    row.cart_tip_percentage != null && String(row.cart_tip_percentage).trim() !== ''
+      ? String(row.cart_tip_percentage)
+      : row.tip_percentage != null && String(row.tip_percentage).trim() !== ''
+        ? String(row.tip_percentage)
+        : row.tip_percent != null && String(row.tip_percent).trim() !== ''
+          ? String(row.tip_percent)
+          : null;
+
+  const tipVal =
+    pickErrandMoneyStr(row.cart_tip_value) ||
+    pickErrandMoneyStr(row.tip_amount) ||
+    pickErrandMoneyStr(row.tip_value) ||
+    pickErrandMoneyStr(row.tip);
+
+  const sub_total = pickErrandMoneyStr(row.sub_total);
+  const totalRaw = row.total_w_tax != null && String(row.total_w_tax).trim() !== '' ? row.total_w_tax : row.total;
+  const total_w_tax = pickErrandMoneyStr(totalRaw);
+  const delivery_charge =
+    pickErrandMoneyStr(row.delivery_charge) ||
+    pickErrandMoneyStr(row.customer_delivery_charge) ||
+    order_delivery_charge;
+
+  return {
+    order_subtotal: sub_total,
+    sub_total,
+    subtotal: sub_total,
+    subTotal: sub_total,
+    total_w_tax,
+    totalWTax: total_w_tax,
+    totalWithTax: total_w_tax,
+    order_total_amount: total_w_tax != null ? total_w_tax : sub_total,
+    order_delivery_charge,
+    delivery_charge,
+    deliveryCharge: delivery_charge,
+    customer_delivery_charge: pickErrandMoneyStr(row.customer_delivery_charge),
+    customerDeliveryCharge: pickErrandMoneyStr(row.customer_delivery_charge),
+    convenience_fee,
+    convenienceFee: convenience_fee,
+    service_fee,
+    serviceFee: service_fee,
+    card_fee: pickErrandMoneyStr(row.card_fee),
+    cardFee: pickErrandMoneyStr(row.card_fee),
+    cart_tip_percentage: tipPct,
+    cartTipPercentage: tipPct,
+    cart_tip_value: tipVal,
+    cartTipValue: tipVal,
+    delivery_fee,
+    deliveryFee: delivery_fee,
+    rider_fee: delivery_fee,
+    riderFee: delivery_fee,
+    driver_fee: delivery_fee,
+    driverFee: delivery_fee,
+    driver_delivery_fee: delivery_fee,
+    driverDeliveryFee: delivery_fee,
+  };
+}
+
 /**
  * Build GET /errand-orders/:id detail payload (mirrors task modal shape partially).
  * @param {Record<string, unknown>} row - st_ordernew
@@ -925,6 +1189,8 @@ function buildErrandTaskDetailPayload(
     normalizeDriverPaymentStatus(row) ??
     (row.payment_status != null && String(row.payment_status).trim() !== '' ? String(row.payment_status).trim() : null);
 
+  const pay = computeStOrdernewPaymentFieldsForDriver(row, clientAddressRow);
+
   const task = {
     task_source: 'errand',
     task_id: safeId > 0 ? -safeId : 0,
@@ -966,6 +1232,7 @@ function buildErrandTaskDetailPayload(
     task_lng: taskLng,
     date_created: row.date_created || row.created_at || null,
     advance_order_note: null,
+    ...pay,
   };
 
   const order = {
@@ -974,16 +1241,19 @@ function buildErrandTaskDetailPayload(
     payment_type,
     payment_status: payment_status_norm,
     order_payment_status: payment_status_norm,
-    sub_total: row.sub_total,
-    total_w_tax: row.total,
     delivery_date: row.delivery_date,
     delivery_time: orderDeliveryTime,
     order_delivery_time: orderDeliveryTime,
     order_delivery_date: row.delivery_date,
     date_created: row.date_created || row.created_at,
     contact_number: custPhone,
-    order_change: row.amount_due,
+    order_change: pickErrandMoneyStr(row.amount_due),
+    ...pay,
   };
+
+  const mt_order = { ...order };
+  const order_info = { ...order };
+  const orderInfo = { ...order };
 
   const merchant = m
     ? {
@@ -998,6 +1268,27 @@ function buildErrandTaskDetailPayload(
       }
     : null;
 
+  const lines = Array.isArray(orderDetails) ? orderDetails : [];
+
+  const clientAddressPayload = addr
+    ? {
+        address_id: addr.address_id,
+        address_type: addr.address_type,
+        address1: addr.address1 != null ? String(addr.address1).trim() : null,
+        address2: addr.address2 != null ? String(addr.address2).trim() : null,
+        formatted_address: shortFormatted || null,
+        formatted_address_full: clientAddressFormattedFull(addr),
+        location_name: addr.location_name != null ? String(addr.location_name).trim() : null,
+        address_label: addr.address_label != null ? String(addr.address_label).trim() : null,
+        delivery_instructions: addr.delivery_instructions != null ? String(addr.delivery_instructions).trim() : null,
+        formatted_address_summary: clientAddrLine || null,
+        latitude: addr.latitude ?? addr.google_lat ?? null,
+        longitude: addr.longitude ?? addr.google_lng ?? null,
+        service_fee: pickErrandMoneyStr(addr.service_fee),
+        serviceFee: pickErrandMoneyStr(addr.service_fee),
+      }
+    : null;
+
   return {
     task_source: 'errand',
     status,
@@ -1005,10 +1296,18 @@ function buildErrandTaskDetailPayload(
     payment_type,
     payment_status: payment_status_norm,
     order_payment_status: payment_status_norm,
+    ...pay,
     task,
     order,
+    mt_order,
+    order_info,
+    orderInfo,
     merchant,
-    order_details: Array.isArray(orderDetails) ? orderDetails : [],
+    order_details: lines,
+    order_line_items: lines,
+    orderLineItems: lines,
+    mt_order_details: lines,
+    orderDetails: lines,
     task_photos: [],
     proof_images: [],
     order_history: Array.isArray(orderHistoryRows) ? orderHistoryRows : [],
@@ -1023,24 +1322,211 @@ function buildErrandTaskDetailPayload(
           phone_prefix: cl.phone_prefix,
         }
       : null,
-    client_address: addr
-      ? {
-          address_id: addr.address_id,
-          address_type: addr.address_type,
-          address1: addr.address1 != null ? String(addr.address1).trim() : null,
-          address2: addr.address2 != null ? String(addr.address2).trim() : null,
-          formatted_address: shortFormatted || null,
-          formatted_address_full: clientAddressFormattedFull(addr),
-          location_name: addr.location_name != null ? String(addr.location_name).trim() : null,
-          address_label: addr.address_label != null ? String(addr.address_label).trim() : null,
-          delivery_instructions: addr.delivery_instructions != null ? String(addr.delivery_instructions).trim() : null,
-          /** Short line for lists / summaries (merged from saved address fields). */
-          formatted_address_summary: clientAddrLine || null,
-          latitude: addr.latitude ?? addr.google_lat ?? null,
-          longitude: addr.longitude ?? addr.google_lng ?? null,
-        }
-      : null,
+    client_address: clientAddressPayload,
+    mt_order_delivery_address: clientAddressPayload,
+    orderDeliveryAddress: clientAddressPayload,
   };
+}
+
+/**
+ * @param {Record<string, unknown>} r - st_driver row
+ * @param {{ group_id: number|null, group_name: string|null }|null|undefined} groupInfo
+ * @returns {Record<string, unknown>} shape consumed by `mapDriverRowToAgentDriver` (admin.js)
+ */
+function stDriverRowToAgentDashboardInput(r, groupInfo) {
+  const lat = r.latitude != null ? parseFloat(String(r.latitude)) : NaN;
+  let lng = NaN;
+  if (r.lontitude != null) lng = parseFloat(String(r.lontitude));
+  else if (r.longitude != null) lng = parseFloat(String(r.longitude));
+  const lastTs = r.last_seen || r.date_modified || r.date_created || null;
+  const lastLogin = lastTs;
+  const lastOnlineSec = lastTs ? Math.floor(new Date(lastTs).getTime() / 1000) : 0;
+  let onDuty = 1;
+  if (Object.prototype.hasOwnProperty.call(r, 'is_online')) {
+    const io = r.is_online;
+    onDuty = io === 1 || io === true || String(io) === '1' ? 1 : 0;
+  }
+  const tid = r.team_id != null ? parseInt(String(r.team_id), 10) : NaN;
+  const team_id_mt = Number.isFinite(tid) && tid > 0 ? tid : groupInfo?.group_id != null ? groupInfo.group_id : null;
+  return {
+    driver_id: r.driver_id,
+    username: r.email != null && String(r.email).trim() ? String(r.email).trim() : null,
+    first_name: r.first_name,
+    last_name: r.last_name,
+    phone: r.phone,
+    on_duty: onDuty,
+    team_id: team_id_mt,
+    team_name: groupInfo?.group_name ?? null,
+    email: r.email ?? null,
+    vehicle: null,
+    status: r.status != null && String(r.status).trim() ? String(r.status).trim() : 'active',
+    status_updated_at: lastTs,
+    last_login: lastLogin,
+    last_online: lastOnlineSec,
+    location_lat: Number.isFinite(lat) ? lat : null,
+    location_lng: Number.isFinite(lng) ? lng : null,
+    user_type: null,
+    user_id: null,
+    device_platform: 'android',
+    device_type: null,
+    driver_source: 'errand',
+  };
+}
+
+/**
+ * Active ErrandWib `st_driver` rows for agent panel when team filter is "all".
+ * @param {import('mysql2/promise').Pool} errandPool
+ * @param {{ driver_name?: string|null }} filters
+ */
+async function fetchErrandStDriversRawForAgentPanel(errandPool, filters) {
+  if (!errandPool) return [];
+  const driverName = filters?.driver_name != null && String(filters.driver_name).trim() !== '' ? String(filters.driver_name).trim() : null;
+  const nameClause = driverName
+    ? " AND (CONCAT(COALESCE(first_name,''), ' ', COALESCE(last_name,'')) LIKE ? OR first_name LIKE ? OR last_name LIKE ?)"
+    : '';
+  const nameParams = driverName ? [`%${driverName}%`, `%${driverName}%`, `%${driverName}%`] : [];
+  const statusClause =
+    " AND (LOWER(TRIM(COALESCE(NULLIF(TRIM(COALESCE(status,'')), ''), 'active'))) = 'active')";
+  const attempts = [
+    `SELECT driver_id, first_name, last_name, email, phone, phone_prefix, status, is_online, last_seen, date_modified, date_created,
+            latitude, lontitude, longitude, team_id
+     FROM st_driver WHERE 1=1${statusClause}${nameClause} ORDER BY first_name, last_name`,
+    `SELECT driver_id, first_name, last_name, email, phone, status, is_online, last_seen, date_modified, date_created,
+            latitude, lontitude, team_id
+     FROM st_driver WHERE 1=1${statusClause}${nameClause} ORDER BY first_name, last_name`,
+    `SELECT driver_id, first_name, last_name, email, phone, last_seen, date_modified, latitude, lontitude, team_id
+     FROM st_driver WHERE 1=1${nameClause} ORDER BY first_name, last_name`,
+  ];
+  for (const sql of attempts) {
+    try {
+      const [rows] = await errandPool.query(sql, nameParams);
+      return rows || [];
+    } catch (e) {
+      if (e.code === 'ER_NO_SUCH_TABLE') return [];
+      if (e.code !== 'ER_BAD_FIELD_ERROR') throw e;
+    }
+  }
+  return [];
+}
+
+/**
+ * Pseudo–`mt_driver` rows for agent dashboard / map (drivers not in `mt_driver`).
+ * @param {import('mysql2/promise').Pool} errandPool
+ * @param {{ driver_name?: string|null }} filters
+ */
+async function buildErrandPseudoRowsForAgentDashboard(errandPool, filters) {
+  const raw = await fetchErrandStDriversRawForAgentPanel(errandPool, filters);
+  if (!raw.length) return [];
+  const ids = raw.map((r) => parseInt(String(r.driver_id), 10)).filter((n) => Number.isFinite(n) && n > 0);
+  const gMap = await fetchErrandDriverPrimaryGroupByDriverIds(errandPool, ids);
+  return raw.map((r) => {
+    const g = gMap.get(String(r.driver_id));
+    return stDriverRowToAgentDashboardInput(r, g);
+  });
+}
+
+/**
+ * Errand order counts per driver for agent panel "tasks today".
+ * @param {import('mysql2/promise').Pool} errandPool
+ * @param {number[]} driverIds
+ * @param {string} dateOnly YYYY-MM-DD
+ * @returns {Promise<Record<number, number>>}
+ */
+async function fetchErrandOrderTaskCountsByDriver(errandPool, driverIds, dateOnly) {
+  /** @type {Record<number, number>} */
+  const counts = {};
+  if (!errandPool || !driverIds.length) return counts;
+  const uniq = [...new Set(driverIds.map((n) => parseInt(String(n), 10)).filter((n) => Number.isFinite(n) && n > 0))];
+  if (!uniq.length) return counts;
+  const ph = uniq.map(() => '?').join(',');
+  const d = String(dateOnly || '').slice(0, 10);
+  try {
+    const [rows] = await errandPool.query(
+      `SELECT driver_id, COUNT(*) AS cnt FROM st_ordernew
+       WHERE driver_id IN (${ph})
+         AND DATE(COALESCE(delivery_date, created_at, date_created, date_modified)) = ?
+       GROUP BY driver_id`,
+      [...uniq, d]
+    );
+    for (const r of rows || []) {
+      if (r.driver_id != null) counts[r.driver_id] = Number(r.cnt) || 0;
+    }
+  } catch (_) {
+    /* optional */
+  }
+  return counts;
+}
+
+/**
+ * GPS pins for ErrandWib riders (`st_driver.latitude` / `lontitude`), same shape as `GET /drivers/locations` rows.
+ * @param {import('mysql2/promise').Pool} errandPool
+ * @param {boolean} includeOffline
+ */
+async function fetchErrandDriverLocationsForMap(errandPool, includeOffline) {
+  const out = [];
+  if (!errandPool) return out;
+  const recency = includeOffline
+    ? ''
+    : ' AND COALESCE(last_seen, date_modified) > DATE_SUB(NOW(), INTERVAL 30 MINUTE)';
+  const bases = [
+    `SELECT driver_id, first_name, last_name, is_online, team_id, latitude, lontitude AS lng_col, longitude,
+            COALESCE(last_seen, date_modified) AS updated_at
+     FROM st_driver
+     WHERE latitude IS NOT NULL AND (lontitude IS NOT NULL OR longitude IS NOT NULL)
+       AND (ABS(latitude) > 0.0001 OR ABS(COALESCE(lontitude, longitude, 0)) > 0.0001)${recency}`,
+    `SELECT driver_id, first_name, last_name, is_online, team_id, latitude, lontitude AS lng_col,
+            COALESCE(last_seen, date_modified) AS updated_at
+     FROM st_driver
+     WHERE latitude IS NOT NULL AND lontitude IS NOT NULL
+       AND (ABS(latitude) > 0.0001 OR ABS(lontitude) > 0.0001)${recency}`,
+    `SELECT driver_id, first_name, last_name, team_id, latitude, lontitude AS lng_col,
+            date_modified AS updated_at
+     FROM st_driver
+     WHERE latitude IS NOT NULL AND lontitude IS NOT NULL`,
+  ];
+  /** @type {Record<string, unknown>[]|null} */
+  let rows = null;
+  for (const sql of bases) {
+    try {
+      const [r] = await errandPool.query(sql);
+      rows = r || [];
+      break;
+    } catch (e) {
+      if (e.code === 'ER_NO_SUCH_TABLE') return out;
+      if (e.code !== 'ER_BAD_FIELD_ERROR') throw e;
+    }
+  }
+  if (!rows || !rows.length) return out;
+  const ids = rows.map((r) => parseInt(String(r.driver_id), 10)).filter((n) => Number.isFinite(n) && n > 0);
+  const gMap = await fetchErrandDriverPrimaryGroupByDriverIds(errandPool, ids);
+  for (const r of rows) {
+    const lat = r.latitude != null ? parseFloat(String(r.latitude)) : NaN;
+    let lng = NaN;
+    if (r.lng_col != null) lng = parseFloat(String(r.lng_col));
+    else if (r.longitude != null) lng = parseFloat(String(r.longitude));
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue;
+    const fn = [r.first_name, r.last_name].filter(Boolean).join(' ').trim();
+    const g = gMap.get(String(r.driver_id));
+    const tid = r.team_id != null ? parseInt(String(r.team_id), 10) : NaN;
+    const team_id = Number.isFinite(tid) && tid > 0 ? tid : g?.group_id ?? null;
+    let onDuty = 1;
+    if (Object.prototype.hasOwnProperty.call(r, 'is_online')) {
+      const io = r.is_online;
+      onDuty = io === 1 || io === true || String(io) === '1' ? 1 : 0;
+    }
+    out.push({
+      driver_id: r.driver_id,
+      team_id,
+      full_name: fn || null,
+      on_duty: onDuty,
+      lat,
+      lng,
+      updated_at: r.updated_at ?? null,
+      active_merchant_id: null,
+      driver_source: 'errand',
+    });
+  }
+  return out;
 }
 
 module.exports = {
@@ -1056,6 +1542,11 @@ module.exports = {
   fetchErrandLatestHistoryStatusByOrderIds,
   pickClientAddressRow,
   fetchErrandStDriversByIds,
+  fetchErrandDriverPrimaryGroupByDriverIds,
+  attachErrandDriverGroups,
   fetchMtDriverTeamNamesByIds,
   resolveErrandDriverDetail,
+  buildErrandPseudoRowsForAgentDashboard,
+  fetchErrandOrderTaskCountsByDriver,
+  fetchErrandDriverLocationsForMap,
 };

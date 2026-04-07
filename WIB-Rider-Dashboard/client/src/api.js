@@ -316,7 +316,3 @@ export function centralErrandWibPing() {
   return api('central/errand-wib/ping');
 }
 
-/** Combined snapshot (default pool + both named databases). */
-export function centralUnifiedOverview() {
-  return api('central/unified-overview');
-}

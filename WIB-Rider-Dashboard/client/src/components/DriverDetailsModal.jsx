@@ -37,6 +37,25 @@ export default function DriverDetailsModal({
       setState({ loading: false, driver: null, tasks: [], error: null });
       return;
     }
+    if (summaryDriver?.driver_source === 'errand') {
+      const s = summaryDriver;
+      setState({
+        loading: false,
+        driver: {
+          full_name: s.full_name ?? null,
+          phone: s.phone ?? null,
+          email: s.email ?? null,
+          team_name: s.team_name ?? null,
+          device_platform: s.device ?? null,
+          transport_type: null,
+          licence_plate: null,
+          app_version: null,
+        },
+        tasks: [],
+        error: null,
+      });
+      return;
+    }
     setState({ loading: true, driver: null, tasks: [], error: null });
     const dateStr = todayStr();
     api(`drivers/${encodeURIComponent(driverId)}/details?date=${encodeURIComponent(dateStr)}`)
@@ -56,7 +75,7 @@ export default function DriverDetailsModal({
           error: err?.error || err?.message || 'Failed to load driver details',
         });
       });
-  }, [driverId]);
+  }, [driverId, summaryDriver]);
 
   const handleTaskClick = useCallback(
     (taskId) => {
@@ -107,6 +126,13 @@ export default function DriverDetailsModal({
 
           {!state.loading && state.error && <div className="agent-detail-modal-error">{state.error}</div>}
 
+          {!state.loading && !state.error && summaryDriver?.driver_source === 'errand' && (
+            <p className="agent-detail-modal-subtitle">
+              Errand rider (ErrandWib). Task history for this rider is on errand orders, not the food-delivery task list
+              below.
+            </p>
+          )}
+
           {!state.loading && !state.error && (
             <>
               <div className="agent-driver-details-grid">
@@ -134,7 +160,9 @@ export default function DriverDetailsModal({
                 </div>
                 <div className="agent-driver-details-row">
                   <div className="agent-driver-details-label">Team :</div>
-                  <div className="agent-driver-details-value">{state.driver?.team_name ?? '—'}</div>
+                  <div className="agent-driver-details-value">
+                    {state.driver?.team_name ?? summaryDriver?.team_name ?? '—'}
+                  </div>
                 </div>
 
                 <div className="agent-driver-details-row">

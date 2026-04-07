@@ -16,6 +16,7 @@ const {
   fetchErrandLatestHistoryStatusByOrderIds,
   pickClientAddressRow,
   fetchErrandStDriversByIds,
+  attachErrandDriverGroups,
   fetchMtDriverTeamNamesByIds,
   resolveErrandDriverDetail,
 } = require('../lib/errandOrders');
@@ -322,6 +323,7 @@ router.post('/GetErrandOrders', validateApiKey, resolveDriver, async (req, res) 
       .map((id) => parseInt(String(id), 10))
       .filter((n) => Number.isFinite(n));
     const errandDriverById = await fetchErrandStDriversByIds(errandWibPool, driverIds);
+    await attachErrandDriverGroups(errandWibPool, errandDriverById);
     const needMtNames = driverIds.filter(
       (id) => !errandDriverById.has(String(id)) || !errandDriverById.get(String(id))?.full_name
     );
