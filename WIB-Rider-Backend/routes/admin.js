@@ -36,7 +36,9 @@ const {
   notifyAllDashboardAdmins,
   foodTaskNotifyFromStatus,
   errandNotifyFromCanonical,
+  formatActorFromAdminUser,
 } = require('../lib/dashboardRiderNotify');
+const { insertMtOrderHistoryRow } = require('../lib/mtOrderHistoryInsert');
 
 const ADMIN_SECRET = process.env.ADMIN_SECRET || '';
 
@@ -1389,6 +1391,172 @@ async function fetchMergedTaskOrderHistory(pool, taskId, orderId) {
   }
 }
 
+/** Normalize timeline / history status for comparison (matches rider dashboard TaskDetailsModal). */
+function normalizeDashboardHistoryStatusKey(s) {
+  return String(s || '')
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, '')
+    .replace(/_/g, '');
+}
+
+function historyRowEffectiveStatusKey(row) {
+  if (!row || typeof row !== 'object') return '';
+  const st = row.status != null ? String(row.status).trim() : '';
+  if (st) return normalizeDashboardHistoryStatusKey(st);
+  const desc = row.description != null ? String(row.description).trim() : '';
+  if (desc) return normalizeDashboardHistoryStatusKey(desc);
+  return '';
+}
+
+function isReadyForPickupStatusKey(k) {
+  return k === 'readyforpickup' || k === 'readypickup';
+}
+
+/**
+ * Oldest-first history: RFP is "active" if the last Ready-for-pickup row has no later row with a different status.
+ * Matches task list need: hide badge once timeline moves past RFP (e.g. acknowledged / started).
+ */
+function isTimelineReadyForPickupActiveFromSortedHistory(sortedOldestFirst) {
+  if (!Array.isArray(sortedOldestFirst) || sortedOldestFirst.length === 0) return false;
+  let lastRfpIndex = -1;
+  for (let i = 0; i < sortedOldestFirst.length; i++) {
+    const k = historyRowEffectiveStatusKey(sortedOldestFirst[i]);
+    if (isReadyForPickupStatusKey(k)) lastRfpIndex = i;
+  }
+  if (lastRfpIndex < 0) return false;
+  for (let j = lastRfpIndex + 1; j < sortedOldestFirst.length; j++) {
+    const k = historyRowEffectiveStatusKey(sortedOldestFirst[j]);
+    if (!k) continue;
+    if (!isReadyForPickupStatusKey(k)) return false;
+  }
+  return true;
+}
+
+/** Same linking rules as fetchMergedTaskOrderHistory; filters a pre-fetched history array per task. */
+function mergeOrderHistoryRowsForTaskFromPool(allRows, taskId, orderId) {
+  const tid = Number(taskId);
+  const oidRaw = orderId != null ? String(orderId).trim() : '';
+  const oid =
+    oidRaw !== '' && oidRaw !== '0' && Number.isFinite(parseInt(oidRaw, 10))
+      ? parseInt(oidRaw, 10)
+      : null;
+  const byId = new Map();
+  for (const row of allRows || []) {
+    if (!row || row.id == null) continue;
+    const rid = Number(row.id);
+    const rtRaw = row.task_id;
+    const rt =
+      rtRaw != null && String(rtRaw).trim() !== '' ? Number(rtRaw) : NaN;
+    const taskMatch = Number.isFinite(tid) && tid > 0 && Number.isFinite(rt) && rt === tid;
+    let orderOnlyMatch = false;
+    if (oid != null && row.order_id != null) {
+      const ro = parseInt(String(row.order_id), 10);
+      if (Number.isFinite(ro) && ro === oid) {
+        orderOnlyMatch = !Number.isFinite(rt) || rt === 0;
+      }
+    }
+    if (taskMatch || orderOnlyMatch) byId.set(rid, row);
+  }
+  const merged = Array.from(byId.values());
+  merged.sort((a, b) => {
+    const ta = a.date_created ? new Date(a.date_created).getTime() : 0;
+    const tb = b.date_created ? new Date(b.date_created).getTime() : 0;
+    if (ta !== tb) return ta - tb;
+    return Number(a.id) - Number(b.id);
+  });
+  return merged;
+}
+
+/**
+ * Sets task.timeline_ready_for_pickup (boolean) on each row for the rider dashboard task cards.
+ */
+async function attachTimelineReadyForPickupFlags(pool, errandPool, rows) {
+  if (!Array.isArray(rows) || rows.length === 0) return;
+
+  const mtRows = rows.filter((r) => r.task_source !== 'errand');
+  const taskIds = [
+    ...new Set(
+      mtRows.map((r) => Number(r.task_id)).filter((n) => Number.isFinite(n) && n > 0)
+    ),
+  ];
+  const orderIds = [
+    ...new Set(
+      mtRows
+        .map((r) => r.order_id)
+        .map((x) => (x != null ? parseInt(String(x), 10) : NaN))
+        .filter((n) => Number.isFinite(n) && n > 0)
+    ),
+  ];
+
+  let allMtHistory = [];
+  if (taskIds.length > 0 || orderIds.length > 0) {
+    try {
+      const cols = await resolveOrderHistorySelectCols(pool);
+      const parts = [];
+      const params = [];
+      if (taskIds.length > 0) {
+        parts.push(`task_id IN (${taskIds.map(() => '?').join(',')})`);
+        params.push(...taskIds);
+      }
+      if (orderIds.length > 0) {
+        parts.push(
+          `(order_id IN (${orderIds.map(() => '?').join(',')}) AND (task_id IS NULL OR task_id = 0 OR CAST(task_id AS UNSIGNED) = 0))`
+        );
+        params.push(...orderIds);
+      }
+      const sql = `SELECT ${cols} FROM mt_order_history WHERE ${parts.join(' OR ')}`;
+      const [h] = await pool.query(sql, params);
+      allMtHistory = h || [];
+    } catch (e) {
+      if (e.code !== 'ER_NO_SUCH_TABLE' && e.code !== 'ER_BAD_FIELD_ERROR') throw e;
+      allMtHistory = [];
+    }
+  }
+
+  const errandRows = rows.filter((r) => r.task_source === 'errand');
+  const errandOrderIds = [
+    ...new Set(
+      errandRows
+        .map((r) => Number(r.order_id ?? r.st_order_id))
+        .filter((n) => Number.isFinite(n) && n > 0)
+    ),
+  ];
+
+  const errandHistoryByOrder = new Map();
+  if (errandOrderIds.length > 0 && errandPool) {
+    try {
+      const ph = errandOrderIds.map(() => '?').join(',');
+      const [eh] = await errandPool.query(
+        `SELECT * FROM st_ordernew_history WHERE order_id IN (${ph}) ORDER BY order_id ASC, id ASC`,
+        errandOrderIds
+      );
+      for (const r of eh || []) {
+        const oid = r.order_id;
+        if (!errandHistoryByOrder.has(oid)) errandHistoryByOrder.set(oid, []);
+        errandHistoryByOrder.get(oid).push(r);
+      }
+    } catch (e) {
+      if (e.code !== 'ER_NO_SUCH_TABLE') throw e;
+    }
+  }
+
+  for (const r of rows) {
+    let active = false;
+    if (r.task_source === 'errand') {
+      const oid = Number(r.order_id ?? r.st_order_id);
+      const list = errandHistoryByOrder.get(oid) || [];
+      active = isTimelineReadyForPickupActiveFromSortedHistory(list);
+    } else {
+      const tid = Number(r.task_id);
+      const oid = r.order_id != null ? parseInt(String(r.order_id), 10) : null;
+      const merged = mergeOrderHistoryRowsForTaskFromPool(allMtHistory, tid, oid);
+      active = isTimelineReadyForPickupActiveFromSortedHistory(merged);
+    }
+    r.timeline_ready_for_pickup = Boolean(active);
+  }
+}
+
 /**
  * Latest remarks/notes from mt_order_history where status is "Advance Order" (admin timeline note).
  * Same task/order linking as fetchMergedTaskOrderHistory.
@@ -1499,10 +1667,18 @@ router.get('/order-history/feed', async (req, res) => {
     }
 
     const listSql = `
-      SELECT h.id, h.order_id, h.status, h.remarks, h.date_created, h.update_by_type, h.update_by_name, h.reason, h.notes,
+      SELECT h.id, h.order_id, h.status, h.remarks, h.date_created, h.update_by_type,
+        COALESCE(
+          NULLIF(TRIM(h.update_by_name), ''),
+          NULLIF(TRIM(CONCAT(COALESCE(d.first_name, ''), ' ', COALESCE(d.last_name, ''))), ''),
+          NULLIF(TRIM(d.username), '')
+        ) AS update_by_name,
+        h.reason, h.notes,
         t.task_id AS resolved_task_id
       FROM mt_order_history h
       INNER JOIN mt_driver_task t ON ${historyLinkSql}
+      LEFT JOIN mt_driver d ON LOWER(TRIM(h.update_by_type)) = 'driver'
+        AND h.update_by_id IS NOT NULL AND CAST(h.update_by_id AS UNSIGNED) = d.driver_id
       WHERE ${taskCondsSql}
       AND h.id > ?
       ORDER BY h.id ASC
@@ -2470,7 +2646,8 @@ router.put('/errand-orders/:orderId/status', express.json(), async (req, res) =>
         erSt?.order_reference != null && String(erSt.order_reference).trim()
           ? `Errand ${String(erSt.order_reference).trim()}`
           : `Errand order #${orderId}`;
-      const payload = errandNotifyFromCanonical(orderId, lbl, canon);
+      const actor = formatActorFromAdminUser(req.adminUser);
+      const payload = errandNotifyFromCanonical(orderId, lbl, canon, actor);
       if (payload) await notifyAllDashboardAdmins(pool, payload).catch(() => {});
     } catch (_) {}
     return res.json({ ok: true, status: canon });
@@ -2640,10 +2817,15 @@ router.put('/tasks/:id/status', express.json(), async (req, res) => {
 
     try {
       const [[task]] = await pool.query('SELECT order_id FROM mt_driver_task WHERE task_id = ?', [taskId]);
-      await pool.query(
-        'INSERT INTO mt_order_history (order_id, task_id, status, remarks, date_created, update_by_type) VALUES (?, ?, ?, ?, NOW(), ?)',
-        [task?.order_id || null, taskId, newStatus, remarks, 'admin']
-      );
+      await insertMtOrderHistoryRow(pool, {
+        orderId: task?.order_id || null,
+        taskId,
+        status: newStatus,
+        remarks,
+        updateByType: 'admin',
+        actorId: req.adminUser?.admin_id ?? null,
+        actorDisplayName: formatActorFromAdminUser(req.adminUser),
+      });
     } catch (_) {
       /* mt_order_history optional — do not fail status update */
     }
@@ -2653,7 +2835,8 @@ router.put('/tasks/:id/status', express.json(), async (req, res) => {
         'SELECT task_description, order_id FROM mt_driver_task WHERE task_id = ? LIMIT 1',
         [taskId]
       );
-      const payload = foodTaskNotifyFromStatus(taskId, trow?.order_id, trow?.task_description, newStatus);
+      const actor = formatActorFromAdminUser(req.adminUser);
+      const payload = foodTaskNotifyFromStatus(taskId, trow?.order_id, trow?.task_description, newStatus, actor);
       if (payload) await notifyAllDashboardAdmins(pool, payload).catch(() => {});
     } catch (_) {}
 

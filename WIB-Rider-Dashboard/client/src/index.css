@@ -1753,7 +1753,26 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
   font-size: 0.875rem;
   line-height: 1.45;
   color: var(--text-dark);
-  white-space: pre-line;
+  white-space: normal;
+}
+.rider-notif-toast-stacked {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  text-align: left;
+}
+.rider-notif-toast-line1 {
+  font-weight: 600;
+  font-size: 0.9rem;
+  line-height: 1.35;
+  color: var(--text-dark);
+}
+.rider-notif-toast-line2 {
+  font-weight: 400;
+  font-size: 0.8125rem;
+  line-height: 1.4;
+  color: var(--text-muted, #6b7280);
+  word-break: break-word;
 }
 .Toastify__toast-theme--dark.rider-notif-toast {
   background: var(--bg-surface-2, #242a32);
@@ -4815,6 +4834,67 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
   color: var(--task-advance-text);
   font-size: 0.78rem;
   font-style: italic;
+}
+
+/* Ready for pickup — driven by activity timeline (merchant / history), not task assignment alone */
+.task-card-v2-rfp-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  margin: 0.5rem 0 0.45rem;
+  padding: 0.5rem 0.65rem;
+  border-radius: 10px;
+  background: linear-gradient(135deg, rgba(26, 188, 156, 0.22) 0%, rgba(22, 160, 133, 0.18) 100%);
+  border: 1px solid rgba(26, 188, 156, 0.55);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.04), 0 4px 14px rgba(26, 188, 156, 0.12);
+}
+[data-theme="dark"] .task-card-v2-rfp-banner {
+  background: linear-gradient(135deg, rgba(26, 188, 156, 0.2) 0%, rgba(22, 160, 133, 0.14) 100%);
+  border-color: rgba(26, 188, 156, 0.45);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.2), 0 6px 18px rgba(0, 0, 0, 0.25);
+}
+.task-card-v2-rfp-banner-icon {
+  flex-shrink: 0;
+  display: inline-flex;
+  color: #16a085;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.08));
+}
+[data-theme="dark"] .task-card-v2-rfp-banner-icon {
+  color: #2ee6c4;
+}
+.task-card-v2-rfp-banner-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+}
+.task-card-v2-rfp-banner-kicker {
+  font-size: 0.62rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted-strong, #64748b);
+  line-height: 1.2;
+}
+[data-theme="dark"] .task-card-v2-rfp-banner-kicker {
+  color: rgba(255, 255, 255, 0.55);
+}
+.task-card-v2-rfp-banner-title {
+  font-size: 0.875rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  color: #0d5c4d;
+  line-height: 1.25;
+}
+[data-theme="dark"] .task-card-v2-rfp-banner-title {
+  color: #e8fffa;
+}
+
+.task-card-all-tasks-badge--rfp {
+  background: linear-gradient(135deg, #1abc9c 0%, #16a085 100%) !important;
+  color: #fff !important;
+  border: none !important;
+  box-shadow: 0 2px 8px rgba(26, 188, 156, 0.35);
 }
 
 .task-card-all-tasks-advance {

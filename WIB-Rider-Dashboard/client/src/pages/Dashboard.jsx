@@ -36,10 +36,14 @@ import {
   tasksWithMapCoordinates,
   taskDropoffLatLng,
   riderGpsFromLocations,
+  riderMapFocusZoom,
 } from '../utils/mapTasks';
 
-function nextMapTaskFocus(prev, lat, lng) {
-  return { nonce: (prev?.nonce ?? 0) + 1, lat, lng };
+/** `{ nonce, lat, lng, zoom? }` — optional `zoom` for rider focus vs default task zoom in MapView. */
+function nextDashboardMapFocus(prev, lat, lng, zoom) {
+  const o = { nonce: (prev?.nonce ?? 0) + 1, lat, lng };
+  if (zoom != null && Number.isFinite(Number(zoom))) o.zoom = Number(zoom);
+  return o;
 }
 import { buildActivePanelDriverIdSet } from '../utils/agentPanelRiders';
 
@@ -82,7 +86,7 @@ export default function Dashboard() {
   const handleFocusTaskOnMap = useCallback((task) => {
     const p = taskDropoffLatLng(task);
     if (!p) return;
-    setMapTaskFocusRequest((prev) => nextMapTaskFocus(prev, p.lat, p.lng));
+    setMapTaskFocusRequest((prev) => nextDashboardMapFocus(prev, p.lat, p.lng));
     if (typeof window !== 'undefined' && window.matchMedia(MOBILE_DASHBOARD_MQ).matches) {
       setMobileSection('map');
     }
@@ -112,7 +116,8 @@ export default function Dashboard() {
     (driver) => {
       const p = riderGpsFromLocations(driver, locations);
       if (!p) return;
-      setMapTaskFocusRequest((prev) => nextMapTaskFocus(prev, p.lat, p.lng));
+      const focusZoom = riderMapFocusZoom(p.lat, p.lng, locations);
+      setMapTaskFocusRequest((prev) => nextDashboardMapFocus(prev, p.lat, p.lng, focusZoom));
       if (typeof window !== 'undefined' && window.matchMedia(MOBILE_DASHBOARD_MQ).matches) {
         setMobileSection('map');
       }

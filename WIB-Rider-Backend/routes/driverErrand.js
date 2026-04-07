@@ -21,7 +21,11 @@ const {
   resolveErrandDriverDetail,
 } = require('../lib/errandOrders');
 const { normalizeIncomingStatusRaw } = require('../lib/errandDriverStatus');
-const { notifyAllDashboardAdmins, errandNotifyFromCanonical } = require('../lib/dashboardRiderNotify');
+const {
+  notifyAllDashboardAdmins,
+  errandNotifyFromCanonical,
+  formatActorFromDriver,
+} = require('../lib/dashboardRiderNotify');
 
 async function errandOrderNotifyLabel(errandPool, orderId) {
   try {
@@ -423,7 +427,8 @@ router.post('/AcceptErrandOrder', validateApiKey, resolveDriver, async (req, res
     const details = await buildDetailPayloadForOrder(orderId);
     try {
       const lbl = await errandOrderNotifyLabel(errandWibPool, orderId);
-      const p = errandNotifyFromCanonical(orderId, lbl, 'assigned');
+      const actor = formatActorFromDriver(req.driver);
+      const p = errandNotifyFromCanonical(orderId, lbl, 'assigned', actor);
       if (p) await notifyAllDashboardAdmins(pool, p).catch(() => {});
     } catch (_) {}
     return success(res, details || null);
@@ -489,7 +494,8 @@ router.post('/ChangeErrandOrderStatus', validateApiKey, resolveDriver, async (re
       await updateErrandOrderPaymentFields(errandWibPool, orderId, payment_type, payment_status);
       try {
         const lbl = await errandOrderNotifyLabel(errandWibPool, orderId);
-        const p = errandNotifyFromCanonical(orderId, lbl, canonical);
+        const actor = formatActorFromDriver(req.driver);
+        const p = errandNotifyFromCanonical(orderId, lbl, canonical, actor);
         if (p) await notifyAllDashboardAdmins(pool, p).catch(() => {});
       } catch (_) {}
       return success(res, null);
@@ -532,7 +538,8 @@ router.post('/ChangeErrandOrderStatus', validateApiKey, resolveDriver, async (re
     await updateErrandOrderPaymentFields(errandWibPool, orderId, payment_type, payment_status);
     try {
       const lbl = await errandOrderNotifyLabel(errandWibPool, orderId);
-      const p = errandNotifyFromCanonical(orderId, lbl, canonical);
+      const actor = formatActorFromDriver(req.driver);
+      const p = errandNotifyFromCanonical(orderId, lbl, canonical, actor);
       if (p) await notifyAllDashboardAdmins(pool, p).catch(() => {});
     } catch (_) {}
     return success(res, null);

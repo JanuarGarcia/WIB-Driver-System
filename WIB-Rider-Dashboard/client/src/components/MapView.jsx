@@ -215,6 +215,16 @@ const MAP_STYLE = { width: '100%', height: '100%', minHeight: 400 };
 const DASHBOARD_SINGLE_MARKER_ZOOM = 14;
 /** Tighter zoom when focusing a task from the task panel so the drop-off pin is easy to spot. */
 const DASHBOARD_TASK_CARD_FOCUS_ZOOM = 17;
+/** Cap for dashboard fly-to (matches Leaflet Mapbox tile maxZoom). */
+const DASHBOARD_MAP_FOCUS_ZOOM_MAX = 19;
+
+function dashboardMapFocusZoom(focusRequest) {
+  const raw = focusRequest?.zoom;
+  if (raw != null && Number.isFinite(Number(raw))) {
+    return Math.min(DASHBOARD_MAP_FOCUS_ZOOM_MAX, Math.max(1, Number(raw)));
+  }
+  return DASHBOARD_TASK_CARD_FOCUS_ZOOM;
+}
 const FIT_BOUNDS_PADDING_PX = 64;
 
 /**
@@ -393,7 +403,7 @@ function LeafletSetView({ center, zoom }) {
   return null;
 }
 
-/** Dashboard: fly to task drop-off when user clicks a task card (`nonce` bumps each request). */
+/** Dashboard: fly to task drop-off or rider GPS (`nonce` bumps each request; optional `zoom` from rider focus). */
 function LeafletFlyToTaskFocus({ focusTaskRequest }) {
   const map = useMap();
   const nonce = focusTaskRequest?.nonce;
@@ -402,8 +412,9 @@ function LeafletFlyToTaskFocus({ focusTaskRequest }) {
     const la = Number(focusTaskRequest.lat);
     const ln = Number(focusTaskRequest.lng);
     if (!Number.isFinite(la) || !Number.isFinite(ln)) return;
+    const z = dashboardMapFocusZoom(focusTaskRequest);
     try {
-      map.flyTo([la, ln], DASHBOARD_TASK_CARD_FOCUS_ZOOM, { duration: 0.75 });
+      map.flyTo([la, ln], z, { duration: 0.75 });
     } catch (_) {}
   }, [map, nonce, focusTaskRequest]);
   return null;
@@ -986,10 +997,11 @@ function GoogleMapFlyToTask({ focusTaskRequest, onCommitted }) {
     const la = Number(focusTaskRequest.lat);
     const ln = Number(focusTaskRequest.lng);
     if (!Number.isFinite(la) || !Number.isFinite(ln)) return;
+    const z = dashboardMapFocusZoom(focusTaskRequest);
     try {
       map.panTo({ lat: la, lng: ln });
-      map.setZoom(DASHBOARD_TASK_CARD_FOCUS_ZOOM);
-      onCommittedRef.current?.({ lat: la, lng: ln }, DASHBOARD_TASK_CARD_FOCUS_ZOOM);
+      map.setZoom(z);
+      onCommittedRef.current?.({ lat: la, lng: ln }, z);
     } catch (_) {}
   }, [map, nonce, focusTaskRequest]);
   return null;
@@ -1194,7 +1206,7 @@ export default function MapView({
   onViewDriverQueue,
   /** Bump when the map container becomes visible or resizes (e.g. mobile tab switch). */
   mapResizeTrigger = 0,
-  /** `{ nonce, lat, lng }` from dashboard task-card click — flies map to drop-off. */
+  /** `{ nonce, lat, lng, zoom? }` — task card or agent rider focus; optional `zoom` overrides default (e.g. clustered riders). */
   focusTaskRequest = null,
   /** Clear task zoom and refit all pins (dashboard). */
   onResetMapView,

@@ -104,6 +104,46 @@ export function riderGpsFromLocations(driver, locations) {
   return { lat, lng };
 }
 
+const EARTH_RADIUS_M = 6371000;
+
+function haversineMeters(lat1, lng1, lat2, lng2) {
+  const toR = (d) => (d * Math.PI) / 180;
+  const dLat = toR(lat2 - lat1);
+  const dLng = toR(lng2 - lng1);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toR(lat1)) * Math.cos(toR(lat2)) * Math.sin(dLng / 2) ** 2;
+  return 2 * EARTH_RADIUS_M * Math.asin(Math.min(1, Math.sqrt(a)));
+}
+
+/** Map zoom when focusing a rider from the agent panel (tighter than task drop-off). */
+export const DASHBOARD_RIDER_FOCUS_ZOOM = 18;
+/** When another rider is within `RIDER_MAP_FOCUS_CLUSTER_RADIUS_M`, zoom in further so pins separate. */
+export const DASHBOARD_RIDER_FOCUS_ZOOM_CLUSTERED = 19;
+
+const RIDER_MAP_FOCUS_CLUSTER_RADIUS_M = 70;
+
+/**
+ * Choose zoom for “focus this rider on the map” so overlapping pins are easier to pick apart.
+ * @param {number} lat
+ * @param {number} lng
+ * @param {Array<Record<string, unknown>>|null|undefined} locations - `drivers/locations` rows
+ */
+export function riderMapFocusZoom(lat, lng, locations) {
+  if (!Number.isFinite(lat) || !Number.isFinite(lng) || !Array.isArray(locations)) {
+    return DASHBOARD_RIDER_FOCUS_ZOOM;
+  }
+  let within = 0;
+  for (const loc of locations) {
+    if (!loc || typeof loc !== 'object') continue;
+    const la = loc.lat != null ? Number(loc.lat) : NaN;
+    const ln = loc.lng != null ? Number(loc.lng) : NaN;
+    if (!Number.isFinite(la) || !Number.isFinite(ln)) continue;
+    if (haversineMeters(lat, lng, la, ln) <= RIDER_MAP_FOCUS_CLUSTER_RADIUS_M) within += 1;
+  }
+  return within >= 2 ? DASHBOARD_RIDER_FOCUS_ZOOM_CLUSTERED : DASHBOARD_RIDER_FOCUS_ZOOM;
+}
+
 /**
  * Tasks that can be drawn on the map (delivery coordinates).
  * @param {Array<Record<string, unknown>>|null|undefined} tasks

@@ -966,7 +966,11 @@ const AgentPanel = forwardRef(function AgentPanel(
                           <div className="task-card-all-tasks-badges">
                             {statusNorm === 'assigned' && (
                               <>
-                                <span className="task-card-all-tasks-badge status-green">READY FOR PICKUP</span>
+                                {t.timeline_ready_for_pickup ? (
+                                  <span className="task-card-all-tasks-badge task-card-all-tasks-badge--rfp" title="From activity timeline: merchant ready for pickup">
+                                    READY FOR PICKUP
+                                  </span>
+                                ) : null}
                                 <span className={`task-card-all-tasks-badge ${statusClass(statusNorm)}`}>assigned</span>
                               </>
                             )}

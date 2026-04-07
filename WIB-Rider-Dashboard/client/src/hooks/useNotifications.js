@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo, createElement } from 'react';
 import { toast } from 'react-toastify';
 import { isAuthenticated } from '../auth';
 import { fetchRiderNotifications, markRiderNotificationsViewed } from '../services/notificationApi';
@@ -124,8 +124,15 @@ export function useNotifications() {
 
       for (const n of fresh) {
         const title = (n.title || 'Notification').toString();
-        const message = (n.message || '').toString();
-        const body = message ? `${title}\n${message}` : title;
+        const message = (n.message || '').toString().trim();
+        const body = createElement(
+          'div',
+          { className: 'rider-notif-toast-stacked' },
+          createElement('div', { className: 'rider-notif-toast-line1' }, title),
+          message
+            ? createElement('div', { className: 'rider-notif-toast-line2' }, message)
+            : null
+        );
         toast.info(body, {
           toastId: `rider-notif-${n.id}`,
           autoClose: 12500,

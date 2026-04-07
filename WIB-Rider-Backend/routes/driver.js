@@ -13,7 +13,12 @@ const { fetchTaskProofPhotosWithUrls, buildTaskProofImageUrl } = require('../lib
 const { fetchDriverMergedOrderHistory } = require('../lib/driverOrderHistory');
 const { enrichOrderDetailsWithSubcategoryAddons } = require('../lib/orderDetailAddons');
 const { attachOrderDetailCategories } = require('../lib/orderDetailCategories');
-const { notifyAllDashboardAdmins, foodTaskNotifyFromStatus } = require('../lib/dashboardRiderNotify');
+const {
+  notifyAllDashboardAdmins,
+  foodTaskNotifyFromStatus,
+  formatActorFromDriver,
+} = require('../lib/dashboardRiderNotify');
+const { insertMtOrderHistoryRow } = require('../lib/mtOrderHistoryInsert');
 
 const uploadDir = path.join(__dirname, '..', 'uploads', 'profiles');
 if (!fs.existsSync(uploadDir)) {
@@ -1137,34 +1142,24 @@ router.post('/ChangeTaskStatus', validateApiKey, resolveDriver, async (req, res)
     const geoLat = latRaw != null && String(latRaw).trim() !== '' ? parseFloat(latRaw) : NaN;
     const geoLng = lngRaw != null && String(lngRaw).trim() !== '' ? parseFloat(lngRaw) : NaN;
     const hasGeo = Number.isFinite(geoLat) && Number.isFinite(geoLng);
-    if (hasGeo) {
-      try {
-        await pool.query(
-          'INSERT INTO mt_order_history (order_id, task_id, status, remarks, date_created, update_by_type, latitude, longitude) VALUES (?, ?, ?, ?, NOW(), ?, ?, ?)',
-          [task?.order_id || null, tid, status, remarks, 'driver', geoLat, geoLng]
-        );
-      } catch (geoErr) {
-        if (geoErr.code === 'ER_BAD_FIELD_ERROR') {
-          await pool.query(
-            'INSERT INTO mt_order_history (order_id, task_id, status, remarks, date_created, update_by_type) VALUES (?, ?, ?, ?, NOW(), ?)',
-            [task?.order_id || null, tid, status, remarks, 'driver']
-          );
-        } else {
-          throw geoErr;
-        }
-      }
-    } else {
-      await pool.query(
-        'INSERT INTO mt_order_history (order_id, task_id, status, remarks, date_created, update_by_type) VALUES (?, ?, ?, ?, NOW(), ?)',
-        [task?.order_id || null, tid, status, remarks, 'driver']
-      );
-    }
+    await insertMtOrderHistoryRow(pool, {
+      orderId: task?.order_id || null,
+      taskId: tid,
+      status,
+      remarks,
+      updateByType: 'driver',
+      actorId: req.driver.id,
+      actorDisplayName: formatActorFromDriver(req.driver),
+      latitude: hasGeo ? geoLat : null,
+      longitude: hasGeo ? geoLng : null,
+    });
   } catch (_) {
     /* mt_order_history optional — do not fail status update */
   }
 
   try {
-    const payload = foodTaskNotifyFromStatus(tid, task.order_id, task.task_description, status);
+    const actor = formatActorFromDriver(req.driver);
+    const payload = foodTaskNotifyFromStatus(tid, task.order_id, task.task_description, status, actor);
     if (payload) await notifyAllDashboardAdmins(pool, payload).catch(() => {});
   } catch (_) {}
 
