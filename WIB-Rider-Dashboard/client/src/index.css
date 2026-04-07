@@ -1468,6 +1468,7 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
   position: absolute;
   top: -4px;
   right: -6px;
+  z-index: 2;
   min-width: 1.15rem;
   height: 1.15rem;
   padding: 0 5px;
@@ -1477,7 +1478,7 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
   line-height: 1.15rem;
   text-align: center;
   background: var(--color-primary);
-  color: #fff;
+  color: #0f172a;
   box-shadow: 0 0 0 2px var(--bg-card, #fff);
 }
 [data-theme="dark"] .main-header-notif-badge {

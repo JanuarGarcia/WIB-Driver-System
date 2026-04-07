@@ -13,6 +13,7 @@ const { fetchTaskProofPhotosWithUrls, buildTaskProofImageUrl } = require('../lib
 const { fetchDriverMergedOrderHistory } = require('../lib/driverOrderHistory');
 const { enrichOrderDetailsWithSubcategoryAddons } = require('../lib/orderDetailAddons');
 const { attachOrderDetailCategories } = require('../lib/orderDetailCategories');
+const { notifyAllDashboardAdminsFireAndForget, foodTaskNotifyFromStatus } = require('../lib/dashboardRiderNotify');
 
 const uploadDir = path.join(__dirname, '..', 'uploads', 'profiles');
 if (!fs.existsSync(uploadDir)) {
@@ -926,7 +927,7 @@ router.post('/ChangeTaskStatus', validateApiKey, resolveDriver, async (req, res)
   const status = (status_raw || 'completed').toString().toLowerCase();
 
   const [[task]] = await pool.query(
-    'SELECT task_id, order_id, driver_id FROM mt_driver_task WHERE task_id = ? LIMIT 1',
+    'SELECT task_id, order_id, driver_id, task_description FROM mt_driver_task WHERE task_id = ? LIMIT 1',
     [tid]
   );
   if (!task || task.driver_id !== req.driver.id) {
@@ -1003,6 +1004,12 @@ router.post('/ChangeTaskStatus', validateApiKey, resolveDriver, async (req, res)
   } catch (_) {
     /* mt_order_history optional — do not fail status update */
   }
+
+  try {
+    const payload = foodTaskNotifyFromStatus(tid, task.order_id, task.task_description, status);
+    if (payload) notifyAllDashboardAdminsFireAndForget(pool, payload);
+  } catch (_) {}
+
   return success(res, null);
 });
 

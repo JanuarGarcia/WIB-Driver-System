@@ -40,7 +40,7 @@ export default function MainHeader({ onMenuClick, onOpenNewTask }) {
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const notifRef = useRef(null);
 
-  const { items: riderNotifications, unreadCount, markAllRead, resetBellCount } = useNotifications();
+  const { items: riderNotifications, unreadCount, markAllRead, acknowledgePanelOpen } = useNotifications();
 
   useEffect(() => {
     if (!notificationsOpen) return;
@@ -50,6 +50,10 @@ export default function MainHeader({ onMenuClick, onOpenNewTask }) {
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [notificationsOpen]);
+
+  useEffect(() => {
+    if (notificationsOpen) acknowledgePanelOpen();
+  }, [notificationsOpen, acknowledgePanelOpen]);
 
   const handleMarkAllRead = () => {
     markAllRead();
@@ -100,12 +104,7 @@ export default function MainHeader({ onMenuClick, onOpenNewTask }) {
           <NotificationBell
             unreadCount={unreadCount}
             isOpen={notificationsOpen}
-            onToggle={() =>
-              setNotificationsOpen((o) => {
-                if (!o) resetBellCount();
-                return !o;
-              })
-            }
+            onToggle={() => setNotificationsOpen((o) => !o)}
           />
           {notificationsOpen ? (
             <NotificationPanel items={riderNotifications} onMarkAllRead={handleMarkAllRead} />

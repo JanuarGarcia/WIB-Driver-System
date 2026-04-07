@@ -5,12 +5,15 @@ export default function NotificationBell({ unreadCount, isOpen, onToggle }) {
   const raw = typeof unreadCount === 'number' && unreadCount > 0 ? unreadCount : 0;
   const badgeLabel = raw > 99 ? '99+' : String(raw);
 
+  const label =
+    raw > 0 ? `Notifications, ${raw} unread` : 'Notifications';
+
   return (
     <button
       type="button"
       className={`main-header-icon main-header-notif-bell${isOpen ? ' main-header-notif-bell--open' : ''}`}
-      aria-label="Notifications"
-      title="Open notifications"
+      aria-label={label}
+      title={raw > 0 ? `Open notifications (${raw} unread)` : 'Open notifications'}
       aria-expanded={isOpen}
       onClick={onToggle}
     >

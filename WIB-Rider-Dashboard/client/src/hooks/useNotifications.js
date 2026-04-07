@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { toast } from 'react-toastify';
 import { isAuthenticated } from '../auth';
 import { fetchRiderNotifications, markRiderNotificationsViewed } from '../services/notificationApi';
@@ -45,10 +45,11 @@ export function setSoundPreference(on) {
  */
 export function useNotifications() {
   const [items, setItems] = useState([]);
-  /** Shown on bell until user opens the panel (or mark-all). */
-  const [bellCount, setBellCount] = useState(0);
   const audioRef = useRef(null);
   const mountedRef = useRef(true);
+
+  /** Bell badge: items not yet acknowledged (panel opened) or cleared. */
+  const unreadCount = useMemo(() => items.filter((i) => i && !i.localRead).length, [items]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -67,14 +68,16 @@ export function useNotifications() {
     };
   }, []);
 
-  const resetBellCount = useCallback(() => setBellCount(0), []);
+  /** Call when the user opens the notification panel — counts as “seen” for the badge. */
+  const acknowledgePanelOpen = useCallback(() => {
+    setItems((prev) => prev.map((p) => ({ ...p, localRead: true })));
+  }, []);
 
   const pollTick = useCallback(async () => {
     if (!mountedRef.current) return;
     if (!isAuthenticated()) {
       processedIdsGlobal.clear();
       setItems([]);
-      setBellCount(0);
       return;
     }
 
@@ -114,12 +117,10 @@ export function useNotifications() {
         processedIdsGlobal.add(String(n.id));
       }
 
-      setBellCount((c) => c + fresh.length);
-
       setItems((prev) => {
         const map = new Map(prev.map((p) => [String(p.id), { ...p }]));
         for (const n of fresh) {
-          map.set(String(n.id), { ...n, localRead: true });
+          map.set(String(n.id), { ...n, localRead: false });
         }
         return Array.from(map.values()).sort(
           (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
@@ -160,7 +161,6 @@ export function useNotifications() {
   }, [pollTick]);
 
   const markAllRead = useCallback(async () => {
-    resetBellCount();
     const unread = items.filter((i) => !i.localRead);
     if (unread.length === 0) {
       setItems((prev) => prev.map((p) => ({ ...p, localRead: true })));
@@ -173,12 +173,12 @@ export function useNotifications() {
     } catch {
       /* ignore */
     }
-  }, [items, resetBellCount]);
+  }, [items]);
 
   return {
     items,
-    unreadCount: bellCount,
-    resetBellCount,
+    unreadCount,
+    acknowledgePanelOpen,
     markAllRead,
     pollNow: pollTick,
   };

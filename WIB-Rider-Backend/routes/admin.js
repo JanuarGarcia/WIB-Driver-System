@@ -32,6 +32,11 @@ const { fetchTaskProofPhotosWithUrls } = require('../lib/taskProof');
 const { insertStOrdernewHistoryRow } = require('../lib/errandHistoryInsert');
 const { enrichOrderDetailsWithSubcategoryAddons } = require('../lib/orderDetailAddons');
 const { attachOrderDetailCategories } = require('../lib/orderDetailCategories');
+const {
+  notifyAllDashboardAdminsFireAndForget,
+  foodTaskNotifyFromStatus,
+  errandNotifyFromCanonical,
+} = require('../lib/dashboardRiderNotify');
 
 const ADMIN_SECRET = process.env.ADMIN_SECRET || '';
 
@@ -2051,6 +2056,11 @@ router.post('/tasks', async (req, res) => {
     try {
       await sendPushToAllDrivers('New task', task_description || `Task #${taskId}`, { task_id: String(taskId), type: 'new_task' });
     } catch (_) {}
+    notifyAllDashboardAdminsFireAndForget(pool, {
+      title: 'New task',
+      message: task_description || `Task #${taskId}`,
+      type: 'new_task',
+    });
     return res.json({ id: taskId, ok: true });
   } catch (e) {
     if (e.code === 'ER_NO_SUCH_TABLE' || e.code === 'ER_BAD_FIELD_ERROR') {
@@ -2101,6 +2111,11 @@ router.put('/tasks/:id/assign', express.json(), async (req, res) => {
     try {
       await sendPushToDriver(driverId, 'Task assigned', task.task_description || `Task #${taskId}`, { task_id: String(taskId), type: 'task_assigned' });
     } catch (_) {}
+    notifyAllDashboardAdminsFireAndForget(pool, {
+      title: 'Task assigned',
+      message: task.task_description || `Task #${taskId}`,
+      type: 'task_assigned',
+    });
     return res.json({ ok: true });
   } catch (e) {
     if (e.code === 'ER_NO_SUCH_TABLE' || e.code === 'ER_BAD_FIELD_ERROR') {
@@ -2225,20 +2240,27 @@ router.put('/errand-orders/:orderId/assign', express.json(), async (req, res) =>
         ['left', driverId]
       );
     } catch (_) {}
+    let errandAssignMsg = `Errand order #${orderId}`;
     try {
       const [[er]] = await errandWibPool.query(
         'SELECT order_reference, order_uuid FROM st_ordernew WHERE order_id = ? LIMIT 1',
         [orderId]
       );
-      const msg =
-        er?.order_reference != null && String(er.order_reference).trim()
-          ? `Errand ${String(er.order_reference).trim()}`
-          : `Errand order #${orderId}`;
-      await sendPushToDriver(driverId, 'Errand order assigned', msg, {
+      if (er?.order_reference != null && String(er.order_reference).trim()) {
+        errandAssignMsg = `Errand ${String(er.order_reference).trim()}`;
+      }
+    } catch (_) {}
+    try {
+      await sendPushToDriver(driverId, 'Errand order assigned', errandAssignMsg, {
         order_id: String(orderId),
         type: 'errand_order_assigned',
       });
     } catch (_) {}
+    notifyAllDashboardAdminsFireAndForget(pool, {
+      title: 'Errand assigned',
+      message: errandAssignMsg,
+      type: 'task_assigned',
+    });
     return res.json({ ok: true });
   } catch (e) {
     if (e.code === 'ER_BAD_FIELD_ERROR') {
@@ -2433,6 +2455,18 @@ router.put('/errand-orders/:orderId/status', express.json(), async (req, res) =>
     if (!result.affectedRows) return res.status(404).json({ error: 'Errand order not found' });
 
     await appendErrandAdminHistory(errandWibPool, orderId, canon, remarks);
+    try {
+      const [[erSt]] = await errandWibPool.query(
+        'SELECT order_reference FROM st_ordernew WHERE order_id = ? LIMIT 1',
+        [orderId]
+      );
+      const lbl =
+        erSt?.order_reference != null && String(erSt.order_reference).trim()
+          ? `Errand ${String(erSt.order_reference).trim()}`
+          : `Errand order #${orderId}`;
+      const payload = errandNotifyFromCanonical(orderId, lbl, canon);
+      if (payload) notifyAllDashboardAdminsFireAndForget(pool, payload);
+    } catch (_) {}
     return res.json({ ok: true, status: canon });
   } catch (e) {
     if (e.errno === 1265 || (e.message && /Data truncated|Incorrect.*enum/i.test(String(e.message)))) {
@@ -2608,6 +2642,15 @@ router.put('/tasks/:id/status', express.json(), async (req, res) => {
       /* mt_order_history optional — do not fail status update */
     }
 
+    try {
+      const [[trow]] = await pool.query(
+        'SELECT task_description, order_id FROM mt_driver_task WHERE task_id = ? LIMIT 1',
+        [taskId]
+      );
+      const payload = foodTaskNotifyFromStatus(taskId, trow?.order_id, trow?.task_description, newStatus);
+      if (payload) notifyAllDashboardAdminsFireAndForget(pool, payload);
+    } catch (_) {}
+
     return res.json({ ok: true, status: newStatus });
   } catch (e) {
     if (e.errno === 1265 || (e.message && /Data truncated|Incorrect.*enum/i.test(String(e.message)))) {
@@ -2639,6 +2682,11 @@ router.post('/tasks/:id/assign-all', async (req, res) => {
        VALUES (?, ?, 'process', NOW(), NOW(), ?)`,
       ['New task', task.task_description || `Task #${taskId}`, req.ip || req.connection?.remoteAddress || null]
     );
+    notifyAllDashboardAdminsFireAndForget(pool, {
+      title: 'Task broadcast to drivers',
+      message: task.task_description || `Task #${taskId}`,
+      type: 'new_task',
+    });
     return res.json({ ok: true });
   } catch (e) {
     if (e.code === 'ER_NO_SUCH_TABLE' || e.code === 'ER_BAD_FIELD_ERROR') {
@@ -2660,6 +2708,11 @@ router.post('/tasks/:id/retry-auto-assign', async (req, res) => {
       return res.status(400).json({ error: 'Task is not unassigned' });
     }
     await sendPushToAllDrivers('New task', task.task_description || `Task #${taskId}`, { task_id: String(taskId), type: 'new_task' });
+    notifyAllDashboardAdminsFireAndForget(pool, {
+      title: 'Auto-assign retry',
+      message: task.task_description || `Task #${taskId}`,
+      type: 'new_task',
+    });
     return res.json({ ok: true });
   } catch (e) {
     if (e.code === 'ER_NO_SUCH_TABLE' || e.code === 'ER_BAD_FIELD_ERROR') {

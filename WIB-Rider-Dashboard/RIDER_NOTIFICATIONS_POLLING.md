@@ -7,9 +7,12 @@ Simple in-app alerts for the **WIB Rider Dashboard**: poll every **10s** (or **4
 Files:
 
 - `services/riderNotification.service.js` — in-memory store
+- `lib/dashboardRiderNotify.js` — fan-out to every **active** `mt_admin_user` (dashboard dispatchers)
 - `controllers/riderNotifications.controller.js`
 - `routes/riderNotifications.routes.js`
 - `middleware/riderNotificationAuth.js` — sets `req.riderId` from `req.adminUser` (dashboard session)
+
+**Automatic notifications** (toast + sound on the dashboard when those admins poll): new food task (`POST /tasks`), task assign, task status changes from admin or driver (`ChangeTaskStatus`), assign-all / retry-auto-assign, errand assign + errand status (admin), errand accept + errand status (driver app). *Brand-new errand orders created only inside ErrandWib (no call through this API) are not notified until an event above runs (e.g. driver accepts).*
 
 Mounted under the existing **`/admin/api`** router (after `adminAuth`), so the browser still uses the dashboard proxy **`/api/...`**.
 

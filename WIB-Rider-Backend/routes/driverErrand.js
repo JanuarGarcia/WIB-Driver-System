@@ -21,6 +21,20 @@ const {
   resolveErrandDriverDetail,
 } = require('../lib/errandOrders');
 const { normalizeIncomingStatusRaw } = require('../lib/errandDriverStatus');
+const { notifyAllDashboardAdminsFireAndForget, errandNotifyFromCanonical } = require('../lib/dashboardRiderNotify');
+
+async function errandOrderNotifyLabel(errandPool, orderId) {
+  try {
+    const [[er]] = await errandPool.query('SELECT order_reference FROM st_ordernew WHERE order_id = ? LIMIT 1', [orderId]);
+    if (er?.order_reference != null && String(er.order_reference).trim()) {
+      return `Errand ${String(er.order_reference).trim()}`;
+    }
+  } catch (_) {
+    /* ignore */
+  }
+  return `Errand order #${orderId}`;
+}
+
 const {
   buildErrandProofImageUrl,
   fetchErrandProofsForOrder,
@@ -407,6 +421,11 @@ router.post('/AcceptErrandOrder', validateApiKey, resolveDriver, async (req, res
     }
     await appendErrandDriverHistory(errandWibPool, orderId, 'assigned', '', null, null);
     const details = await buildDetailPayloadForOrder(orderId);
+    try {
+      const lbl = await errandOrderNotifyLabel(errandWibPool, orderId);
+      const p = errandNotifyFromCanonical(orderId, lbl, 'assigned');
+      if (p) notifyAllDashboardAdminsFireAndForget(pool, p);
+    } catch (_) {}
     return success(res, details || null);
   } catch (e) {
     if (e.code === 'ER_NO_SUCH_TABLE') {
@@ -468,6 +487,11 @@ router.post('/ChangeErrandOrderStatus', validateApiKey, resolveDriver, async (re
       }
       await appendErrandDriverHistory(errandWibPool, orderId, canonical, reason, latRaw, lngRaw);
       await updateErrandOrderPaymentFields(errandWibPool, orderId, payment_type, payment_status);
+      try {
+        const lbl = await errandOrderNotifyLabel(errandWibPool, orderId);
+        const p = errandNotifyFromCanonical(orderId, lbl, canonical);
+        if (p) notifyAllDashboardAdminsFireAndForget(pool, p);
+      } catch (_) {}
       return success(res, null);
     }
 
@@ -506,6 +530,11 @@ router.post('/ChangeErrandOrderStatus', validateApiKey, resolveDriver, async (re
     }
     await appendErrandDriverHistory(errandWibPool, orderId, canonical, reason, latRaw, lngRaw);
     await updateErrandOrderPaymentFields(errandWibPool, orderId, payment_type, payment_status);
+    try {
+      const lbl = await errandOrderNotifyLabel(errandWibPool, orderId);
+      const p = errandNotifyFromCanonical(orderId, lbl, canonical);
+      if (p) notifyAllDashboardAdminsFireAndForget(pool, p);
+    } catch (_) {}
     return success(res, null);
   } catch (e) {
     return error(res, e.message || 'Status update failed');
