@@ -264,59 +264,18 @@ app.post('/api/*', express.json({ limit: '2mb' }), async (req, res) => {
   }
 });
 
-// Proxy: DELETE /api/tasks/:id (task details delete — was missing; otherwise SPA/HTML broke JSON parse)
-app.delete('/api/tasks/:id', async (req, res) => {
+// Proxy: DELETE /api/* -> BACKEND_URL/admin/api/* (tasks, drivers, teams, errand-orders, …)
+// Errand “Delete task” uses DELETE /api/errand-orders/:orderId — without this, requests miss the proxy
+// and static/nginx may return index.html (HTML instead of JSON).
+app.delete('/api/*', async (req, res) => {
   setNoCache(res);
   res.set('X-Dashboard-Proxy', '1');
-  const id = req.params.id;
-  const url = `${BACKEND_URL}/admin/api/tasks/${encodeURIComponent(id)}`;
+  const subPath = (req.path || '').replace(/^\/api\/?/, '') || '';
+  const url = `${BACKEND_URL}/admin/api/${subPath}`;
   try {
     const response = await axios.delete(url, {
       headers: backendHeaders(req),
-      timeout: 15000,
-    });
-    if (response.data !== undefined && response.data !== '') {
-      res.status(response.status || 200).json(response.data);
-    } else {
-      res.status(response.status || 200).json({ ok: true });
-    }
-  } catch (err) {
-    const { status, data } = sanitizeAxiosError(err, 'Delete failed');
-    res.status(status).json(data);
-  }
-});
-
-// Proxy: DELETE /api/drivers/:id
-app.delete('/api/drivers/:id', async (req, res) => {
-  setNoCache(res);
-  res.set('X-Dashboard-Proxy', '1');
-  const id = req.params.id;
-  const url = `${BACKEND_URL}/admin/api/drivers/${encodeURIComponent(id)}`;
-  try {
-    const response = await axios.delete(url, {
-      headers: backendHeaders(req),
-      timeout: 15000,
-    });
-    if (response.data !== undefined && response.data !== '') {
-      res.status(response.status || 200).json(response.data);
-    } else {
-      res.status(response.status || 200).json({ ok: true });
-    }
-  } catch (err) {
-    const { status, data } = sanitizeAxiosError(err, 'Delete failed');
-    res.status(status).json(data);
-  }
-});
-
-// Proxy: DELETE /api/teams/:id
-app.delete('/api/teams/:id', async (req, res) => {
-  setNoCache(res);
-  res.set('X-Dashboard-Proxy', '1');
-  const id = req.params.id;
-  const url = `${BACKEND_URL}/admin/api/teams/${encodeURIComponent(id)}`;
-  try {
-    const response = await axios.delete(url, {
-      headers: backendHeaders(req),
+      params: req.query,
       timeout: 15000,
     });
     if (response.data !== undefined && response.data !== '') {
