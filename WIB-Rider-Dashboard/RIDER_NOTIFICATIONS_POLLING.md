@@ -21,6 +21,7 @@ Mounted under the existing **`/admin/api`** router (after `adminAuth`), so the b
 | GET | `/admin/api/rider/notifications` | `x-dashboard-token` |
 | POST | `/admin/api/rider/notifications/mark-viewed` | JSON `{ "notificationIds": ["id1", ...] }` |
 | POST | `/admin/api/dev/create-notification` | Non-production by default, or set `ALLOW_DEV_NOTIFICATIONS=1` |
+| POST | `/admin/api/internal/notify-task-status` | **Server-to-server only:** `x-admin-key: ADMIN_SECRET`. JSON `{ "task_id": 123, "status_raw": "inprogress" }`. Optional `actor_display_name` or `driver_id`. Used when legacy Yii/PHP updates `driver_task` without calling Node `ChangeTaskStatus`. |
 
 `riderId` is always the logged-in **admin**’s `admin_id` (named “rider” in the API contract). It is **never** taken from the client body.
 

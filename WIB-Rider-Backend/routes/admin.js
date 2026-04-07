@@ -37,6 +37,7 @@ const {
   foodTaskNotifyFromStatus,
   errandNotifyFromCanonical,
   formatActorFromAdminUser,
+  formatActorFromDriver,
 } = require('../lib/dashboardRiderNotify');
 const { insertMtOrderHistoryRow } = require('../lib/mtOrderHistoryInsert');
 
@@ -186,6 +187,77 @@ router.get('/auth/me', requireDashboardToken, (req, res) => {
 });
 
 router.use(adminAuth);
+
+/**
+ * Server-to-server: legacy Yii/PHP (or any backend) after it updates driver_task / order_history.
+ * Auth: same as other admin-key routes — header `x-admin-key: <ADMIN_SECRET>`.
+ * Body JSON: { task_id, status_raw | status, actor_display_name? , driver_id? }
+ * If actor_display_name is omitted, driver_id loads name from mt_driver; else task's assigned driver_id.
+ */
+router.post('/internal/notify-task-status', express.json(), async (req, res) => {
+  if (!ADMIN_SECRET) {
+    return res.status(503).json({ error: 'ADMIN_SECRET is not configured on this server' });
+  }
+  const body = req.body || {};
+  const taskId = parseInt(body.task_id ?? body.taskId, 10);
+  const rawStatus = body.status_raw ?? body.status ?? body.Status;
+  const actorFromBody =
+    body.actor_display_name != null
+      ? String(body.actor_display_name).trim()
+      : body.actorDisplayName != null
+        ? String(body.actorDisplayName).trim()
+        : '';
+  const driverIdFromBody = parseInt(String(body.driver_id ?? body.driverId ?? ''), 10);
+
+  if (!Number.isFinite(taskId) || taskId <= 0) {
+    return res.status(400).json({ error: 'task_id required' });
+  }
+  if (rawStatus == null || String(rawStatus).trim() === '') {
+    return res.status(400).json({ error: 'status_raw or status required' });
+  }
+
+  try {
+    const [[trow]] = await pool.query(
+      'SELECT task_id, order_id, task_description, driver_id FROM mt_driver_task WHERE task_id = ? LIMIT 1',
+      [taskId]
+    );
+    if (!trow) {
+      return res.status(404).json({ error: 'Task not found' });
+    }
+
+    let actor = actorFromBody;
+    const did = Number.isFinite(driverIdFromBody) && driverIdFromBody > 0 ? driverIdFromBody : trow.driver_id;
+    if (!actor && did != null && String(did).trim() !== '' && Number(did) > 0) {
+      try {
+        const [[drow]] = await pool.query(
+          `SELECT driver_id AS id, username,
+            CONCAT(COALESCE(first_name,''), ' ', COALESCE(last_name,'')) AS full_name
+           FROM mt_driver WHERE driver_id = ? LIMIT 1`,
+          [did]
+        );
+        if (drow) actor = formatActorFromDriver(drow);
+      } catch (_) {
+        /* optional */
+      }
+    }
+
+    const payload = foodTaskNotifyFromStatus(
+      taskId,
+      trow.order_id,
+      trow.task_description,
+      String(rawStatus).trim(),
+      actor || undefined
+    );
+    if (!payload) {
+      return res.json({ ok: true, notified: false, reason: 'status_does_not_map_to_notification' });
+    }
+    await notifyAllDashboardAdmins(pool, payload);
+    return res.json({ ok: true, notified: true });
+  } catch (e) {
+    console.error('[internal/notify-task-status]', e.message || e);
+    return res.status(500).json({ error: e.message || 'Failed to notify' });
+  }
+});
 
 /** Legacy global key (pre–per-admin prefs). Still read for lazy migration and for admin-key-only API access. */
 const DASHBOARD_MAP_MERCHANT_FILTER_KEY = 'dashboard_map_merchant_filter_ids';
