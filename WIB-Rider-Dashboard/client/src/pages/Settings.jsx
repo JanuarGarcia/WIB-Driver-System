@@ -1209,7 +1209,7 @@ export default function Settings() {
                   />
                   <span className="settings-toggle-label">{merchantLogosOnDashboardMap ? 'ON' : 'OFF'}</span>
                   <p className="settings-helper">
-                    When the dashboard uses <strong>Mapbox</strong>, merchant pins can show each store&apos;s logo. Turn <strong>OFF</strong> to use the generic purple pin only. Applies on this browser after you click <strong>Save</strong> below. Google Maps pins do not use merchant logos.
+                    When the dashboard uses <strong>Mapbox</strong>, merchant pins can show each store&apos;s logo. Turn <strong>OFF</strong> to use a purple pin with a white store icon. Applies on this browser after you click <strong>Save</strong> below. Google Maps uses the same store-style pin (no per-merchant logos).
                   </p>
                 </div>
               </div>

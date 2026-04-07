@@ -5419,6 +5419,33 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
 }
 .map-pin-merchant .map-pin-head { background: var(--map-pin-merchant-fill); }
 .map-pin-merchant .map-pin-point { border-top-color: var(--map-pin-merchant-fill); }
+/* Merchant without logo: crisp white storefront on purple teardrop */
+.map-pin-merchant-fallback .map-pin-head {
+  box-shadow:
+    0 2px 6px rgba(0, 0, 0, 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.2);
+}
+.map-pin-merchant-store-icon {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 20px;
+  height: 20px;
+  margin: -10px 0 0 -10px;
+  transform: rotate(45deg);
+  z-index: 1;
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  filter: drop-shadow(0 0.5px 1px rgba(0, 0, 0, 0.35));
+}
+.map-pin-merchant-store-icon .map-merchant-store-glyph {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
 .map-pin-task .map-pin-head {
   background: var(--map-pin-task-fill);
   border-radius: 32% 32% 32% 0;
@@ -5545,6 +5572,31 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
 .leaflet-pin-wrap .leaflet-pin-merchant .leaflet-pin-head { background: var(--map-pin-merchant-fill); }
 .leaflet-pin-wrap .leaflet-pin-merchant .leaflet-pin-point { border-top-color: var(--map-pin-merchant-fill); }
 .leaflet-pin-wrap .leaflet-pin-merchant.leaflet-pin-has-image .leaflet-pin-head { background: #e8e8e8; }
+.leaflet-pin-wrap .leaflet-pin-merchant-fallback .leaflet-pin-head {
+  box-shadow:
+    0 2px 6px rgba(0, 0, 0, 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.2);
+}
+.leaflet-pin-wrap .leaflet-pin-merchant-store-icon {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 20px;
+  height: 20px;
+  margin: -10px 0 0 -10px;
+  transform: rotate(45deg);
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  filter: drop-shadow(0 0.5px 1px rgba(0, 0, 0, 0.35));
+}
+.leaflet-pin-wrap .leaflet-pin-merchant-store-icon .map-merchant-store-glyph {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
 .leaflet-pin-wrap .leaflet-pin-task .leaflet-pin-head {
   background: var(--map-pin-task-fill);
   border-radius: 32% 32% 32% 0;

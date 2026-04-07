@@ -16,6 +16,7 @@ const {
   fetchErrandLatestHistoryStatusByOrderIds,
   pickClientAddressRow,
 } = require('../lib/errandOrders');
+const { normalizeIncomingStatusRaw } = require('../lib/errandDriverStatus');
 const {
   buildErrandProofImageUrl,
   fetchErrandProofsForOrder,
@@ -199,37 +200,105 @@ async function buildDetailPayloadForOrder(orderId) {
 }
 
 async function appendErrandHistory(orderId, statusText) {
-  const st = String(statusText || '').trim() || 'Updated';
-  const attempts = [
+  await appendErrandDriverHistory(errandWibPool, orderId, String(statusText || '').trim() || 'updated', '', null, null);
+}
+
+/**
+ * Append driver timeline row (canonical `status` + optional remarks / geo). Tries common st_ordernew_history layouts.
+ * @param {import('mysql2/promise').Pool} errandPool
+ * @param {number} orderId
+ * @param {string} statusCanonical
+ * @param {string} [remarks]
+ * @param {unknown} [latitude]
+ * @param {unknown} [longitude]
+ */
+async function appendErrandDriverHistory(errandPool, orderId, statusCanonical, remarks, latitude, longitude) {
+  const st = String(statusCanonical || '').trim().toLowerCase() || 'updated';
+  const rem = remarks != null && String(remarks).trim() ? String(remarks).trim() : '';
+  const latRaw = latitude != null && String(latitude).trim() !== '' ? parseFloat(latitude) : NaN;
+  const lngRaw = longitude != null && String(longitude).trim() !== '' ? parseFloat(longitude) : NaN;
+  const hasGeo = Number.isFinite(latRaw) && Number.isFinite(lngRaw);
+
+  /** @type {[string, unknown[]][]} */
+  const attempts = [];
+  if (rem && hasGeo) {
+    attempts.push([
+      'INSERT INTO st_ordernew_history (order_id, status, remarks, date_created, latitude, longitude) VALUES (?, ?, ?, NOW(), ?, ?)',
+      [orderId, st, rem, latRaw, lngRaw],
+    ]);
+  }
+  if (rem) {
+    attempts.push([
+      'INSERT INTO st_ordernew_history (order_id, status, remarks, date_created) VALUES (?, ?, ?, NOW())',
+      [orderId, st, rem],
+    ]);
+    attempts.push([
+      'INSERT INTO st_ordernew_history (order_id, status, remarks, date_added) VALUES (?, ?, ?, NOW())',
+      [orderId, st, rem],
+    ]);
+  }
+  if (hasGeo) {
+    attempts.push([
+      'INSERT INTO st_ordernew_history (order_id, status, date_created, latitude, longitude) VALUES (?, ?, NOW(), ?, ?)',
+      [orderId, st, latRaw, lngRaw],
+    ]);
+  }
+  attempts.push(
     ['INSERT INTO st_ordernew_history (order_id, status, date_created) VALUES (?, ?, NOW())', [orderId, st]],
     ['INSERT INTO st_ordernew_history (order_id, status, date_added) VALUES (?, ?, NOW())', [orderId, st]],
-    ['INSERT INTO st_ordernew_history (order_id, status) VALUES (?, ?)', [orderId, st]],
-  ];
+    ['INSERT INTO st_ordernew_history (order_id, status) VALUES (?, ?)', [orderId, st]]
+  );
+
   for (const [sql, params] of attempts) {
     try {
-      await errandWibPool.query(sql, params);
+      await errandPool.query(sql, params);
       return;
     } catch (_) {
-      /* schema differs — try next or skip */
+      /* schema differs — try next */
     }
   }
 }
 
-function mapRiderStatusToErrand(statusRaw) {
-  const s = String(statusRaw || 'completed').toLowerCase().replace(/\s+/g, '').replace(/_/g, '');
-  if (['successful', 'delivered', 'completed'].includes(s)) {
-    return { delivery: 'delivered', history: 'Delivered' };
+/** Optional payment fields on ErrandWib `st_ordernew` (mirrors mt_order update on ChangeTaskStatus). */
+async function updateErrandOrderPaymentFields(errandPool, orderId, payment_type, payment_status) {
+  if (!orderId || orderId <= 0) return;
+  const pt = payment_type != null && String(payment_type).trim() !== '' ? String(payment_type).trim() : null;
+  const ps = payment_status != null && String(payment_status).trim() !== '' ? String(payment_status).trim() : null;
+  if (pt == null && ps == null) return;
+  const pieces = [];
+  const vals = [];
+  if (pt != null) {
+    pieces.push('payment_type = ?');
+    vals.push(pt);
   }
-  if (['cancelled', 'canceled', 'failed', 'declined'].includes(s)) {
-    return { delivery: 'cancelled', history: 'Cancelled' };
+  if (ps != null) {
+    pieces.push('payment_status = ?');
+    vals.push(ps);
   }
-  if (['inprogress', 'started', 'acknowledged'].includes(s)) {
-    return { delivery: 'in_transit', history: 'On the way' };
+  if (!pieces.length) return;
+  vals.push(orderId);
+  try {
+    await errandPool.query(`UPDATE st_ordernew SET ${pieces.join(', ')} WHERE order_id = ?`, vals);
+  } catch (e) {
+    if (e.code === 'ER_BAD_FIELD_ERROR' && /payment_status/i.test(String(e.sqlMessage || ''))) {
+      if (pt != null) {
+        try {
+          await errandPool.query('UPDATE st_ordernew SET payment_type = ? WHERE order_id = ?', [pt, orderId]);
+        } catch (_) {
+          /* optional */
+        }
+      }
+    } else if (e.code !== 'ER_BAD_FIELD_ERROR') {
+      throw e;
+    }
   }
-  if (s === 'assigned') {
-    return { delivery: 'assigned', history: 'Assigned' };
+  if (ps != null) {
+    try {
+      await errandPool.query('UPDATE st_ordernew SET order_payment_status = ? WHERE order_id = ?', [ps, orderId]);
+    } catch (_) {
+      /* column may not exist */
+    }
   }
-  return { delivery: 'assigned', history: String(statusRaw || 'Updated') };
 }
 
 router.post('/GetErrandOrders', validateApiKey, resolveDriver, async (req, res) => {
@@ -346,7 +415,7 @@ router.post('/AcceptErrandOrder', validateApiKey, resolveDriver, async (req, res
     if (!result.affectedRows) {
       return error(res, 'Order not available to accept (already assigned or not found)');
     }
-    await appendErrandHistory(orderId, 'Accepted');
+    await appendErrandDriverHistory(errandWibPool, orderId, 'assigned', '', null, null);
     const details = await buildDetailPayloadForOrder(orderId);
     return success(res, details || null);
   } catch (e) {
@@ -360,37 +429,83 @@ router.post('/AcceptErrandOrder', validateApiKey, resolveDriver, async (req, res
 router.post('/ChangeErrandOrderStatus', validateApiKey, resolveDriver, async (req, res) => {
   const orderId = parseErrandOrderId(req.body);
   if (!orderId) return error(res, 'order_id required');
-  const statusRaw = req.body.status_raw != null ? String(req.body.status_raw) : 'completed';
+  const {
+    status_raw: bodyStatusRaw,
+    reason,
+    payment_type,
+    payment_status,
+    latitude,
+    longitude,
+    lat,
+    lng,
+  } = req.body;
+  const rawIn = bodyStatusRaw != null ? String(bodyStatusRaw) : '';
+  const effectiveRaw = rawIn.trim() !== '' ? rawIn : 'completed';
+  const canonical = normalizeIncomingStatusRaw(effectiveRaw);
+  if (!canonical) {
+    return error(res, 'Invalid status');
+  }
+  const sNorm = effectiveRaw.trim().toLowerCase();
   const driverId = req.driver.id;
+  const latRaw = latitude ?? lat;
+  const lngRaw = longitude ?? lng;
   try {
     const row = await loadErrandOrderRow(orderId);
     if (!row) return error(res, 'Order not found');
+
+    if (canonical === 'unassigned') {
+      if (orderDriverId(row) !== driverId) {
+        return error(res, 'Order not assigned to you');
+      }
+      let result;
+      try {
+        [result] = await errandWibPool.query(
+          `UPDATE st_ordernew SET driver_id = NULL, delivery_status = ?, date_modified = NOW() WHERE order_id = ? AND driver_id = ?`,
+          [canonical, orderId, driverId]
+        );
+      } catch (e) {
+        if (e.code === 'ER_BAD_FIELD_ERROR') {
+          [result] = await errandWibPool.query(
+            `UPDATE st_ordernew SET driver_id = 0, delivery_status = ? WHERE order_id = ? AND driver_id = ?`,
+            [canonical, orderId, driverId]
+          );
+        } else {
+          throw e;
+        }
+      }
+      if (!result.affectedRows) {
+        return error(res, 'Update failed');
+      }
+      await appendErrandDriverHistory(errandWibPool, orderId, canonical, reason, latRaw, lngRaw);
+      await updateErrandOrderPaymentFields(errandWibPool, orderId, payment_type, payment_status);
+      return success(res, null);
+    }
+
     if (orderDriverId(row) !== driverId) {
       return error(res, 'Order not assigned to you');
     }
+
     const settings = await getDriverSettingsMap();
     const policy = settings.allow_task_successful_when || 'picture_proof';
-    const sNorm = statusRaw.toLowerCase();
-    const requiresProof =
-      policy === 'picture_proof' && (sNorm === 'successful' || sNorm === 'delivered' || sNorm === 'completed');
+    const requiresProof = policy === 'picture_proof' && (sNorm === 'successful' || sNorm === 'delivered');
     if (requiresProof) {
       const cnt = await countErrandProofForOrder(errandWibPool, orderId);
       if (!cnt) {
         return error(res, 'Picture proof of delivery is required before marking this order successful');
       }
     }
-    const { delivery, history } = mapRiderStatusToErrand(statusRaw);
+
     let result;
     try {
       [result] = await errandWibPool.query(
         `UPDATE st_ordernew SET delivery_status = ?, date_modified = NOW() WHERE order_id = ? AND driver_id = ?`,
-        [delivery, orderId, driverId]
+        [canonical, orderId, driverId]
       );
     } catch (e) {
       if (e.code === 'ER_BAD_FIELD_ERROR') {
         [result] = await errandWibPool.query(
           `UPDATE st_ordernew SET delivery_status = ? WHERE order_id = ? AND driver_id = ?`,
-          [delivery, orderId, driverId]
+          [canonical, orderId, driverId]
         );
       } else {
         throw e;
@@ -399,9 +514,9 @@ router.post('/ChangeErrandOrderStatus', validateApiKey, resolveDriver, async (re
     if (!result.affectedRows) {
       return error(res, 'Update failed');
     }
-    await appendErrandHistory(orderId, history);
-    const details = await buildDetailPayloadForOrder(orderId);
-    return success(res, details || null);
+    await appendErrandDriverHistory(errandWibPool, orderId, canonical, reason, latRaw, lngRaw);
+    await updateErrandOrderPaymentFields(errandWibPool, orderId, payment_type, payment_status);
+    return success(res, null);
   } catch (e) {
     return error(res, e.message || 'Status update failed');
   }

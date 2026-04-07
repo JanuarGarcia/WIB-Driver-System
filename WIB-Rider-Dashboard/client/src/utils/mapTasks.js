@@ -49,6 +49,9 @@ export const TASK_MAP_MARKER_STATUS_SET = new Set([
   'inprogress',
   'started',
   'acknowledged',
+  'verification',
+  'pendingverification',
+  'pending_verification',
 ]);
 
 /** Coordinates from ErrandWib `st_client_address` summary on task detail (`client_address`). */

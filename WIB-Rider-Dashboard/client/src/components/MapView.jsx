@@ -190,10 +190,16 @@ const GOOGLE_RIDER_PIN_ICON = (() => {
   };
 })();
 
-/** Teardrop — colors match --map-pin-merchant-fill */
+/** Teardrop + white storefront glyph — colors match --map-pin-merchant-fill (Google has no per-merchant logos). */
 const GOOGLE_MERCHANT_PIN_ICON = (() => {
   const svg =
-    '<svg xmlns="http://www.w3.org/2000/svg" width="40" height="52" viewBox="0 0 40 52"><path fill="#7c3aed" stroke="#fff" stroke-width="2" d="M20 4C12 4 6 10 6 18c0 12 14 30 14 30s14-18 14-30c0-8-6-14-14-14z"/><rect x="12" y="12" width="16" height="10" rx="2" fill="#fff" opacity="0.92"/></svg>';
+    '<svg xmlns="http://www.w3.org/2000/svg" width="40" height="52" viewBox="0 0 40 52">' +
+    '<path fill="#7c3aed" stroke="#fff" stroke-width="2" d="M20 4C12 4 6 10 6 18c0 12 14 30 14 30s14-18 14-30c0-8-6-14-14-14z"/>' +
+    '<g fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" transform="translate(8.5 9.5) scale(0.95)">' +
+    '<path d="M3 9h18v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9z"/>' +
+    '<path d="M3 9V7l9-4 9 4v2"/>' +
+    '<path d="M9 21V12h6v9"/>' +
+    '</g></svg>';
   return {
     url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`,
     scaledSize: { width: 40, height: 52 },
@@ -255,16 +261,52 @@ function merchantLogoUrl(logo) {
   return resolveUploadUrl(`/uploads/merchants/${encodeURIComponent(s)}`);
 }
 
+/** Storefront glyph for merchant pins when logos are off (Mapbox GL path). */
+function MerchantStoreGlyph() {
+  return (
+    <svg
+      className="map-merchant-store-glyph"
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      width={20}
+      height={20}
+      aria-hidden={true}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M3 9h18v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9z" />
+      <path d="M3 9V7l9-4 9 4v2" />
+      <path d="M9 21V12h6v9" />
+    </svg>
+  );
+}
+
+/** Leaflet DivIcon HTML: white store icon inside rotated teardrop head. */
+const LEAFLET_MERCHANT_STORE_GLYPH_HTML = `<span class="leaflet-pin-merchant-store-icon" aria-hidden="true"><svg class="map-merchant-store-glyph" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9h18v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9z"/><path d="M3 9V7l9-4 9 4v2"/><path d="M9 21V12h6v9"/></svg></span>`;
+
 function PinMarker({ type, imageUrl, title }) {
   const resolvedUrl = type === 'merchant' && imageUrl ? merchantLogoUrl(imageUrl) || imageUrl : imageUrl;
   const hasImage = type === 'merchant' && resolvedUrl && String(resolvedUrl).trim().length > 0;
+  const merchantFallback = type === 'merchant' && !hasImage;
   return (
     <div className="map-pin-wrap" title={title || undefined}>
-      <div className={`map-pin map-pin-${type} ${hasImage ? 'map-pin-has-image' : ''}`}>
+      <div
+        className={`map-pin map-pin-${type} ${hasImage ? 'map-pin-has-image' : ''}${
+          merchantFallback ? ' map-pin-merchant-fallback' : ''
+        }`}
+      >
         <div className="map-pin-head">
           {type === 'rider' ? <span className="map-pin-rider-core" aria-hidden="true" /> : null}
           {type === 'task' ? <span className="map-pin-task-inner" aria-hidden="true" /> : null}
           {type === 'errand' ? <span className="map-pin-errand-inner" aria-hidden="true" /> : null}
+          {merchantFallback ? (
+            <span className="map-pin-merchant-store-icon" aria-hidden="true">
+              <MerchantStoreGlyph />
+            </span>
+          ) : null}
           {hasImage ? (
             <img src={resolvedUrl} alt="" className="map-pin-img" />
           ) : null}
@@ -277,8 +319,10 @@ function PinMarker({ type, imageUrl, title }) {
 
 function leafletPinIcon(type, logoUrl) {
   const hasImage = type === 'merchant' && logoUrl && String(logoUrl).trim().length > 0;
+  const merchantFallback = type === 'merchant' && !hasImage;
   const safeUrl = hasImage ? String(logoUrl).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;') : '';
   const imgHtml = hasImage ? `<img src="${safeUrl}" alt="" class="leaflet-pin-img" loading="lazy" />` : '';
+  const storeHtml = merchantFallback ? LEAFLET_MERCHANT_STORE_GLYPH_HTML : '';
   const taskInner =
     type === 'task'
       ? '<span class="leaflet-pin-task-inner" aria-hidden="true"></span>'
@@ -286,10 +330,18 @@ function leafletPinIcon(type, logoUrl) {
         ? '<span class="leaflet-pin-errand-inner" aria-hidden="true"></span>'
         : '';
   const riderCore = type === 'rider' ? '<span class="leaflet-pin-rider-core" aria-hidden="true"></span>' : '';
+  const pinClasses = [
+    'leaflet-pin',
+    `leaflet-pin-${type}`,
+    hasImage ? 'leaflet-pin-has-image' : '',
+    merchantFallback ? 'leaflet-pin-merchant-fallback' : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
   return new L.DivIcon({
     className: 'leaflet-pin-wrap',
-    html: `<div class="leaflet-pin leaflet-pin-${type} ${hasImage ? 'leaflet-pin-has-image' : ''}">
-      <div class="leaflet-pin-head">${riderCore}${taskInner}${imgHtml}</div>
+    html: `<div class="${pinClasses}">
+      <div class="leaflet-pin-head">${riderCore}${taskInner}${storeHtml}${imgHtml}</div>
       <div class="leaflet-pin-point"></div>
     </div>`,
     iconSize: [40, 52],

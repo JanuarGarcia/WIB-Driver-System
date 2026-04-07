@@ -8,83 +8,24 @@ const {
   normalizeDriverPaymentStatus,
   mapPaymentRawToEnum,
 } = require('./errandPayment');
+const {
+  deriveErrandDriverTaskStatus,
+  mapDeliveryToCanonicalTaskStatus,
+} = require('./errandDriverStatus');
 
 function mapDeliveryToTaskStatus(deliveryStatus, orderStatus) {
-  const ds = String(deliveryStatus || '')
-    .toLowerCase()
-    .replace(/\s+/g, '')
-    .replace(/_/g, '');
-  if (ds === 'unassigned') return 'unassigned';
-  if (ds === 'assigned') return 'assigned';
-  if (ds === 'delivered') return 'delivered';
-  if (ds === 'cancelled' || ds === 'canceled') return 'cancelled';
-  if (ds === 'pickedup' || ds === 'picked_up' || ds === 'ontheway' || ds === 'in_transit') return 'inprogress';
-  const os = String(orderStatus || '')
-    .toLowerCase()
-    .replace(/\s+/g, '')
-    .replace(/_/g, '');
-  if (os === 'rejected' || os === 'cancelled' || os === 'canceled') return 'cancelled';
-  if (os === 'delivered') return 'delivered';
-  return 'unassigned';
+  return mapDeliveryToCanonicalTaskStatus(deliveryStatus, orderStatus);
 }
 
 /**
- * Map latest `st_ordernew_history.status` into dashboard task statuses (TaskPanel / map).
- * Errand often appends history while `st_ordernew.delivery_status` lags.
+ * Map latest `st_ordernew_history.status` + row into driver task status (canonical ladder).
  * @param {string|null|undefined} historyStatusRaw
  * @param {unknown} deliveryStatus - st_ordernew.delivery_status
  * @param {unknown} orderStatus - st_ordernew.status
  * @param {number|null|undefined} driverId - assigned rider (mt_driver), if any
  */
 function mapErrandHistoryStatusToTaskStatus(historyStatusRaw, deliveryStatus, orderStatus, driverId) {
-  const fromDelivery = mapDeliveryToTaskStatus(deliveryStatus, orderStatus);
-  if (historyStatusRaw == null || String(historyStatusRaw).trim() === '') {
-    return fromDelivery;
-  }
-  const hasDriver = driverId != null && Number.isFinite(Number(driverId)) && Number(driverId) > 0;
-  const h = String(historyStatusRaw).toLowerCase().replace(/\s+/g, ' ').trim();
-  const c = h.replace(/\s+/g, '').replace(/_/g, '');
-
-  if (/\bdelivered\b|complete|successful/i.test(h) || c === 'delivered' || c.endsWith('delivered')) {
-    return 'delivered';
-  }
-  if (c.includes('cancel') || c.includes('reject') || c.includes('declin')) {
-    return 'cancelled';
-  }
-
-  if (hasDriver) {
-    if (c.includes('way') || c.includes('transit') || c.includes('ontheway') || h.includes('on its way')) {
-      return 'inprogress';
-    }
-    if (c.includes('pick') || c.includes('prepar') || c.includes('cooking')) {
-      return 'inprogress';
-    }
-    if (c.includes('accept')) {
-      return 'assigned';
-    }
-    if (c === 'new' && fromDelivery !== 'unassigned') {
-      return fromDelivery;
-    }
-  } else {
-    if (c === 'new' || c.includes('advanceorder') || h.includes('advance order')) {
-      return 'unassigned';
-    }
-    if (c.includes('accept') || c.includes('prepar') || c.includes('way') || c.includes('pick')) {
-      return 'unassigned';
-    }
-  }
-
-  if (c.includes('way') || h.includes('on its way') || c.includes('transit')) {
-    return 'inprogress';
-  }
-  if (c.includes('pick') || c.includes('prepar')) {
-    return 'inprogress';
-  }
-  if (c.includes('accept')) {
-    return hasDriver ? 'assigned' : 'unassigned';
-  }
-
-  return fromDelivery;
+  return deriveErrandDriverTaskStatus(deliveryStatus, orderStatus, historyStatusRaw, driverId);
 }
 
 /**
@@ -488,6 +429,7 @@ function mapStOrderRowToTaskListRow(
     st_order_id: safeId,
     order_id: safeId,
     status,
+    status_raw: status,
     delivery_status: row.delivery_status != null ? String(row.delivery_status) : null,
     order_status_raw: row.status != null ? String(row.status) : null,
     errand_history_status: histStatus || null,
@@ -740,6 +682,7 @@ function buildErrandTaskDetailPayload(
     row.status,
     Number.isFinite(driverId) ? driverId : null
   );
+  const status_raw = status;
   const desc =
     row.order_reference != null && String(row.order_reference).trim()
       ? `Errand ${String(row.order_reference).trim()}`
@@ -812,6 +755,7 @@ function buildErrandTaskDetailPayload(
     order_id: safeId,
     order_uuid: row.order_uuid,
     status,
+    status_raw,
     delivery_status: row.delivery_status,
     errand_history_status: latestHistoryStatus != null && String(latestHistoryStatus).trim() !== '' ? String(latestHistoryStatus).trim() : null,
     task_description: desc,
@@ -875,6 +819,8 @@ function buildErrandTaskDetailPayload(
 
   return {
     task_source: 'errand',
+    status,
+    status_raw,
     payment_type,
     payment_status: payment_status_norm,
     order_payment_status: payment_status_norm,
