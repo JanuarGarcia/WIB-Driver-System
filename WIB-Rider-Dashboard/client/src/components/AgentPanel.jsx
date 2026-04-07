@@ -139,6 +139,28 @@ function todayStr() {
   return todayDateStrLocal();
 }
 
+const MONTH_NAMES_LONG = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+];
+
+/** `YYYY-MM-DD` → e.g. `April 04, 2026` (local calendar day, zero-padded day). */
+function formatHumanDateLabel(yyyyMmDd) {
+  if (!yyyyMmDd || typeof yyyyMmDd !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(yyyyMmDd)) {
+    return yyyyMmDd;
+  }
+  const [ys, ms, ds] = yyyyMmDd.split('-');
+  const y = Number(ys);
+  const m = Number(ms);
+  const d = Number(ds);
+  if (!Number.isFinite(y) || !Number.isFinite(m) || !Number.isFinite(d) || m < 1 || m > 12) {
+    return yyyyMmDd;
+  }
+  const monthName = MONTH_NAMES_LONG[m - 1];
+  const dayPadded = String(d).padStart(2, '0');
+  return `${monthName} ${dayPadded}, ${y}`;
+}
+
 const ASSIGNED_STATUSES = ['assigned', 'acknowledged', 'started', 'inprogress'];
 function normStatus(status) {
   return (status || '').toLowerCase().replace(/\s+/g, '').replace(/_/g, '');
@@ -1301,7 +1323,7 @@ const AgentPanel = forwardRef(function AgentPanel(
                 </button>
               </div>
               <p className="driver-queue-assign-modal-hint">
-                <span>Showing tasks for {todayStr()}</span>
+                <span>Showing tasks for {formatHumanDateLabel(todayStr())}</span>
                 {!queueAssignLoading && !queueAssignError && queueAssignTasks.length > 0 ? (
                   <span className="driver-queue-assign-count-pill">{queueAssignTasks.length} unassigned</span>
                 ) : null}
