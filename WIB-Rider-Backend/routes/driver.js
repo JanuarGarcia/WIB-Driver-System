@@ -132,6 +132,70 @@ function isNonZeroMoney(v) {
   return n != null && n !== 0;
 }
 
+/** String for JSON only when numeric value is non-zero (avoids treating "0" as a real fee). */
+function pickNonZeroMoneyStr(v) {
+  return isNonZeroMoney(v) ? pickMoneyStr(v) : null;
+}
+
+/**
+ * Pull fee-like scalars from mt_order.json_details when columns are 0/null but checkout JSON has amounts.
+ * Shallow + common nested objects (cart, totals, order, …).
+ * @param {Record<string, unknown>|null|undefined} orderRow
+ * @returns {Record<string, unknown>}
+ */
+function extractStandardOrderJsonFeeHints(orderRow) {
+  const out = /** @type {Record<string, unknown>} */ ({});
+  if (!orderRow || typeof orderRow !== 'object') return out;
+  let raw = orderRow.json_details ?? orderRow.jsonDetails;
+  if (raw == null) return out;
+  const s = (Buffer.isBuffer(raw) ? raw.toString('utf8') : String(raw)).trim();
+  if (!s || (s[0] !== '{' && s[0] !== '[')) return out;
+  let parsed;
+  try {
+    parsed = JSON.parse(s);
+  } catch (_) {
+    return out;
+  }
+  const root = Array.isArray(parsed) ? parsed[0] : parsed;
+  if (!root || typeof root !== 'object') return out;
+
+  const feeKeys = [
+    'card_fee',
+    'cardFee',
+    'service_fee',
+    'serviceFee',
+    'convenience_fee',
+    'convenienceFee',
+    'platform_fee',
+    'platformFee',
+    'application_fee',
+    'applicationFee',
+    'packaging_fee',
+    'packagingFee',
+    'admin_fee',
+    'processing_fee',
+  ];
+  const takeFrom = (o) => {
+    if (!o || typeof o !== 'object') return;
+    for (const k of feeKeys) {
+      if (out[k] == null && o[k] != null && String(o[k]).trim() !== '') out[k] = o[k];
+    }
+  };
+  takeFrom(root);
+  for (const nest of ['cart', 'totals', 'summary', 'order', 'checkout', 'data', 'payload']) {
+    if (root[nest] != null && typeof root[nest] === 'object') takeFrom(root[nest]);
+  }
+  return out;
+}
+
+/** First non-zero money among candidates (order matters). */
+function firstPositiveMoneyScalar(...candidates) {
+  for (const c of candidates) {
+    if (isNonZeroMoney(c)) return pickMoneyStr(c);
+  }
+  return null;
+}
+
 /**
  * Payment scalars for driver task JSON (root + nested order/mt_order). Matches Flutter normalization keys.
  * @param {Record<string, unknown>|null|undefined} orderRow mt_order
@@ -174,17 +238,46 @@ function computeMtOrderPaymentFieldsForDriver(orderRow, deliveryRow) {
   };
   if (!orderRow || typeof orderRow !== 'object') return empty;
 
-  let convenience_fee = null;
-  if (isNonZeroMoney(orderRow.card_fee)) convenience_fee = pickMoneyStr(orderRow.card_fee);
-  else if (isNonZeroMoney(orderRow.service_fee)) convenience_fee = pickMoneyStr(orderRow.service_fee);
-  else if (isNonZeroMoney(orderRow.convenience_fee)) convenience_fee = pickMoneyStr(orderRow.convenience_fee);
-  else if (isNonZeroMoney(orderRow.platform_fee)) convenience_fee = pickMoneyStr(orderRow.platform_fee);
-  else if (isNonZeroMoney(orderRow.application_fee)) convenience_fee = pickMoneyStr(orderRow.application_fee);
-  else if (deliveryRow && isNonZeroMoney(deliveryRow.service_fee)) convenience_fee = pickMoneyStr(deliveryRow.service_fee);
+  const jh = extractStandardOrderJsonFeeHints(orderRow);
 
   const service_fee =
-    pickMoneyStr(orderRow.service_fee) || (deliveryRow ? pickMoneyStr(deliveryRow.service_fee) : null);
-  const card_fee = pickMoneyStr(orderRow.card_fee);
+    pickNonZeroMoneyStr(orderRow.service_fee) ||
+    pickNonZeroMoneyStr(orderRow.serviceFee) ||
+    (deliveryRow ? pickNonZeroMoneyStr(deliveryRow.service_fee) : null) ||
+    firstPositiveMoneyScalar(jh.service_fee, jh.serviceFee);
+
+  const card_fee =
+    pickNonZeroMoneyStr(orderRow.card_fee) ||
+    pickNonZeroMoneyStr(orderRow.cardFee) ||
+    firstPositiveMoneyScalar(jh.card_fee, jh.cardFee);
+
+  let convenience_fee = firstPositiveMoneyScalar(
+    orderRow.card_fee,
+    jh.card_fee,
+    jh.cardFee,
+    orderRow.service_fee,
+    jh.service_fee,
+    jh.serviceFee,
+    orderRow.convenience_fee,
+    jh.convenience_fee,
+    jh.convenienceFee,
+    orderRow.platform_fee,
+    jh.platform_fee,
+    jh.platformFee,
+    orderRow.application_fee,
+    jh.application_fee,
+    jh.applicationFee,
+    orderRow.packaging_fee,
+    jh.packaging_fee,
+    jh.packagingFee,
+    jh.admin_fee,
+    jh.processing_fee,
+    deliveryRow?.service_fee
+  );
+
+  if (convenience_fee == null && isNonZeroMoney(service_fee)) convenience_fee = service_fee;
+
+  if (convenience_fee != null && !isNonZeroMoney(convenience_fee)) convenience_fee = null;
 
   const order_delivery_charge =
     pickMoneyStr(orderRow.delivery_charge) ||
@@ -378,15 +471,18 @@ function attachScheduleLinesAndAliases(details, orderRow, rawLineRows, deliveryR
     orderBase.jsonDetails = jsonDetails;
   }
 
+  let payForRoot = null;
   if (orderRow) {
-    const pay = computeMtOrderPaymentFieldsForDriver(orderRow, deliveryRow);
-    Object.assign(orderBase, pay);
+    payForRoot = computeMtOrderPaymentFieldsForDriver(orderRow, deliveryRow);
+    Object.assign(orderBase, payForRoot);
   }
 
   details.order = orderBase;
   details.mt_order = { ...orderBase };
   details.order_info = { ...orderBase };
   details.orderInfo = { ...orderBase };
+
+  if (payForRoot) Object.assign(details, payForRoot);
 
   return details;
 }
@@ -426,6 +522,51 @@ async function batchFetchOrdersAndLines(pool, orderIds) {
     if (e.code !== 'ER_NO_SUCH_TABLE' && e.code !== 'ER_BAD_FIELD_ERROR') throw e;
   }
   return { ordersMap, linesByOrder };
+}
+
+/**
+ * Latest `mt_order_delivery_address` row per order_id (list API uses same fee resolution as GetTaskDetails).
+ * @param {import('mysql2/promise').Pool} pool
+ * @param {unknown[]} orderIds
+ * @returns {Promise<Map<number, Record<string, unknown>>>}
+ */
+async function batchFetchLatestDeliveryAddressesByOrderIds(pool, orderIds) {
+  const map = new Map();
+  const uniq = [
+    ...new Set(
+      orderIds
+        .map((id) => parseInt(String(id), 10))
+        .filter((n) => Number.isFinite(n) && n > 0)
+    ),
+  ];
+  if (uniq.length === 0) return map;
+  const ph = uniq.map(() => '?').join(',');
+  const load = async (withServiceFee) => {
+    const sf = withServiceFee ? ', service_fee' : '';
+    const [rows] = await pool.query(
+      `SELECT order_id, location_name, google_lat, google_lng, street, city, state, zipcode, country, formatted_address${sf}
+       FROM mt_order_delivery_address WHERE order_id IN (${ph}) ORDER BY id DESC`,
+      uniq
+    );
+    for (const r of rows || []) {
+      const oid = Number(r.order_id);
+      if (!map.has(oid)) map.set(oid, r);
+    }
+  };
+  try {
+    await load(true);
+  } catch (e) {
+    if (e.code === 'ER_BAD_FIELD_ERROR' && /service_fee/i.test(String(e.sqlMessage || ''))) {
+      try {
+        await load(false);
+      } catch (e2) {
+        if (e2.code !== 'ER_NO_SUCH_TABLE' && e2.code !== 'ER_BAD_FIELD_ERROR') throw e2;
+      }
+    } else if (e.code !== 'ER_NO_SUCH_TABLE' && e.code !== 'ER_BAD_FIELD_ERROR') {
+      throw e;
+    }
+  }
+  return map;
 }
 
 /** Single-line pickup address from mt_merchant (rider task details). */
@@ -526,11 +667,6 @@ async function enrichRiderTaskDetails(pool, taskRow) {
     details.order_delivery_address = { ...deliveryRow };
     details.mt_order_delivery_address = details.order_delivery_address;
     details.orderDeliveryAddress = details.order_delivery_address;
-  }
-
-  if (orderRow) {
-    const pay = computeMtOrderPaymentFieldsForDriver(orderRow, deliveryRow);
-    Object.assign(details, pay);
   }
 
   let rawLines = [];
@@ -887,10 +1023,9 @@ router.post('/GetTaskByDate', validateApiKey, resolveDriver, async (req, res) =>
     'WHERE (t.delivery_date = ? OR DATE(t.delivery_date) = ?) AND (t.driver_id IS NULL OR t.driver_id = ?) ORDER BY t.task_id',
     [date, date, req.driver.id]
   );
-  const { ordersMap, linesByOrder } = await batchFetchOrdersAndLines(
-    pool,
-    rows.map((r) => r.order_id)
-  );
+  const orderIdsForBatch = rows.map((r) => r.order_id);
+  const { ordersMap, linesByOrder } = await batchFetchOrdersAndLines(pool, orderIdsForBatch);
+  const deliveryByOrderId = await batchFetchLatestDeliveryAddressesByOrderIds(pool, orderIdsForBatch);
   const data = rows.map((r) => {
     const out = {
       ...r,
@@ -899,7 +1034,8 @@ router.post('/GetTaskByDate', validateApiKey, resolveDriver, async (req, res) =>
     const oid = out.order_id != null ? parseInt(String(out.order_id), 10) : 0;
     const orderRow = Number.isFinite(oid) && oid > 0 ? ordersMap.get(oid) || null : null;
     const lineRows = Number.isFinite(oid) && oid > 0 ? linesByOrder.get(oid) || [] : [];
-    attachScheduleLinesAndAliases(out, orderRow, lineRows);
+    const deliveryRow = Number.isFinite(oid) && oid > 0 ? deliveryByOrderId.get(oid) || null : null;
+    attachScheduleLinesAndAliases(out, orderRow, lineRows, deliveryRow);
     return out;
   });
   return success(res, { data });

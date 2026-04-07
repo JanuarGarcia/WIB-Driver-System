@@ -104,10 +104,12 @@ async function requireDashboardToken(req, res, next) {
   }
 }
 
-/** Allow either ADMIN_SECRET (x-admin-key) or valid dashboard session token (mt_admin_user). */
+/**
+ * Allow ADMIN_SECRET (x-admin-key) or dashboard session token (mt_admin_user).
+ * Prefer validating x-dashboard-token first when present so req.adminUser is set even if the
+ * dashboard proxy also forwards x-admin-key (rider notifications and other per-admin routes need it).
+ */
 async function adminAuth(req, res, next) {
-  const key = req.headers['x-admin-key'] || req.query.admin_key || req.body?.admin_key;
-  if (ADMIN_SECRET && key === ADMIN_SECRET) return next();
   const token = (req.headers['x-dashboard-token'] || '').trim();
   if (token) {
     try {
@@ -120,10 +122,14 @@ async function adminAuth(req, res, next) {
         return next();
       }
     } catch (e) {
-      if (e.code === 'ER_NO_SUCH_TABLE') { /* fall through to 401 */ }
+      if (e.code === 'ER_NO_SUCH_TABLE') { /* fall through */ }
       else return next(e);
     }
   }
+
+  const key = req.headers['x-admin-key'] || req.query.admin_key || req.body?.admin_key;
+  if (ADMIN_SECRET && key === ADMIN_SECRET) return next();
+
   return res.status(401).json({ error: 'Unauthorized' });
 }
 
