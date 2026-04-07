@@ -1,0 +1,61 @@
+# Rider notifications (HTTP polling)
+
+Simple in-app alerts for the **WIB Rider Dashboard**: poll every **10s** (or **45s** when the browser tab is hidden), show **react-toastify** toasts, play **one** short sound per batch, then mark items read on the server. No WebSockets or Socket.IO.
+
+## Backend (WIB-Rider-Backend)
+
+Files:
+
+- `services/riderNotification.service.js` — in-memory store
+- `controllers/riderNotifications.controller.js`
+- `routes/riderNotifications.routes.js`
+- `middleware/riderNotificationAuth.js` — sets `req.riderId` from `req.adminUser` (dashboard session)
+
+Mounted under the existing **`/admin/api`** router (after `adminAuth`), so the browser still uses the dashboard proxy **`/api/...`**.
+
+| Method | Path | Auth |
+|--------|------|------|
+| GET | `/admin/api/rider/notifications` | `x-dashboard-token` |
+| POST | `/admin/api/rider/notifications/mark-viewed` | JSON `{ "notificationIds": ["id1", ...] }` |
+| POST | `/admin/api/dev/create-notification` | Non-production by default, or set `ALLOW_DEV_NOTIFICATIONS=1` |
+
+`riderId` is always the logged-in **admin**’s `admin_id` (named “rider” in the API contract). It is **never** taken from the client body.
+
+### Run & test (API)
+
+1. Start the rider backend: `cd WIB-Rider-Backend && npm run dev`
+2. Log in on the dashboard to obtain a session token.
+3. Create a test notification (development):
+
+```bash
+curl -s -X POST http://localhost:3000/admin/api/dev/create-notification ^
+  -H "Content-Type: application/json" ^
+  -H "x-dashboard-token: YOUR_TOKEN_HERE" ^
+  -d "{\"title\":\"New task\",\"message\":\"Pickup ready\",\"type\":\"task\"}"
+```
+
+4. Poll unread:
+
+```bash
+curl -s http://localhost:3000/admin/api/rider/notifications -H "x-dashboard-token: YOUR_TOKEN_HERE"
+```
+
+## Frontend (WIB-Rider-Dashboard/client)
+
+- `src/hooks/useNotifications.js` — polling, dedupe, toast, sound, mark-viewed
+- `src/services/notificationApi.js`
+- `src/components/NotificationBell.jsx`, `NotificationPanel.jsx`, `NotificationMuteToggle.jsx`
+- `public/fb-alert.mp3` — notification sound (`useNotifications.js` uses `import.meta.env.BASE_URL`)
+- Sound preference: localStorage **`drv_sound_on`** — `1` = on, `2` = off (default on)
+
+`ToastContainer` is mounted in `App.jsx`.
+
+### Run
+
+1. Backend on port **3000**, dashboard Node proxy on **3002** (or your `PORT`).
+2. `cd WIB-Rider-Dashboard/client && npm run dev`
+3. Open the dashboard, log in; use the bell icon. In dev, trigger `dev/create-notification` as above and wait for the next poll (≤10s).
+
+## Upgrading later
+
+Replace `riderNotification.service.js` with DB queries keyed by `admin_id` (or real rider id), keep the same route shapes and JSON so the React hook stays unchanged.

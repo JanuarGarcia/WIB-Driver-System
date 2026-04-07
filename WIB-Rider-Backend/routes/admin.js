@@ -3662,6 +3662,9 @@ router.get('/location/postcodes', async (req, res) => {
   return res.json([]);
 });
 
+const riderNotificationRoutes = require('./riderNotifications.routes');
+router.use(riderNotificationRoutes);
+
 const centralRoutes = require('./central');
 router.use('/central', centralRoutes);
 

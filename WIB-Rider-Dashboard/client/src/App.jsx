@@ -1,7 +1,10 @@
 import { useState, useEffect, lazy, Suspense } from 'react';
 import { createPortal } from 'react-dom';
 import { Routes, Route, useNavigate, useLocation, Navigate } from 'react-router-dom';
+import { ToastContainer } from 'react-toastify';
+import 'react-toastify/dist/ReactToastify.css';
 import { isAuthenticated } from './auth';
+import { useTheme } from './context/ThemeContext';
 import {
   hydrateMapMerchantFilterFromServer,
   setupMapMerchantFilterServerListeners,
@@ -74,6 +77,7 @@ function SessionExpiredRedirect() {
 }
 
 export default function App() {
+  const { theme } = useTheme();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [showNewTaskModal, setShowNewTaskModal] = useState(false);
   const navigate = useNavigate();
@@ -94,6 +98,19 @@ export default function App() {
 
   return (
     <div className="app-layout">
+      <ToastContainer
+        position="bottom-right"
+        theme={theme === 'dark' ? 'dark' : 'light'}
+        autoClose={12500}
+        newestOnTop
+        pauseOnFocusLoss={false}
+        closeOnClick
+        rtl={false}
+        limit={4}
+        toastClassName="rider-notif-toast"
+        bodyClassName="rider-notif-toast-body"
+        progressClassName="rider-notif-toast-progress"
+      />
       {sidebarOpen && (
         <div
           className="sidebar-backdrop"
