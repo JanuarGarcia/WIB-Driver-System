@@ -227,6 +227,8 @@ const AgentPanel = forwardRef(function AgentPanel(
   {
     onOpenTaskDetails,
     onFocusRiderOnMap,
+    /** Dashboard map: focus task drop-off pin (food + Mangan list rows). */
+    onFocusTaskOnMap,
     listRevision = 0,
     onTaskListInvalidate,
     onQueueCountChange,
@@ -956,8 +958,16 @@ const AgentPanel = forwardRef(function AgentPanel(
                   const locationShort = location.length > 50 ? `${location.slice(0, 50)}…` : location;
                   const orderedTime = created ? created.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit', hour12: true }) : null;
                   const advanceLines = getAdvanceOrderLines(t, t.date_created);
+                  const mapFocusCoords = taskDropoffLatLng(t);
+                  const canFocusMap = Boolean(mapFocusCoords && onFocusTaskOnMap);
+                  const listKey = t.task_source === 'errand' ? `errand-${t.order_id ?? t.task_id}` : String(t.task_id);
                   return (
-                    <li key={t.task_id} className="task-card-all-tasks">
+                    <li
+                      key={listKey}
+                      className="task-card-all-tasks"
+                      style={canFocusMap ? { cursor: 'pointer' } : undefined}
+                      onClick={canFocusMap ? () => onFocusTaskOnMap(t) : undefined}
+                    >
                       <div className="task-card-all-tasks-inner">
                         <div className="task-card-all-tasks-avatar" aria-hidden="true">
                           <AllTasksRiderAvatar src={avatarUrl} initials={initial} />
@@ -1020,7 +1030,11 @@ const AgentPanel = forwardRef(function AgentPanel(
                           <button
                             type="button"
                             className="task-card-all-tasks-details"
-                            onClick={() => onOpenTaskDetails ? onOpenTaskDetails(t.task_id) : navigate(`/tasks?highlight=${t.task_id}`)}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (onOpenTaskDetails) onOpenTaskDetails(t.task_id);
+                              else navigate(`/tasks?highlight=${t.task_id}`);
+                            }}
                             aria-label={`View details for task ${t.task_id}${riderName !== '—' ? `, rider ${riderName}` : ''}`}
                           >
                             Details
@@ -1413,10 +1427,14 @@ const AgentPanel = forwardRef(function AgentPanel(
                         const urgent = mins != null && mins >= 45;
                         const listKey =
                           t.task_source === 'errand' ? `errand-${t.order_id ?? t.task_id}` : String(t.task_id);
+                        const mapFocusCoords = taskDropoffLatLng(t);
+                        const canFocusMap = Boolean(mapFocusCoords && onFocusTaskOnMap);
                         return (
                           <li
                             key={listKey}
                             className={`driver-queue-assign-row ${urgent ? 'driver-queue-assign-row--urgent' : ''}`}
+                            style={canFocusMap ? { cursor: 'pointer' } : undefined}
+                            onClick={canFocusMap ? () => onFocusTaskOnMap(t) : undefined}
                           >
                             <div className="driver-queue-assign-row-body">
                               <div className="driver-queue-assign-row-topline">
@@ -1481,7 +1499,10 @@ const AgentPanel = forwardRef(function AgentPanel(
                                 type="button"
                                 className="btn btn-sm btn-primary driver-queue-assign-pick"
                                 disabled={queueAssignSubmitting}
-                                onClick={() => submitQueueAssign(t)}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  submitQueueAssign(t);
+                                }}
                               >
                                 Assign
                               </button>
@@ -1490,7 +1511,10 @@ const AgentPanel = forwardRef(function AgentPanel(
                                   type="button"
                                   className="driver-queue-assign-details"
                                   disabled={queueAssignSubmitting}
-                                  onClick={() => openAssignTaskDetailsFromQueue(t.task_id)}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    openAssignTaskDetailsFromQueue(t.task_id);
+                                  }}
                                 >
                                   Details
                                 </button>

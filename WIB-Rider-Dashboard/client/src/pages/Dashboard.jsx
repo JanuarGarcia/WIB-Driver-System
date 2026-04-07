@@ -453,6 +453,7 @@ export default function Dashboard() {
           ref={agentPanelRef}
           onOpenTaskDetails={handleOpenTaskDetailsFromPanel}
           onFocusRiderOnMap={handleFocusRiderOnMap}
+          onFocusTaskOnMap={handleFocusTaskOnMap}
           listRevision={taskListRevision}
           onTaskListInvalidate={bumpTaskLists}
           onQueueCountChange={setDriverQueueCount}
