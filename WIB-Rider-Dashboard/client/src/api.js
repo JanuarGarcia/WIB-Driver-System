@@ -1,4 +1,93 @@
-import { getToken } from './auth';
+import { getToken, clearToken } from './auth';
+
+/** True if a string looks like an HTML document (cPanel, 404 page, SPA index, etc.). */
+export function looksLikeHtmlResponse(s) {
+  if (s == null || typeof s !== 'string') return false;
+  const t = s.trim();
+  if (t.length < 24) return false;
+  if (/^\s*<\s*!DOCTYPE/i.test(t)) return true;
+  if (/^\s*<\s*html\b/i.test(t)) return true;
+  if (/<!DOCTYPE\s+html/i.test(s)) return true;
+  if (/<\s*html\b[\s>]/i.test(s) && /<\/html>/i.test(s)) return true;
+  if (/<\s*head\b[^>]*>[\s\S]*<\s*title[^>]*>\s*cPanel/i.test(t)) return true;
+  if (s.length > 200 && /cPanel\s+Login/i.test(s) && /<\/html>/i.test(s)) return true;
+  return false;
+}
+
+/**
+ * Normalize failed HTTP payloads so UI never shows multi‑KB HTML dumps.
+ * @param {number} status
+ * @param {unknown} data - parsed JSON body, or raw string from parse failure
+ * @returns {{ error?: string, status?: number, code?: string, [k: string]: unknown }}
+ */
+export function normalizeHttpError(status, data) {
+  const htmlMsg =
+    'The server returned a web page instead of API data (wrong URL, hosting login, or session expired). Check that the dashboard points at the Node rider API, then try logging in again.';
+  const authMsg = 'Your dashboard session has expired or you are not authorized. Please log in again.';
+
+  if (typeof data === 'string') {
+    if (looksLikeHtmlResponse(data)) {
+      return {
+        error: status === 401 || status === 403 ? authMsg : htmlMsg,
+        status,
+        code: status === 401 || status === 403 ? 'AUTH_REQUIRED' : 'HTML_RESPONSE',
+      };
+    }
+    const short = data.length > 500 ? `${data.slice(0, 400).trim()}…` : data;
+    return { error: short || 'Request failed', status };
+  }
+
+  if (data && typeof data === 'object') {
+    const o = /** @type {Record<string, unknown>} */ ({ ...data });
+    if (typeof o.error === 'string' && looksLikeHtmlResponse(o.error)) {
+      o.error = status === 401 || status === 403 ? authMsg : htmlMsg;
+      o.code = status === 401 || status === 403 ? 'AUTH_REQUIRED' : 'HTML_RESPONSE';
+    }
+    if (typeof o.message === 'string' && looksLikeHtmlResponse(o.message)) {
+      o.message = typeof o.error === 'string' ? o.error : htmlMsg;
+    }
+    if (status === 401 || status === 403) {
+      const errStr = typeof o.error === 'string' ? o.error.toLowerCase() : '';
+      if (!errStr.includes('invalid credential')) {
+        o.error = authMsg;
+        o.code = 'AUTH_REQUIRED';
+      }
+    }
+    if (!o.error && !o.message) o.error = 'Request failed';
+    o.status = status;
+    return o;
+  }
+
+  return { error: 'Request failed', status };
+}
+
+/**
+ * Safe message for alerts / modals (handles thrown strings, HTML, huge blobs).
+ * @param {unknown} err
+ * @returns {string}
+ */
+export function userFacingApiError(err) {
+  if (err == null) return 'Something went wrong.';
+  if (typeof err === 'string') {
+    if (looksLikeHtmlResponse(err)) {
+      return 'The server returned a web page instead of JSON. Check the API URL and try logging in again.';
+    }
+    return err.length > 600 ? `${err.slice(0, 400).trim()}…` : err;
+  }
+  if (typeof err === 'object') {
+    const o = /** @type {Record<string, unknown>} */ (err);
+    const raw = o.error ?? o.message;
+    if (typeof raw === 'string') {
+      if (looksLikeHtmlResponse(raw)) {
+        return typeof o.code === 'string' && o.code === 'HTML_RESPONSE'
+          ? 'The server returned a web page instead of API data. Check VITE_API_URL / hosting configuration.'
+          : 'Your session may have expired. Please log in again.';
+      }
+      return raw.length > 600 ? `${raw.slice(0, 400).trim()}…` : raw;
+    }
+  }
+  return 'Something went wrong.';
+}
 
 // Prefer explicit env-configured base URL (useful for phones / other devices).
 // Fallback: dev hits backend directly; production uses /api — the dashboard Node app (server.js) proxies
@@ -60,15 +149,43 @@ export async function api(path, options = {}) {
     try {
       data = text ? JSON.parse(text) : {};
     } catch (e) {
-      if (text.trimStart().startsWith('<!')) {
-        throw {
-          error:
-            'Server returned HTML instead of JSON (often the SPA index or a 404 page). Set VITE_API_URL at build time to your API base, e.g. https://your-host/admin/api, or proxy /admin/api on this host to the Node backend.',
-        };
+      if (looksLikeHtmlResponse(text)) {
+        const normalized = normalizeHttpError(res.status, text);
+        const isLoginAttempt = /\/auth\/login\b/i.test(url);
+        if (
+          normalized.code === 'AUTH_REQUIRED' &&
+          !isLoginAttempt &&
+          typeof window !== 'undefined'
+        ) {
+          try {
+            clearToken();
+            window.dispatchEvent(new CustomEvent('wib-dashboard-session-expired'));
+          } catch (_) {}
+        }
+        throw normalized;
       }
-      throw { error: 'Invalid response from server', message: e.message };
+      throw { error: 'Invalid response from server', message: e instanceof Error ? e.message : String(e) };
     }
-    if (!res.ok) throw data;
+
+    if (typeof data === 'string' && looksLikeHtmlResponse(data)) {
+      data = { error: data };
+    }
+
+    if (!res.ok) {
+      const normalized = normalizeHttpError(res.status, data);
+      const isLoginAttempt = /\/auth\/login\b/i.test(url);
+      if (
+        normalized.code === 'AUTH_REQUIRED' &&
+        !isLoginAttempt &&
+        typeof window !== 'undefined'
+      ) {
+        try {
+          clearToken();
+          window.dispatchEvent(new CustomEvent('wib-dashboard-session-expired'));
+        } catch (_) {}
+      }
+      throw normalized;
+    }
     return data;
   };
 

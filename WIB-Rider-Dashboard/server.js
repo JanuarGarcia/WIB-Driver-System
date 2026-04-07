@@ -21,6 +21,41 @@ function backendHeaders(req = null) {
   return h;
 }
 
+/** Avoid forwarding cPanel / nginx HTML bodies as JSON `error` (breaks dashboard UI). */
+function sanitizeAxiosError(err, fallbackMessage = 'Request failed') {
+  const status = err.response?.status || 500;
+  let data = err.response?.data;
+
+  const htmlDetected = (str) =>
+    typeof str === 'string' &&
+    (str.trimStart().startsWith('<') ||
+      /<!DOCTYPE\s+html/i.test(str) ||
+      (str.length > 200 && /<\s*html\b[\s>]/i.test(str) && /<\/html>/i.test(str)) ||
+      (str.length > 200 && /cPanel\s+Login/i.test(str)));
+
+  if (typeof data === 'string' && htmlDetected(data)) {
+    data = {
+      error:
+        status === 401 || status === 403
+          ? 'Session expired or not authorized. Please log in again.'
+          : 'The API backend returned a web page instead of JSON. Set BACKEND_URL to the Node rider API (not cPanel or the wrong port).',
+    };
+  } else if (data && typeof data === 'object' && typeof data.error === 'string' && htmlDetected(data.error)) {
+    data = {
+      ...data,
+      error:
+        status === 401 || status === 403
+          ? 'Session expired or not authorized. Please log in again.'
+          : 'Backend returned an HTML error page. Check BACKEND_URL and server logs.',
+    };
+  }
+
+  if (data == null || typeof data !== 'object') {
+    data = { error: err.message || fallbackMessage };
+  }
+  return { status, data };
+}
+
 function setNoCache(res) {
   // Avoid LiteSpeed / intermediary caching for API proxy responses.
   res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
@@ -85,8 +120,7 @@ app.post('/api/auth/login', express.json(), async (req, res) => {
     });
     res.json(response.data);
   } catch (err) {
-    const status = err.response?.status || 500;
-    const data = err.response?.data || { error: err.message };
+    const { status, data } = sanitizeAxiosError(err, 'Login request failed');
     res.status(status).json(data);
   }
 });
@@ -102,8 +136,7 @@ app.get('/api/auth/me', async (req, res) => {
     });
     res.json(response.data);
   } catch (err) {
-    const status = err.response?.status || 500;
-    const data = err.response?.data || { error: err.message };
+    const { status, data } = sanitizeAxiosError(err, 'Auth check failed');
     res.status(status).json(data);
   }
 });
@@ -122,8 +155,7 @@ app.get('/api/*', async (req, res) => {
     });
     res.json(response.data);
   } catch (err) {
-    const status = err.response?.status || 500;
-    const data = err.response?.data || { error: err.message };
+    const { status, data } = sanitizeAxiosError(err, 'Request failed');
     res.status(status).json(data);
   }
 });
@@ -140,8 +172,7 @@ app.put('/api/driver-queue/:driverId/remove', express.json(), async (req, res) =
     });
     res.json(response.data);
   } catch (err) {
-    const status = err.response?.status || 500;
-    const data = err.response?.data || { error: err.message };
+    const { status, data } = sanitizeAxiosError(err, 'Request failed');
     res.status(status).json(data);
   }
 });
@@ -158,8 +189,7 @@ app.put('/api/tasks/:id/assign', express.json(), async (req, res) => {
     });
     res.json(response.data);
   } catch (err) {
-    const status = err.response?.status || 500;
-    const data = err.response?.data || { error: err.message };
+    const { status, data } = sanitizeAxiosError(err, 'Request failed');
     res.status(status).json(data);
   }
 });
@@ -177,12 +207,7 @@ app.put('/api/tasks/:id/status', express.json(), async (req, res) => {
     });
     res.json(response.data);
   } catch (err) {
-    const status = err.response?.status || 500;
-    let data = err.response?.data;
-    if (data != null && typeof data === 'string' && data.trimStart().startsWith('<')) {
-      data = { error: 'Backend returned an error page. Check server logs and BACKEND_URL.' };
-    }
-    if (data == null || typeof data !== 'object') data = { error: err.message || 'Status update failed' };
+    const { status, data } = sanitizeAxiosError(err, 'Status update failed');
     res.status(status).json(data);
   }
 });
@@ -200,12 +225,7 @@ app.put('/api/tasks/:id', express.json(), async (req, res) => {
     });
     res.json(response.data);
   } catch (err) {
-    const status = err.response?.status || 500;
-    let data = err.response?.data;
-    if (data != null && typeof data === 'string' && data.trimStart().startsWith('<')) {
-      data = { error: 'Backend returned an error page. Check server logs and BACKEND_URL.' };
-    }
-    if (data == null || typeof data !== 'object') data = { error: err.message || 'Update failed' };
+    const { status, data } = sanitizeAxiosError(err, 'Update failed');
     res.status(status).json(data);
   }
 });
@@ -220,8 +240,7 @@ app.post('/api/tasks', express.json(), async (req, res) => {
     });
     res.json(response.data);
   } catch (err) {
-    const status = err.response?.status || 500;
-    const data = err.response?.data || { error: err.message };
+    const { status, data } = sanitizeAxiosError(err, 'Request failed');
     res.status(status).json(data);
   }
 });
@@ -240,12 +259,7 @@ app.post('/api/*', express.json({ limit: '2mb' }), async (req, res) => {
     });
     res.status(response.status || 200).json(response.data);
   } catch (err) {
-    const status = err.response?.status || 500;
-    let data = err.response?.data;
-    if (data != null && typeof data === 'string' && data.trimStart().startsWith('<')) {
-      data = { error: 'Backend returned an error page. Check BACKEND_URL.' };
-    }
-    if (data == null || typeof data !== 'object') data = { error: err.message || 'Request failed' };
+    const { status, data } = sanitizeAxiosError(err, 'Request failed');
     res.status(status).json(data);
   }
 });
@@ -267,12 +281,7 @@ app.delete('/api/tasks/:id', async (req, res) => {
       res.status(response.status || 200).json({ ok: true });
     }
   } catch (err) {
-    const status = err.response?.status || 500;
-    let data = err.response?.data;
-    if (data != null && typeof data === 'string' && data.trimStart().startsWith('<')) {
-      data = { error: 'Backend returned an error page. Check server logs and BACKEND_URL.' };
-    }
-    if (data == null || typeof data !== 'object') data = { error: err.message || 'Delete failed' };
+    const { status, data } = sanitizeAxiosError(err, 'Delete failed');
     res.status(status).json(data);
   }
 });
@@ -294,12 +303,7 @@ app.delete('/api/drivers/:id', async (req, res) => {
       res.status(response.status || 200).json({ ok: true });
     }
   } catch (err) {
-    const status = err.response?.status || 500;
-    let data = err.response?.data;
-    if (data != null && typeof data === 'string' && data.trimStart().startsWith('<')) {
-      data = { error: 'Backend returned an error page.' };
-    }
-    if (data == null || typeof data !== 'object') data = { error: err.message || 'Delete failed' };
+    const { status, data } = sanitizeAxiosError(err, 'Delete failed');
     res.status(status).json(data);
   }
 });
@@ -321,12 +325,7 @@ app.delete('/api/teams/:id', async (req, res) => {
       res.status(response.status || 200).json({ ok: true });
     }
   } catch (err) {
-    const status = err.response?.status || 500;
-    let data = err.response?.data;
-    if (data != null && typeof data === 'string' && data.trimStart().startsWith('<')) {
-      data = { error: 'Backend returned an error page.' };
-    }
-    if (data == null || typeof data !== 'object') data = { error: err.message || 'Delete failed' };
+    const { status, data } = sanitizeAxiosError(err, 'Delete failed');
     res.status(status).json(data);
   }
 });
@@ -341,8 +340,7 @@ app.put('/api/settings', express.json(), async (req, res) => {
     });
     res.json(response.data);
   } catch (err) {
-    const status = err.response?.status || 500;
-    const data = err.response?.data || { error: err.message };
+    const { status, data } = sanitizeAxiosError(err, 'Request failed');
     res.status(status).json(data);
   }
 });
@@ -360,12 +358,7 @@ app.put('/api/*', express.json(), async (req, res) => {
     });
     res.json(response.data);
   } catch (err) {
-    const status = err.response?.status || 500;
-    let data = err.response?.data;
-    if (data != null && typeof data === 'string' && data.trimStart().startsWith('<')) {
-      data = { error: 'Backend returned an error page. Check BACKEND_URL.' };
-    }
-    if (data == null || typeof data !== 'object') data = { error: err.message || 'Request failed' };
+    const { status, data } = sanitizeAxiosError(err, 'Request failed');
     res.status(status).json(data);
   }
 });

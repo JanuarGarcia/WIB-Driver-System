@@ -5,6 +5,7 @@ import {
   formatDateOnly,
   formatActivityTimelineDateTimeShort,
   statusDisplayClass,
+  userFacingApiError,
 } from '../api';
 import { sanitizeLocationDisplayName, pickLocalizedMenuString } from '../utils/displayText';
 import { getAdvanceOrderLines, formatDbTimeTo12h } from '../utils/advanceOrder';
@@ -565,7 +566,7 @@ export default function TaskDetailsModal({
       })
       .catch((err) => {
         setData(null);
-        setError(err?.error || err?.message || 'Failed to load task');
+        setError(userFacingApiError(err) || 'Failed to load task');
       })
       .finally(() => setLoading(false));
   }, [taskId]);
@@ -791,7 +792,7 @@ export default function TaskDetailsModal({
         if (res && typeof res === 'object' && !res.error) setData(res);
         onTaskListInvalidate?.();
       })
-      .catch((err) => alert(err?.error || err?.message || 'Assign failed'))
+      .catch((err) => alert(userFacingApiError(err) || 'Assign failed'))
       .finally(() => setActionLoading(false));
   };
 
@@ -816,7 +817,7 @@ export default function TaskDetailsModal({
         onTaskDeleted?.();
         handleClose();
       })
-      .catch((err) => alert(err?.error || err?.message || 'Delete failed'))
+      .catch((err) => alert(userFacingApiError(err) || 'Delete failed'))
       .finally(() => setActionLoading(false));
   };
 
@@ -857,7 +858,7 @@ export default function TaskDetailsModal({
             onTaskListInvalidate?.();
           });
       })
-      .catch((err) => alert(err?.error || err?.message || 'Update failed'))
+      .catch((err) => alert(userFacingApiError(err) || 'Update failed'))
       .finally(() => setActionLoading(false));
   };
 
@@ -866,7 +867,7 @@ export default function TaskDetailsModal({
     setActionLoading(true);
     api(`tasks/${taskId}/assign-all`, { method: 'POST' })
       .then(() => {})
-      .catch((err) => alert(err?.error || err?.message || 'Failed'))
+      .catch((err) => alert(userFacingApiError(err) || 'Failed'))
       .finally(() => setActionLoading(false));
   };
 
@@ -874,7 +875,7 @@ export default function TaskDetailsModal({
     setActionLoading(true);
     api(`tasks/${taskId}/retry-auto-assign`, { method: 'POST' })
       .then(() => {})
-      .catch((err) => alert(err?.error || err?.message || 'Failed'))
+      .catch((err) => alert(userFacingApiError(err) || 'Failed'))
       .finally(() => setActionLoading(false));
   };
 
@@ -947,7 +948,7 @@ export default function TaskDetailsModal({
         setEditOpen(false);
         onTaskListInvalidate?.();
       })
-      .catch((err) => alert(err?.error || err?.message || 'Update failed'))
+      .catch((err) => alert(userFacingApiError(err) || 'Update failed'))
       .finally(() => setActionLoading(false));
   };
 

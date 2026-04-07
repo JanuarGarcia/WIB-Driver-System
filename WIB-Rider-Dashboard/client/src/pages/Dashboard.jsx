@@ -22,7 +22,7 @@ const MAP_CHUNK_FALLBACK_STYLE = {
 import AgentPanel from '../components/AgentPanel';
 import { useMapMerchantFilterSelection } from '../components/MapMerchantFilter';
 import { hydrateMapMerchantFilterFromServer } from '../utils/mapMerchantFilterPrefs';
-import { api, centralUnifiedOverview } from '../api';
+import { api, centralUnifiedOverview, userFacingApiError } from '../api';
 
 const MOBILE_DASHBOARD_MQ = '(max-width: 768px)';
 import { useTeamFilter } from '../context/TeamFilterContext';
@@ -355,7 +355,7 @@ export default function Dashboard() {
       } catch (e) {
         if (!cancelled) {
           setCentralOverview(null);
-          setCentralOverviewErr(e?.error || e?.message || 'Could not load central DB status');
+          setCentralOverviewErr(userFacingApiError(e) || 'Could not load central DB status');
         }
       }
     })();

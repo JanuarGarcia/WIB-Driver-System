@@ -62,6 +62,17 @@ function MapMerchantFilterServerSync() {
   return null;
 }
 
+/** After api.js clears the token on 401/HTML auth walls, return the user to login. */
+function SessionExpiredRedirect() {
+  const navigate = useNavigate();
+  useEffect(() => {
+    const onExpired = () => navigate('/login', { replace: true });
+    window.addEventListener('wib-dashboard-session-expired', onExpired);
+    return () => window.removeEventListener('wib-dashboard-session-expired', onExpired);
+  }, [navigate]);
+  return null;
+}
+
 export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [showNewTaskModal, setShowNewTaskModal] = useState(false);
@@ -96,6 +107,7 @@ export default function App() {
       <Sidebar isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} />
       <div className="main-wrap">
         <TeamFilterProvider>
+          <SessionExpiredRedirect />
           <MapMerchantFilterServerSync />
           <MainHeader onMenuClick={() => setSidebarOpen(true)} onOpenNewTask={() => setShowNewTaskModal(true)} />
           <main className="main">
