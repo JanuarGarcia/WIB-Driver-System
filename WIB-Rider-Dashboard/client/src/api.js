@@ -90,12 +90,9 @@ export function userFacingApiError(err) {
 }
 
 // Prefer explicit env-configured base URL (useful for phones / other devices).
-// Fallback: dev hits backend directly; production uses /api — the dashboard Node app (server.js) proxies
-// /api/* -> BACKEND_URL/admin/api/*. Do NOT use /admin/api in the browser on rider-dashboard.* or the
-// SPA will serve index.html for those paths (no proxy). Static-only deploys: set VITE_API_URL to full backend + /admin/api.
-const API =
-  import.meta.env.VITE_API_URL ||
-  (import.meta.env.DEV ? 'http://localhost:3000/admin/api' : '/api');
+// Default /api: Vite dev proxy and dashboard server.js both map /api/* -> backend /admin/api/*.
+// Do not use /admin/api in the browser on static hosting without that proxy.
+const API = import.meta.env.VITE_API_URL || '/api';
 
 /** Origin where `/uploads/...` is served (matches API app in app.js). */
 export function uploadsOrigin() {

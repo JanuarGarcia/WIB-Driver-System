@@ -12,6 +12,9 @@ export const DRV_SOUND_KEY = 'drv_sound_on';
 const VISIBLE_POLL_MS = 10_000;
 const HIDDEN_POLL_MS = 45_000;
 
+/** Dispatch after actions that create server-side notifications (e.g. new task) so the UI does not wait for the next interval. */
+export const RIDER_NOTIFICATIONS_POLL_EVENT = 'wib-dashboard-rider-notifications-poll';
+
 /** Session dedupe across remounts (e.g. React StrictMode) and parallel polls. */
 const processedIdsGlobal = new Set();
 let pollInFlight = false;
@@ -157,6 +160,26 @@ export function useNotifications() {
     return () => {
       clearInterval(intervalId);
       document.removeEventListener('visibilitychange', onVis);
+    };
+  }, [pollTick]);
+
+  useEffect(() => {
+    let delayTimer;
+    const onPoll = (e) => {
+      if (delayTimer) clearTimeout(delayTimer);
+      const delayMs =
+        e && e.detail && typeof e.detail.delayMs === 'number' && Number.isFinite(e.detail.delayMs)
+          ? Math.max(0, e.detail.delayMs)
+          : 400;
+      delayTimer = window.setTimeout(() => {
+        delayTimer = null;
+        pollTick();
+      }, delayMs);
+    };
+    window.addEventListener(RIDER_NOTIFICATIONS_POLL_EVENT, onPoll);
+    return () => {
+      if (delayTimer) clearTimeout(delayTimer);
+      window.removeEventListener(RIDER_NOTIFICATIONS_POLL_EVENT, onPoll);
     };
   }, [pollTick]);
 

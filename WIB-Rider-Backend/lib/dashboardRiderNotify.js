@@ -10,13 +10,24 @@ const riderNotificationService = require('../services/riderNotification.service'
  * @returns {Promise<string[]>}
  */
 async function fetchActiveAdminIds(pool) {
+  const mapIds = (rows) =>
+    [...new Set((rows || []).map((r) => String(r.admin_id)).filter((id) => id && id !== 'undefined'))];
+
   try {
     const [rows] = await pool.query(
-      'SELECT admin_id FROM mt_admin_user WHERE (status IS NULL OR status = 1 OR status = ?)',
-      [1]
+      `SELECT admin_id FROM mt_admin_user
+       WHERE (status IS NULL OR status = '' OR status = 0 OR status = 1 OR status = '1' OR status = 'active')`
     );
-    const ids = (rows || []).map((r) => String(r.admin_id)).filter((id) => id && id !== 'undefined');
-    return [...new Set(ids)];
+    const ids = mapIds(rows);
+    if (ids.length > 0) return ids;
+  } catch (e) {
+    if (e.code !== 'ER_BAD_FIELD_ERROR') return [];
+    /* Some schemas omit `status` — fall through */
+  }
+
+  try {
+    const [rowsAll] = await pool.query('SELECT admin_id FROM mt_admin_user');
+    return mapIds(rowsAll);
   } catch {
     return [];
   }
@@ -48,9 +59,11 @@ function notifyAllDashboardAdminsFireAndForget(pool, payload) {
 function normalizeFoodTaskStatusKey(raw) {
   const s = (raw || '').toString().trim().toLowerCase().replace(/\s+/g, '_');
   const c = s.replace(/_/g, '');
-  if (c === 'accepted') return 'acknowledged';
-  if (c === 'delivered' || c === 'completed') return 'successful';
-  if (c === 'canceled') return 'cancelled';
+  /* Driver apps vary: accept, accepted, acknowledge, Acknowledged, etc. */
+  if (c === 'accepted' || c === 'accept') return 'acknowledged';
+  if (c === 'acknowledge' || c === 'acknowledged') return 'acknowledged';
+  if (c === 'delivered' || c === 'completed' || c === 'complete') return 'successful';
+  if (c === 'canceled' || c === 'cancelled') return 'cancelled';
   return s;
 }
 
@@ -68,8 +81,11 @@ function foodTaskNotifyFromStatus(taskId, orderId, taskDescription, rawStatus) {
   if (norm === 'successful' || norm === 'delivered' || norm === 'completed') {
     return { title: 'Task delivered', message: `${label}${ordBit}`, type: 'task_done' };
   }
-  if (norm === 'assigned') {
+  if (norm === 'assigned' || norm === 'new') {
     return { title: 'Task assigned', message: `${label}${ordBit}`, type: 'task_assigned' };
+  }
+  if (norm === 'started' || norm === 'inprogress' || norm === 'in_progress') {
+    return { title: 'Task in progress', message: `${label}${ordBit}`, type: 'new_task' };
   }
   if (norm === 'unassigned' || norm === 'cancelled' || norm === 'canceled' || norm === 'declined' || norm === 'failed') {
     const pretty = norm.charAt(0).toUpperCase() + norm.slice(1).replace(/_/g, ' ');

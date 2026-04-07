@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { api } from '../api';
 import MapView from './MapView';
 import { sanitizeMerchantDisplayName } from '../utils/displayText';
+import { RIDER_NOTIFICATIONS_POLL_EVENT } from '../hooks/useNotifications';
 
 export const COUNTRY_CODES = [
   { code: 'PH', dial: '+63', name: 'Philippines', flag: '🇵🇭' },
@@ -415,6 +416,11 @@ export default function NewTaskModal({ onClose, onSuccess }) {
         }
       })
       .then(() => {
+        try {
+          window.dispatchEvent(new CustomEvent(RIDER_NOTIFICATIONS_POLL_EVENT, { detail: { delayMs: 0 } }));
+        } catch {
+          /* ignore */
+        }
         if (typeof onSuccess === 'function') onSuccess();
       })
       .catch((err) => alert(err.error || 'Failed to create task'))

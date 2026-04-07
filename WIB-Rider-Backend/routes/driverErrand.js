@@ -21,7 +21,7 @@ const {
   resolveErrandDriverDetail,
 } = require('../lib/errandOrders');
 const { normalizeIncomingStatusRaw } = require('../lib/errandDriverStatus');
-const { notifyAllDashboardAdminsFireAndForget, errandNotifyFromCanonical } = require('../lib/dashboardRiderNotify');
+const { notifyAllDashboardAdmins, errandNotifyFromCanonical } = require('../lib/dashboardRiderNotify');
 
 async function errandOrderNotifyLabel(errandPool, orderId) {
   try {
@@ -424,7 +424,7 @@ router.post('/AcceptErrandOrder', validateApiKey, resolveDriver, async (req, res
     try {
       const lbl = await errandOrderNotifyLabel(errandWibPool, orderId);
       const p = errandNotifyFromCanonical(orderId, lbl, 'assigned');
-      if (p) notifyAllDashboardAdminsFireAndForget(pool, p);
+      if (p) await notifyAllDashboardAdmins(pool, p).catch(() => {});
     } catch (_) {}
     return success(res, details || null);
   } catch (e) {
@@ -490,7 +490,7 @@ router.post('/ChangeErrandOrderStatus', validateApiKey, resolveDriver, async (re
       try {
         const lbl = await errandOrderNotifyLabel(errandWibPool, orderId);
         const p = errandNotifyFromCanonical(orderId, lbl, canonical);
-        if (p) notifyAllDashboardAdminsFireAndForget(pool, p);
+        if (p) await notifyAllDashboardAdmins(pool, p).catch(() => {});
       } catch (_) {}
       return success(res, null);
     }
@@ -533,7 +533,7 @@ router.post('/ChangeErrandOrderStatus', validateApiKey, resolveDriver, async (re
     try {
       const lbl = await errandOrderNotifyLabel(errandWibPool, orderId);
       const p = errandNotifyFromCanonical(orderId, lbl, canonical);
-      if (p) notifyAllDashboardAdminsFireAndForget(pool, p);
+      if (p) await notifyAllDashboardAdmins(pool, p).catch(() => {});
     } catch (_) {}
     return success(res, null);
   } catch (e) {

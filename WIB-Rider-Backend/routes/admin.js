@@ -33,7 +33,7 @@ const { insertStOrdernewHistoryRow } = require('../lib/errandHistoryInsert');
 const { enrichOrderDetailsWithSubcategoryAddons } = require('../lib/orderDetailAddons');
 const { attachOrderDetailCategories } = require('../lib/orderDetailCategories');
 const {
-  notifyAllDashboardAdminsFireAndForget,
+  notifyAllDashboardAdmins,
   foodTaskNotifyFromStatus,
   errandNotifyFromCanonical,
 } = require('../lib/dashboardRiderNotify');
@@ -2056,11 +2056,11 @@ router.post('/tasks', async (req, res) => {
     try {
       await sendPushToAllDrivers('New task', task_description || `Task #${taskId}`, { task_id: String(taskId), type: 'new_task' });
     } catch (_) {}
-    notifyAllDashboardAdminsFireAndForget(pool, {
+    await notifyAllDashboardAdmins(pool, {
       title: 'New task',
       message: task_description || `Task #${taskId}`,
       type: 'new_task',
-    });
+    }).catch(() => {});
     return res.json({ id: taskId, ok: true });
   } catch (e) {
     if (e.code === 'ER_NO_SUCH_TABLE' || e.code === 'ER_BAD_FIELD_ERROR') {
@@ -2111,11 +2111,11 @@ router.put('/tasks/:id/assign', express.json(), async (req, res) => {
     try {
       await sendPushToDriver(driverId, 'Task assigned', task.task_description || `Task #${taskId}`, { task_id: String(taskId), type: 'task_assigned' });
     } catch (_) {}
-    notifyAllDashboardAdminsFireAndForget(pool, {
+    await notifyAllDashboardAdmins(pool, {
       title: 'Task assigned',
       message: task.task_description || `Task #${taskId}`,
       type: 'task_assigned',
-    });
+    }).catch(() => {});
     return res.json({ ok: true });
   } catch (e) {
     if (e.code === 'ER_NO_SUCH_TABLE' || e.code === 'ER_BAD_FIELD_ERROR') {
@@ -2256,11 +2256,11 @@ router.put('/errand-orders/:orderId/assign', express.json(), async (req, res) =>
         type: 'errand_order_assigned',
       });
     } catch (_) {}
-    notifyAllDashboardAdminsFireAndForget(pool, {
+    await notifyAllDashboardAdmins(pool, {
       title: 'Errand assigned',
       message: errandAssignMsg,
       type: 'task_assigned',
-    });
+    }).catch(() => {});
     return res.json({ ok: true });
   } catch (e) {
     if (e.code === 'ER_BAD_FIELD_ERROR') {
@@ -2465,7 +2465,7 @@ router.put('/errand-orders/:orderId/status', express.json(), async (req, res) =>
           ? `Errand ${String(erSt.order_reference).trim()}`
           : `Errand order #${orderId}`;
       const payload = errandNotifyFromCanonical(orderId, lbl, canon);
-      if (payload) notifyAllDashboardAdminsFireAndForget(pool, payload);
+      if (payload) await notifyAllDashboardAdmins(pool, payload).catch(() => {});
     } catch (_) {}
     return res.json({ ok: true, status: canon });
   } catch (e) {
@@ -2648,7 +2648,7 @@ router.put('/tasks/:id/status', express.json(), async (req, res) => {
         [taskId]
       );
       const payload = foodTaskNotifyFromStatus(taskId, trow?.order_id, trow?.task_description, newStatus);
-      if (payload) notifyAllDashboardAdminsFireAndForget(pool, payload);
+      if (payload) await notifyAllDashboardAdmins(pool, payload).catch(() => {});
     } catch (_) {}
 
     return res.json({ ok: true, status: newStatus });
@@ -2682,11 +2682,11 @@ router.post('/tasks/:id/assign-all', async (req, res) => {
        VALUES (?, ?, 'process', NOW(), NOW(), ?)`,
       ['New task', task.task_description || `Task #${taskId}`, req.ip || req.connection?.remoteAddress || null]
     );
-    notifyAllDashboardAdminsFireAndForget(pool, {
+    await notifyAllDashboardAdmins(pool, {
       title: 'Task broadcast to drivers',
       message: task.task_description || `Task #${taskId}`,
       type: 'new_task',
-    });
+    }).catch(() => {});
     return res.json({ ok: true });
   } catch (e) {
     if (e.code === 'ER_NO_SUCH_TABLE' || e.code === 'ER_BAD_FIELD_ERROR') {
@@ -2708,11 +2708,11 @@ router.post('/tasks/:id/retry-auto-assign', async (req, res) => {
       return res.status(400).json({ error: 'Task is not unassigned' });
     }
     await sendPushToAllDrivers('New task', task.task_description || `Task #${taskId}`, { task_id: String(taskId), type: 'new_task' });
-    notifyAllDashboardAdminsFireAndForget(pool, {
+    await notifyAllDashboardAdmins(pool, {
       title: 'Auto-assign retry',
       message: task.task_description || `Task #${taskId}`,
       type: 'new_task',
-    });
+    }).catch(() => {});
     return res.json({ ok: true });
   } catch (e) {
     if (e.code === 'ER_NO_SUCH_TABLE' || e.code === 'ER_BAD_FIELD_ERROR') {

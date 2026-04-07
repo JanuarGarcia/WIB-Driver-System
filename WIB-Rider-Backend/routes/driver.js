@@ -13,7 +13,7 @@ const { fetchTaskProofPhotosWithUrls, buildTaskProofImageUrl } = require('../lib
 const { fetchDriverMergedOrderHistory } = require('../lib/driverOrderHistory');
 const { enrichOrderDetailsWithSubcategoryAddons } = require('../lib/orderDetailAddons');
 const { attachOrderDetailCategories } = require('../lib/orderDetailCategories');
-const { notifyAllDashboardAdminsFireAndForget, foodTaskNotifyFromStatus } = require('../lib/dashboardRiderNotify');
+const { notifyAllDashboardAdmins, foodTaskNotifyFromStatus } = require('../lib/dashboardRiderNotify');
 
 const uploadDir = path.join(__dirname, '..', 'uploads', 'profiles');
 if (!fs.existsSync(uploadDir)) {
@@ -921,10 +921,32 @@ router.post('/GetTaskDetails', validateApiKey, resolveDriver, async (req, res) =
 });
 
 router.post('/ChangeTaskStatus', validateApiKey, resolveDriver, async (req, res) => {
-  const { task_id, status_raw, reason, payment_type, payment_status, latitude, longitude, lat, lng } = req.body;
-  const tid = parseInt(task_id, 10);
+  const body = req.body || {};
+  const {
+    task_id,
+    status_raw,
+    reason,
+    payment_type,
+    payment_status,
+    latitude,
+    longitude,
+    lat,
+    lng,
+  } = body;
+  const tid = parseInt(task_id ?? body.taskId ?? body.task_id, 10);
   if (!tid) return error(res, 'task_id required');
-  const status = (status_raw || 'completed').toString().toLowerCase();
+  const rawForStatus =
+    status_raw ??
+    body.statusRaw ??
+    body.status ??
+    body.Status ??
+    body.state ??
+    body.delivery_status;
+  const status = (
+    rawForStatus != null && String(rawForStatus).trim() !== '' ? String(rawForStatus) : 'completed'
+  )
+    .toLowerCase()
+    .trim();
 
   const [[task]] = await pool.query(
     'SELECT task_id, order_id, driver_id, task_description FROM mt_driver_task WHERE task_id = ? LIMIT 1',
@@ -1007,7 +1029,7 @@ router.post('/ChangeTaskStatus', validateApiKey, resolveDriver, async (req, res)
 
   try {
     const payload = foodTaskNotifyFromStatus(tid, task.order_id, task.task_description, status);
-    if (payload) notifyAllDashboardAdminsFireAndForget(pool, payload);
+    if (payload) await notifyAllDashboardAdmins(pool, payload).catch(() => {});
   } catch (_) {}
 
   return success(res, null);

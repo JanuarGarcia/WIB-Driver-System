@@ -1709,6 +1709,9 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
 }
 
 /* react-toastify — match dashboard (bottom-right popups) */
+.Toastify__toast-container {
+  z-index: 12050;
+}
 .Toastify__toast-container.Toastify__toast-container--bottom-right {
   padding: 12px;
   bottom: 1rem;
