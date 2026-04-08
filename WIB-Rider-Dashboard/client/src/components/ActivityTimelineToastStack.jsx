@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { useLocation } from 'react-router-dom';
 import { api, statusLabel, statusDisplayClass } from '../api';
+import { RIDER_NOTIFICATIONS_POLL_EVENT } from '../hooks/useNotifications';
 
 const SOUND_MUTED_KEY = 'wib_dashboard_sound_muted';
 
@@ -67,12 +68,22 @@ export default function ActivityTimelineToastStack({ dateStr, onOpenTaskTimeline
   const pushToast = useCallback(
     (ev) => {
       const taskId = ev.resolved_task_id != null ? Number(ev.resolved_task_id) : NaN;
-      if (!Number.isFinite(taskId) || taskId <= 0) return;
+      const errandOid = ev.resolved_errand_order_id != null ? Number(ev.resolved_errand_order_id) : NaN;
+      let openId = NaN;
+      let kind = 'task';
+      if (Number.isFinite(taskId) && taskId > 0) {
+        openId = taskId;
+        kind = 'task';
+      } else if (Number.isFinite(errandOid) && errandOid > 0) {
+        openId = -errandOid;
+        kind = 'mangan';
+      }
+      if (!Number.isFinite(openId) || openId === 0) return;
       const key = `tl-${++toastKeySeq}`;
       const statusRaw = (ev.status || '').trim();
       const line2 = feedEventSubtitle(ev);
       setToasts((prev) => {
-        const next = [...prev, { key, taskId, line2, statusRaw, id: ev.id }];
+        const next = [...prev, { key, taskId: openId, kind, line2, statusRaw, id: ev.id }];
         return next.slice(-5);
       });
       playTimelineChime();
@@ -82,10 +93,17 @@ export default function ActivityTimelineToastStack({ dateStr, onOpenTaskTimeline
     [removeToast]
   );
 
+  const errandCursorRef = useRef(null);
+  const errandInitDoneRef = useRef(false);
+  const errandSeenIdsRef = useRef(new Set());
+
   useEffect(() => {
     initDoneRef.current = false;
     cursorRef.current = null;
     seenIdsRef.current = new Set();
+    errandInitDoneRef.current = false;
+    errandCursorRef.current = null;
+    errandSeenIdsRef.current = new Set();
   }, [dateStr]);
 
   useEffect(() => {
@@ -112,16 +130,68 @@ export default function ActivityTimelineToastStack({ dateStr, onOpenTaskTimeline
           return;
         }
 
+        let newTaskActivity = false;
         if (events.length) {
           for (const ev of events) {
             const hid = ev && ev.id != null ? Number(ev.id) : NaN;
             if (!Number.isFinite(hid) || seenIdsRef.current.has(hid)) continue;
             seenIdsRef.current.add(hid);
             pushToast(ev);
+            newTaskActivity = true;
           }
         }
         if (Number.isFinite(cursor) && cursor > (cursorRef.current ?? 0)) {
           cursorRef.current = cursor;
+        }
+        if (newTaskActivity) {
+          try {
+            window.dispatchEvent(new CustomEvent(RIDER_NOTIFICATIONS_POLL_EVENT, { detail: { delayMs: 450 } }));
+          } catch (_) {
+            /* ignore */
+          }
+        }
+      } catch (_) {
+        /* ignore transient errors */
+      }
+    };
+
+    const tickErrand = async () => {
+      if (document.visibilityState !== 'visible') return;
+      try {
+        const params = new URLSearchParams();
+        params.set('date', dateStr);
+        const after = errandCursorRef.current != null ? errandCursorRef.current : 0;
+        params.set('after_id', String(after));
+        const data = await api(`order-history/errand-feed?${params.toString()}`);
+        if (cancelled || !data || typeof data !== 'object') return;
+        const cursor = Number(data.cursor);
+        const events = Array.isArray(data.events) ? data.events : [];
+
+        if (!errandInitDoneRef.current) {
+          errandInitDoneRef.current = true;
+          errandCursorRef.current = Number.isFinite(cursor) ? cursor : 0;
+          return;
+        }
+
+        let newErrandActivity = false;
+        if (events.length) {
+          for (const ev of events) {
+            const hid = ev && ev.id != null ? Number(ev.id) : NaN;
+            if (!Number.isFinite(hid) || errandSeenIdsRef.current.has(hid)) continue;
+            errandSeenIdsRef.current.add(hid);
+            pushToast(ev);
+            newErrandActivity = true;
+          }
+        }
+        if (Number.isFinite(cursor) && cursor > (errandCursorRef.current ?? 0)) {
+          errandCursorRef.current = cursor;
+        }
+        if (newErrandActivity) {
+          try {
+            window.dispatchEvent(new CustomEvent(RIDER_NOTIFICATIONS_POLL_EVENT, { detail: { delayMs: 450 } }));
+          } catch (_) {
+            /* ignore */
+          }
         }
       } catch (_) {
         /* ignore transient errors */
@@ -129,8 +199,12 @@ export default function ActivityTimelineToastStack({ dateStr, onOpenTaskTimeline
     };
 
     tick();
+    tickErrand();
     const intervalMs = 12000;
-    const id = setInterval(tick, intervalMs);
+    const id = setInterval(() => {
+      tick();
+      tickErrand();
+    }, intervalMs);
     return () => {
       cancelled = true;
       clearInterval(id);
@@ -169,7 +243,9 @@ export default function ActivityTimelineToastStack({ dateStr, onOpenTaskTimeline
             <span className="dashboard-timeline-toast-body">
               <span className="dashboard-timeline-toast-line1">
                 <span className={`dashboard-timeline-toast-status tag ${sc}`}>{statusLabel(t.statusRaw)}</span>
-                <span className="dashboard-timeline-toast-taskid">Task ID:{t.taskId}</span>
+                <span className="dashboard-timeline-toast-taskid">
+                  {t.kind === 'mangan' ? `Mangan #${Math.abs(t.taskId)}` : `Task ID:${t.taskId}`}
+                </span>
               </span>
               <span className="dashboard-timeline-toast-line2">{t.line2}</span>
             </span>

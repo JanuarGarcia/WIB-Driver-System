@@ -24,6 +24,7 @@ const {
   buildErrandPseudoRowsForAgentDashboard,
   fetchErrandOrderTaskCountsByDriver,
   fetchErrandDriverLocationsForMap,
+  resolveErrandHistoryRemarks,
 } = require('../lib/errandOrders');
 const { normalizeIncomingStatusRaw, CANONICAL: ERRAND_CANONICAL_STATUSES } = require('../lib/errandDriverStatus');
 const { success, error } = require('../lib/response');
@@ -1779,6 +1780,101 @@ async function fanOutTimelineMilestonesToRiderNotifications(pool, taskId, taskDe
   }
 }
 
+/** Map `order-history/feed` event → row shape for `classifyTimelineHistoryForDashboardNotify`. */
+function orderHistoryFeedEventToClassifierRow(ev) {
+  if (!ev || typeof ev !== 'object') return {};
+  return {
+    status: ev.status,
+    remarks: ev.remarks,
+    reason: ev.reason != null ? ev.reason : null,
+    notes: ev.notes != null ? ev.notes : null,
+    update_by_type: ev.update_by_type,
+  };
+}
+
+/**
+ * Fan-out bell + inbox notifications from dashboard home feed (mt_order_history), same milestones as task timeline.
+ * Dedupe keys match per-history `mt-h-<id>` so modal timeline poll does not double-notify.
+ */
+async function fanOutOrderHistoryFeedEventsToRiderNotifications(pool, events) {
+  if (!Array.isArray(events) || events.length === 0) return;
+  const taskIds = [
+    ...new Set(
+      events.map((e) => Number(e.resolved_task_id)).filter((n) => Number.isFinite(n) && n > 0)
+    ),
+  ];
+  const descByTask = new Map();
+  if (taskIds.length > 0) {
+    try {
+      const ph = taskIds.map(() => '?').join(',');
+      const [rows] = await pool.query(
+        `SELECT task_id, task_description FROM mt_driver_task WHERE task_id IN (${ph})`,
+        taskIds
+      );
+      for (const r of rows || []) descByTask.set(Number(r.task_id), r.task_description);
+    } catch (_) {
+      /* optional */
+    }
+  }
+  for (const ev of events) {
+    const hid = ev && ev.id != null ? Number(ev.id) : NaN;
+    if (!Number.isFinite(hid)) continue;
+    const tid = ev.resolved_task_id != null ? Number(ev.resolved_task_id) : NaN;
+    if (!Number.isFinite(tid) || tid <= 0) continue;
+    const cat = classifyTimelineHistoryForDashboardNotify(orderHistoryFeedEventToClassifierRow(ev));
+    if (!cat) continue;
+    const dedupeKey = `mt-h-${hid}`;
+    if (!(await riderNotificationService.tryConsumeTimelineNotifyKey(pool, dedupeKey))) continue;
+    const td = descByTask.get(tid);
+    const payload = timelineNotifyPayloadFromCategory(tid, td, cat);
+    if (payload) notifyAllDashboardAdminsFireAndForget(pool, payload);
+  }
+}
+
+function inferUpdateByTypeFromErrandChangeBy(changeBy) {
+  const s = String(changeBy || '').toLowerCase();
+  if (!s) return null;
+  if (s.includes('driver') || s.includes('rider')) return 'driver';
+  if (s.includes('admin') || s.includes('merchant') || s.includes('dispatcher')) return 'admin';
+  return null;
+}
+
+function mapStOrdernewHistoryRowToFeedEvent(h, orderReference) {
+  const trans = h.ramarks_trans ?? h.remarks_trans;
+  const remarks = resolveErrandHistoryRemarks(h.remarks, trans);
+  return {
+    id: h.id,
+    resolved_errand_order_id: h.order_id != null ? Number(h.order_id) : NaN,
+    order_reference: orderReference != null ? String(orderReference).trim() : '',
+    status: h.status != null ? String(h.status).trim() : '',
+    remarks: remarks || null,
+    reason: h.reason != null ? String(h.reason) : null,
+    notes: h.notes != null ? String(h.notes) : null,
+    update_by_type: inferUpdateByTypeFromErrandChangeBy(h.change_by),
+    date_created: h.date_created ?? h.date_added ?? h.created_at ?? null,
+    update_by_name: h.change_by != null ? String(h.change_by).trim() : null,
+  };
+}
+
+/** Mangan (ErrandWib) history feed → same milestone notifications; dedupe `soh-<history_id>`. */
+async function fanOutErrandHistoryFeedEventsToRiderNotifications(pool, errandPool, events) {
+  if (!Array.isArray(events) || events.length === 0 || !errandPool) return;
+  for (const ev of events) {
+    const hid = ev && ev.id != null ? Number(ev.id) : NaN;
+    if (!Number.isFinite(hid)) continue;
+    const oid = ev.resolved_errand_order_id != null ? Number(ev.resolved_errand_order_id) : NaN;
+    if (!Number.isFinite(oid) || oid <= 0) continue;
+    const cat = classifyTimelineHistoryForDashboardNotify(orderHistoryFeedEventToClassifierRow(ev));
+    if (!cat) continue;
+    const dedupeKey = `soh-${hid}`;
+    if (!(await riderNotificationService.tryConsumeTimelineNotifyKey(pool, dedupeKey))) continue;
+    const ref = (ev.order_reference || '').trim();
+    const label = ref ? `Mangan ${ref}` : `Mangan order #${oid}`;
+    const payload = timelineNotifyPayloadFromCategory(oid, label, cat);
+    if (payload) notifyAllDashboardAdminsFireAndForget(pool, payload);
+  }
+}
+
 // ---- Task order history (for activity timeline; client may call when details omit it) ----
 router.get('/tasks/:id/order-history', async (req, res) => {
   const id = parseInt(req.params.id, 10);
@@ -2006,12 +2102,81 @@ router.get('/order-history/feed', async (req, res) => {
       const n = Number(ev.id);
       if (Number.isFinite(n) && n > nextCursor) nextCursor = n;
     }
+    if (list.length > 0) {
+      fanOutOrderHistoryFeedEventsToRiderNotifications(pool, list).catch((err) => {
+        console.warn('[order-history/feed] notify fan-out', err && err.message ? err.message : err);
+      });
+    }
     return res.json({ cursor: nextCursor, events: list });
   } catch (e) {
     if (e.code === 'ER_NO_SUCH_TABLE' || e.code === 'ER_BAD_FIELD_ERROR') {
       return res.json({ cursor: afterId, events: [] });
     }
     console.error('[order-history/feed]', e.message || e, e.code);
+    return res.status(200).json({ cursor: afterId, events: [] });
+  }
+});
+
+/**
+ * Dashboard home: new `st_ordernew_history` rows for Mangan orders on the given delivery date (same date rule as GET /tasks errand rows).
+ */
+router.get('/order-history/errand-feed', async (req, res) => {
+  const dateStr = req.query.date != null && String(req.query.date).trim() ? String(req.query.date).trim() : null;
+  if (!dateStr || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+    return res.status(400).json({ error: 'date query (YYYY-MM-DD) is required' });
+  }
+  const afterRaw = req.query.after_id != null ? parseInt(String(req.query.after_id), 10) : 0;
+  const afterId = Number.isFinite(afterRaw) && afterRaw >= 0 ? afterRaw : 0;
+
+  if (!errandWibPool) {
+    return res.json({ cursor: 0, events: [] });
+  }
+
+  const dateExpr = `DATE(COALESCE(o.delivery_date, o.created_at, o.date_created))`;
+
+  try {
+    if (afterId === 0) {
+      const [[row]] = await errandWibPool.query(
+        `SELECT COALESCE(MAX(h.id), 0) AS cursor
+         FROM st_ordernew_history h
+         INNER JOIN st_ordernew o ON o.order_id = h.order_id
+         WHERE ${dateExpr} = ?`,
+        [dateStr]
+      );
+      const cursor = row && row.cursor != null ? Number(row.cursor) || 0 : 0;
+      return res.json({ cursor, events: [] });
+    }
+
+    const [rawRows] = await errandWibPool.query(
+      `SELECT h.*
+       FROM st_ordernew_history h
+       INNER JOIN st_ordernew o ON o.order_id = h.order_id
+       WHERE ${dateExpr} = ?
+       AND h.id > ?
+       ORDER BY h.id ASC
+       LIMIT 40`,
+      [dateStr, afterId]
+    );
+
+    const list = (rawRows || []).map((h) =>
+      mapStOrdernewHistoryRowToFeedEvent(h, h.order_reference ?? h.order_ref ?? null)
+    );
+    let nextCursor = afterId;
+    for (const ev of list) {
+      const n = Number(ev.id);
+      if (Number.isFinite(n) && n > nextCursor) nextCursor = n;
+    }
+    if (list.length > 0) {
+      fanOutErrandHistoryFeedEventsToRiderNotifications(pool, errandWibPool, list).catch((err) => {
+        console.warn('[order-history/errand-feed] notify fan-out', err && err.message ? err.message : err);
+      });
+    }
+    return res.json({ cursor: nextCursor, events: list });
+  } catch (e) {
+    if (e.code === 'ER_NO_SUCH_TABLE' || e.code === 'ER_BAD_FIELD_ERROR') {
+      return res.json({ cursor: afterId, events: [] });
+    }
+    console.error('[order-history/errand-feed]', e.message || e, e.code);
     return res.status(200).json({ cursor: afterId, events: [] });
   }
 });

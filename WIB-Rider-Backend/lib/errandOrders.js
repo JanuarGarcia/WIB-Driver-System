@@ -1724,6 +1724,7 @@ module.exports = {
   buildErrandTaskDetailPayload,
   fetchErrandOrderLineItems,
   fetchErrandOrderHistory,
+  resolveErrandHistoryRemarks,
   mapDeliveryToTaskStatus,
   mapErrandHistoryStatusToTaskStatus,
   fetchErrandMerchantsByIds,
