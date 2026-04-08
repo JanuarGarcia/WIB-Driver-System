@@ -113,6 +113,10 @@ async function requireDashboardToken(req, res, next) {
  * Allow ADMIN_SECRET (x-admin-key) or dashboard session token (mt_admin_user).
  * Prefer validating x-dashboard-token first when present so req.adminUser is set even if the
  * dashboard proxy also forwards x-admin-key (rider notifications and other per-admin routes need it).
+ *
+ * If a non-empty token is sent but does not match any row, respond 401 — do not fall through to
+ * x-admin-key only. Otherwise stale browser tokens + proxy admin key look "logged in" for most
+ * routes but break anything that requires req.adminUser (e.g. GET /rider/notifications).
  */
 async function adminAuth(req, res, next) {
   const token = (req.headers['x-dashboard-token'] || '').trim();
@@ -126,6 +130,7 @@ async function adminAuth(req, res, next) {
         req.adminUser = user;
         return next();
       }
+      return res.status(401).json({ error: 'Unauthorized' });
     } catch (e) {
       if (e.code === 'ER_NO_SUCH_TABLE') { /* fall through */ }
       else return next(e);
