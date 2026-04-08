@@ -1064,9 +1064,20 @@ router.post('/GetTaskByDate', validateApiKey, resolveDriver, async (req, res) =>
 });
 
 router.post('/GetTaskDetails', validateApiKey, resolveDriver, async (req, res) => {
-  const taskId = parseInt(req.body.task_id, 10);
-  if (!taskId) return error(res, 'task_id required');
-  const rows = await queryRiderTaskRows('WHERE t.task_id = ? LIMIT 1', [taskId]);
+  const body = req.body || {};
+  const orderId = parseInt(body.order_id ?? body.orderId, 10);
+  const taskId = parseInt(body.task_id ?? body.taskId, 10);
+
+  // Rollout compatibility: if both are provided, order_id wins.
+  let rows = [];
+  if (Number.isFinite(orderId) && orderId > 0) {
+    rows = await queryRiderTaskRows('WHERE t.order_id = ? ORDER BY t.task_id DESC LIMIT 1', [orderId]);
+  } else if (Number.isFinite(taskId) && taskId > 0) {
+    rows = await queryRiderTaskRows('WHERE t.task_id = ? LIMIT 1', [taskId]);
+  } else {
+    return error(res, 'order_id or task_id required');
+  }
+
   const r = rows[0];
   if (!r) return error(res, 'Task not found');
   r.date_created = r.date_created ? new Date(r.date_created).toISOString() : null;
