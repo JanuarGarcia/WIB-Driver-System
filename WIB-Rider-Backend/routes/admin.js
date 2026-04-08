@@ -1950,6 +1950,24 @@ router.get('/tasks/:id/timeline-updates', async (req, res) => {
       } catch (e) {
         if (e.code !== 'ER_NO_SUCH_TABLE' && e.code !== 'ER_BAD_FIELD_ERROR') throw e;
       }
+      /*
+       * First poll (after_* = 0): client only records cursors; incremental polls use id > max so they
+       * would never see existing rows. Fan-out merged history here so milestones (accepted, RFP, etc.)
+       * still create inbox notifications — DB dedupe (mt-h-*) prevents duplicates if already notified.
+       * Photos omitted on bootstrap to avoid re-firing old proof alerts on every modal open.
+       */
+      try {
+        const mergedBoot = await fetchMergedTaskOrderHistory(pool, id, orderId);
+        await fanOutTimelineMilestonesToRiderNotifications(
+          pool,
+          id,
+          taskDescriptionCached,
+          mergedBoot || [],
+          []
+        );
+      } catch (fanErr) {
+        console.warn('[tasks/:id/timeline-updates] bootstrap notify fan-out', fanErr.message || fanErr);
+      }
       return res.json({
         cursor_history: maxH,
         cursor_photo: maxP,
@@ -2064,6 +2082,46 @@ router.get('/order-history/feed', async (req, res) => {
         WHERE ${taskCondsSql}`;
       const [rows] = await pool.query(cursorSql, [...taskParams]);
       const cursor = rows && rows[0] ? Number(rows[0].cursor) || 0 : 0;
+      /* Same as timeline bootstrap: incremental feed uses id > cursor, so existing rows never arrive — fan-out up to cursor once (dedupe prevents duplicates). */
+      if (cursor > 0) {
+        const fanSql = `
+      SELECT h.id, h.order_id, h.status, h.remarks, h.date_created, h.update_by_type,
+        COALESCE(
+          NULLIF(TRIM(h.update_by_name), ''),
+          NULLIF(TRIM(CONCAT(COALESCE(d.first_name, ''), ' ', COALESCE(d.last_name, ''))), ''),
+          NULLIF(TRIM(d.username), '')
+        ) AS update_by_name,
+        h.reason, h.notes,
+        t.task_id AS resolved_task_id
+      FROM mt_order_history h
+      INNER JOIN mt_driver_task t ON ${historyLinkSql}
+      LEFT JOIN mt_driver d ON LOWER(TRIM(h.update_by_type)) = 'driver'
+        AND h.update_by_id IS NOT NULL AND CAST(h.update_by_id AS UNSIGNED) = d.driver_id
+      WHERE ${taskCondsSql}
+      AND h.id <= ?
+      ORDER BY h.id ASC
+      LIMIT 5000`;
+        try {
+          const [fanRows] = await pool.query(fanSql, [...taskParams, cursor]);
+          const fanList = (fanRows || []).map((row) => ({
+            id: row.id,
+            order_id: row.order_id,
+            status: row.status,
+            remarks: row.remarks,
+            date_created: row.date_created,
+            update_by_type: row.update_by_type,
+            update_by_name: row.update_by_name,
+            reason: row.reason,
+            notes: row.notes,
+            resolved_task_id: row.resolved_task_id,
+          }));
+          fanOutOrderHistoryFeedEventsToRiderNotifications(pool, fanList).catch((err) => {
+            console.warn('[order-history/feed] bootstrap notify fan-out', err && err.message ? err.message : err);
+          });
+        } catch (fanErr) {
+          console.warn('[order-history/feed] bootstrap fan-out query', fanErr.message || fanErr);
+        }
+      }
       return res.json({ cursor, events: [] });
     }
 
@@ -2144,6 +2202,28 @@ router.get('/order-history/errand-feed', async (req, res) => {
         [dateStr]
       );
       const cursor = row && row.cursor != null ? Number(row.cursor) || 0 : 0;
+      if (cursor > 0) {
+        try {
+          const [rawFan] = await errandWibPool.query(
+            `SELECT h.*
+             FROM st_ordernew_history h
+             INNER JOIN st_ordernew o ON o.order_id = h.order_id
+             WHERE ${dateExpr} = ?
+             AND h.id <= ?
+             ORDER BY h.id ASC
+             LIMIT 5000`,
+            [dateStr, cursor]
+          );
+          const fanList = (rawFan || []).map((h) =>
+            mapStOrdernewHistoryRowToFeedEvent(h, h.order_reference ?? h.order_ref ?? null)
+          );
+          fanOutErrandHistoryFeedEventsToRiderNotifications(pool, errandWibPool, fanList).catch((err) => {
+            console.warn('[order-history/errand-feed] bootstrap notify fan-out', err && err.message ? err.message : err);
+          });
+        } catch (fanErr) {
+          console.warn('[order-history/errand-feed] bootstrap fan-out', fanErr.message || fanErr);
+        }
+      }
       return res.json({ cursor, events: [] });
     }
 
