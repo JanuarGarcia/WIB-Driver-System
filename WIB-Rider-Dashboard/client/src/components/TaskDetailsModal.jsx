@@ -79,6 +79,28 @@ function normalizeTimelineStatusKey(s) {
     .replace(/_/g, '');
 }
 
+function normalizedBlobImpliesTaskAccepted(blob) {
+  if (!blob) return false;
+  if (blob.includes('unaccepted') || blob.includes('notaccepted') || blob.includes('unacknowledged')) return false;
+  if (blob.includes('unacknowledge')) return false;
+  if (blob.includes('acknowledged')) return true;
+  if (blob.includes('acknowledge') && !blob.includes('unacknowledge')) return true;
+  if (blob.includes('accepted')) return true;
+  return false;
+}
+
+function normalizedBlobImpliesInProgress(blob) {
+  if (!blob) return false;
+  if (blob.includes('notinprogress')) return false;
+  if (blob === 'inprogress' || blob.includes('inprogress')) return true;
+  if (blob.includes('reachedthedestination') || blob.includes('reacheddestination')) return true;
+  if (blob.includes('reached') && blob.includes('destination')) return true;
+  if (blob.includes('arrivedatdestination') || (blob.includes('arrived') && blob.includes('destination'))) return true;
+  if (blob.includes('arrivedat') && (blob.includes('dropoff') || blob.includes('location'))) return true;
+  if (blob.includes('enroute') || blob.includes('ontheway') || blob.includes('onitsway')) return true;
+  return false;
+}
+
 const TIMELINE_MAP_LINK_STATUSES = new Set([
   'assigned',
   'acknowledged',
@@ -165,10 +187,11 @@ function classifyHistoryRowForTimelineNotify(row) {
     normalizeTimelineStatusKey(row.notes),
   ].filter(Boolean);
   if (keys.some((k) => k === 'successful' || k === 'completed' || k === 'delivered')) return 'successful';
-  if (keys.some((k) => k === 'inprogress')) return 'inprogress';
+  if (keys.some((k) => k === 'inprogress' || normalizedBlobImpliesInProgress(k))) return 'inprogress';
   if (keys.some((k) => k === 'started')) return 'started';
   if (historyRowIsRiderAcceptance(row)) return 'accepted';
   if (keys.some((k) => k === 'acknowledged' || k === 'accepted' || k === 'accept')) return 'accepted';
+  if (keys.some((k) => normalizedBlobImpliesTaskAccepted(k))) return 'accepted';
   return null;
 }
 

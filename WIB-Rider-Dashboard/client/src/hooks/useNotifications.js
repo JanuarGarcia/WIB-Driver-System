@@ -10,7 +10,8 @@ const alertSoundUrl = `${import.meta.env.BASE_URL}fb-alert.mp3`;
 export const DRV_SOUND_KEY = 'drv_sound_on';
 
 const VISIBLE_POLL_MS = 10_000;
-const HIDDEN_POLL_MS = 45_000;
+/** Same as visible: hidden tabs are still throttled by the browser, but we do not slow further on purpose. */
+const HIDDEN_POLL_MS = VISIBLE_POLL_MS;
 
 /** Dispatch after actions that create server-side notifications (e.g. new task) so the UI does not wait for the next interval. */
 export const RIDER_NOTIFICATIONS_POLL_EVENT = 'wib-dashboard-rider-notifications-poll';
@@ -18,6 +19,60 @@ export const RIDER_NOTIFICATIONS_POLL_EVENT = 'wib-dashboard-rider-notifications
 /** Session dedupe across remounts (e.g. React StrictMode) and parallel polls. */
 const processedIdsGlobal = new Set();
 let pollInFlight = false;
+
+/** Short beep when <audio> play() is blocked (common in background tabs). */
+function playWebAudioChime() {
+  try {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return;
+    const ctx = new Ctx();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.frequency.value = 880;
+    osc.type = 'sine';
+    gain.gain.setValueAtTime(0.2, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.22);
+    osc.start(ctx.currentTime);
+    osc.stop(ctx.currentTime + 0.24);
+    setTimeout(() => ctx.close().catch(() => {}), 450);
+  } catch (_) {
+    /* ignore */
+  }
+}
+
+/**
+ * One OS notification per item so every alert gets a visible popup when the tab is in the background.
+ */
+function showDesktopNotificationsForEach(fresh) {
+  if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+  if (!Array.isArray(fresh) || fresh.length === 0) return;
+  for (let i = 0; i < fresh.length; i++) {
+    const n = fresh[i];
+    try {
+      const title = (n.title || 'WIB Riders').toString().trim() || 'WIB Riders';
+      const body = (n.message || '').toString().trim() || 'New notification';
+      new Notification(title, {
+        body,
+        silent: false,
+        tag: `wib-rider-${String(n.id)}`,
+      });
+    } catch (_) {
+      /* ignore */
+    }
+  }
+}
+
+function requestDesktopNotifyPermissionOnce() {
+  if (typeof Notification === 'undefined') return;
+  if (Notification.permission !== 'default') return;
+  try {
+    void Notification.requestPermission();
+  } catch (_) {
+    /* ignore */
+  }
+}
 
 export function isSoundOn() {
   try {
@@ -44,7 +99,7 @@ export function setSoundPreference(on) {
 }
 
 /**
- * Polls rider notifications, shows toast + one sound per batch, marks viewed on server.
+ * Polls rider notifications: toast + optional OS notification per item, staggered sound per item, then mark viewed.
  */
 export function useNotifications() {
   const [items, setItems] = useState([]);
@@ -66,7 +121,7 @@ export function useNotifications() {
   useEffect(() => {
     const a = new Audio(alertSoundUrl);
     a.preload = 'auto';
-    a.volume = 0.35;
+    a.volume = 0.62;
     audioRef.current = a;
     return () => {
       audioRef.current = null;
@@ -80,6 +135,7 @@ export function useNotifications() {
 
   /** Browsers often block autoplay; a click on the bell counts as a gesture so later poll sounds can play. */
   const primeNotificationSound = useCallback(() => {
+    requestDesktopNotifyPermissionOnce();
     if (!isSoundOn() || !audioRef.current) return;
     const el = audioRef.current;
     try {
@@ -88,19 +144,34 @@ export function useNotifications() {
         .then(() => {
           el.pause();
           el.currentTime = 0;
-          el.volume = 0.35;
+          el.volume = 0.62;
         })
         .catch(() => {
-          el.volume = 0.35;
+          el.volume = 0.62;
         });
     } catch {
       try {
-        el.volume = 0.35;
+        el.volume = 0.62;
       } catch {
         /* ignore */
       }
     }
   }, []);
+
+  /** Unlock audio + offer desktop notifications (OS alert/sound when tab is in background). */
+  useEffect(() => {
+    if (typeof document === 'undefined') return undefined;
+    const unlock = () => {
+      primeNotificationSound();
+      requestDesktopNotifyPermissionOnce();
+    };
+    document.addEventListener('pointerdown', unlock, { capture: true, passive: true, once: true });
+    document.addEventListener('touchstart', unlock, { capture: true, passive: true, once: true });
+    return () => {
+      document.removeEventListener('pointerdown', unlock, { capture: true });
+      document.removeEventListener('touchstart', unlock, { capture: true });
+    };
+  }, [primeNotificationSound]);
 
   const pollTick = useCallback(async () => {
     if (!mountedRef.current) return;
@@ -139,16 +210,33 @@ export function useNotifications() {
           className: 'rider-notif-toast',
           bodyClassName: 'rider-notif-toast-body',
           progressClassName: 'rider-notif-toast-progress',
+          pauseOnHover: true,
         });
       }
 
-      if (isSoundOn() && audioRef.current) {
-        const el = audioRef.current;
-        try {
-          el.currentTime = 0;
-          await el.play();
-        } catch {
-          /* autoplay / decode */
+      showDesktopNotificationsForEach(fresh);
+
+      if (isSoundOn()) {
+        const tabHidden = typeof document !== 'undefined' && document.visibilityState === 'hidden';
+        const staggerMs = 320;
+        const playOne = async (index) => {
+          if (index === 0 && !tabHidden && audioRef.current) {
+            const el = audioRef.current;
+            try {
+              el.volume = 0.72;
+              el.currentTime = 0;
+              await el.play();
+              return;
+            } catch {
+              /* fall through to chime */
+            }
+          }
+          playWebAudioChime();
+        };
+        for (let i = 0; i < fresh.length; i++) {
+          window.setTimeout(() => {
+            void playOne(i);
+          }, i * staggerMs);
         }
       }
 

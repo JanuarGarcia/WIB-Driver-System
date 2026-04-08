@@ -106,7 +106,7 @@ export default function App() {
         pauseOnFocusLoss={false}
         closeOnClick
         rtl={false}
-        limit={4}
+        limit={24}
         toastClassName="rider-notif-toast"
         bodyClassName="rider-notif-toast-body"
         progressClassName="rider-notif-toast-progress"

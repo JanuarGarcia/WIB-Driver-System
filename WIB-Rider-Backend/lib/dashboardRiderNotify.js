@@ -109,6 +109,25 @@ function normalizeFoodTaskStatusKey(raw) {
   }
   if (c === 'delivered' || c === 'completed' || c === 'complete') return 'successful';
   if (c === 'canceled' || c === 'cancelled') return 'cancelled';
+  /* In-progress phrases (driver / PHP) before generic "accepted" fuzzy match. */
+  if (!c.includes('notinprogress') && c.includes('inprogress')) return 'inprogress';
+  if (c.includes('reached') && c.includes('destination')) return 'inprogress';
+  if (c.includes('reachedthedestination') || c.includes('reacheddestination')) return 'inprogress';
+  if (c.includes('arrived') && (c.includes('destination') || c.includes('dropoff') || c.includes('location'))) {
+    return 'inprogress';
+  }
+  if (c.includes('enroute') || c.includes('ontheway') || c.includes('onitsway')) return 'inprogress';
+  /* Legacy / PHP: phrase status containing "accepted" — after started/inprogress checks (return s) would otherwise miss. */
+  if (
+    c.includes('accepted') &&
+    !c.includes('unaccepted') &&
+    !c.includes('notaccepted') &&
+    !c.includes('disaccepted') &&
+    !c.includes('started') &&
+    !c.includes('inprogress')
+  ) {
+    return 'acknowledged';
+  }
   return s;
 }
 

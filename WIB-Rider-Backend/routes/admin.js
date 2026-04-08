@@ -1674,6 +1674,30 @@ function normalizeTimelineNotifyKey(s) {
     .replace(/_/g, '');
 }
 
+/** True if normalized status/remarks blob clearly means rider accepted (legacy free-text rows). */
+function normalizedBlobImpliesTaskAccepted(blob) {
+  if (!blob) return false;
+  if (blob.includes('unaccepted') || blob.includes('notaccepted') || blob.includes('unacknowledged')) return false;
+  if (blob.includes('unacknowledge')) return false;
+  if (blob.includes('acknowledged')) return true;
+  if (blob.includes('acknowledge') && !blob.includes('unacknowledge')) return true;
+  if (blob.includes('accepted')) return true;
+  return false;
+}
+
+/** Timeline rows often use free text (e.g. "reached the destination") while UI maps them to in progress. */
+function normalizedBlobImpliesInProgress(blob) {
+  if (!blob) return false;
+  if (blob.includes('notinprogress')) return false;
+  if (blob === 'inprogress' || blob.includes('inprogress')) return true;
+  if (blob.includes('reachedthedestination') || blob.includes('reacheddestination')) return true;
+  if (blob.includes('reached') && blob.includes('destination')) return true;
+  if (blob.includes('arrivedatdestination') || (blob.includes('arrived') && blob.includes('destination'))) return true;
+  if (blob.includes('arrivedat') && (blob.includes('dropoff') || blob.includes('location'))) return true;
+  if (blob.includes('enroute') || blob.includes('ontheway') || blob.includes('onitsway')) return true;
+  return false;
+}
+
 function historyRowIsRiderAcceptanceForNotify(row) {
   if (!row || typeof row !== 'object') return false;
   const parts = [row.status, row.remarks, row.reason, row.notes];
@@ -1682,6 +1706,7 @@ function historyRowIsRiderAcceptanceForNotify(row) {
   for (const p of parts) {
     const key = normalizeTimelineNotifyKey(p);
     if (!key) continue;
+    if (normalizedBlobImpliesTaskAccepted(key)) return true;
     if (key.includes('taskaccepted') || key.includes('orderaccepted')) return true;
     if (key === 'acknowledged' || key === 'accepted' || key === 'accept') return true;
     if (key === 'assigned' && !assignedByDispatcher) return true;
@@ -1699,7 +1724,7 @@ function classifyTimelineHistoryForDashboardNotify(row) {
     normalizeTimelineNotifyKey(row.notes),
   ].filter(Boolean);
   if (keys.some((k) => k === 'successful' || k === 'completed' || k === 'delivered')) return 'successful';
-  if (keys.some((k) => k === 'inprogress')) return 'inprogress';
+  if (keys.some((k) => k === 'inprogress' || normalizedBlobImpliesInProgress(k))) return 'inprogress';
   if (keys.some((k) => k === 'started')) return 'started';
   if (historyRowIsRiderAcceptanceForNotify(row)) return 'accepted';
   if (keys.some((k) => k === 'acknowledged' || k === 'accepted' || k === 'accept')) return 'accepted';
