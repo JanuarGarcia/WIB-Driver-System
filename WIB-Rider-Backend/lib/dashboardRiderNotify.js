@@ -150,20 +150,21 @@ function normalizeFoodTaskStatusKey(raw) {
  */
 function foodTaskNotifyFromStatus(taskId, orderId, taskDescription, rawStatus, actorLabel) {
   const norm = normalizeFoodTaskStatusKey(rawStatus);
-  const label = (taskDescription && String(taskDescription).trim()) || `Task #${taskId}`;
-  const ordBit = orderId != null && String(orderId).trim() !== '' ? ` · Order ${orderId}` : '';
+  const hasOrder = orderId != null && String(orderId).trim() !== '' && String(orderId).trim() !== '0';
+  const label = hasOrder ? `Order #${String(orderId).trim()}` : `Task #${taskId}`;
+  const taskBit = ` · Task #${taskId}`;
 
   let out = null;
   if (norm === 'acknowledged') {
-    out = { title: 'Task accepted', message: `${label}${ordBit}`, type: 'task_accepted' };
+    out = { title: 'Task accepted', message: `${label}${taskBit}`, type: 'task_accepted' };
   } else if (norm === 'successful' || norm === 'delivered' || norm === 'completed') {
-    out = { title: 'Task delivered', message: `${label}${ordBit}`, type: 'task_done' };
+    out = { title: 'Task delivered', message: `${label}${taskBit}`, type: 'task_done' };
   } else if (norm === 'assigned' || norm === 'new') {
-    out = { title: 'Task assigned', message: `${label}${ordBit}`, type: 'task_assigned' };
+    out = { title: 'Task assigned', message: `${label}${taskBit}`, type: 'task_assigned' };
   } else if (norm === 'ready_for_pickup' || norm === 'readyforpickup' || norm === 'readypickup') {
-    out = { title: 'Ready for pickup', message: `${label}${ordBit}`, type: 'ready_pickup' };
+    out = { title: 'Ready for pickup', message: `${label}${taskBit}`, type: 'ready_pickup' };
   } else if (norm === 'started' || norm === 'inprogress' || norm === 'in_progress') {
-    out = { title: 'Task in progress', message: `${label}${ordBit}`, type: 'new_task' };
+    out = { title: 'Task in progress', message: `${label}${taskBit}`, type: 'new_task' };
   } else if (
     norm === 'unassigned' ||
     norm === 'cancelled' ||
@@ -173,7 +174,7 @@ function foodTaskNotifyFromStatus(taskId, orderId, taskDescription, rawStatus, a
     norm === 'rejected'
   ) {
     const pretty = norm.charAt(0).toUpperCase() + norm.slice(1).replace(/_/g, ' ');
-    out = { title: `Task ${pretty}`, message: `${label}${ordBit}`, type: 'default' };
+    out = { title: `Task ${pretty}`, message: `${label}${taskBit}`, type: 'default' };
   }
   return attachActorToPayload(out, actorLabel);
 }

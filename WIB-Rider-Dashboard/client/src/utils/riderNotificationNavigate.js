@@ -13,7 +13,9 @@ export function parseActorFromNotificationMessage(message) {
 
 export function stripActorSuffixForDisplay(message) {
   const s = String(message || '').trim();
-  return s.replace(BY_SUFFIX, '').trim();
+  const noBy = s.replace(BY_SUFFIX, '').trim();
+  // Keep deep-link marker (Task #123) in raw message, but hide it in UI in favor of Order #… which admins recognize.
+  return noBy.replace(/\s·\sTask\s*#\s*\d+\b/gi, '').trim();
 }
 
 /**

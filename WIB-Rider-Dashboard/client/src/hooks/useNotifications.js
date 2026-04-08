@@ -24,6 +24,8 @@ export const RIDER_NOTIFICATIONS_POLL_EVENT = 'wib-dashboard-rider-notifications
 const processedIdsGlobal = new Set();
 let pollInFlight = false;
 
+const NOTIF_SESSION_BASELINE_MS_KEY = 'wib_dashboard_notif_baseline_ms';
+
 /** Short beep when <audio> play() is blocked (common in background tabs). */
 function playWebAudioChime() {
   try {
@@ -65,6 +67,27 @@ function showDesktopNotificationsForEach(fresh) {
     } catch (_) {
       /* ignore */
     }
+  }
+}
+
+function showDesktopNotificationSummary(fresh) {
+  if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+  if (!Array.isArray(fresh) || fresh.length === 0) return;
+  const n = fresh[0];
+  const count = fresh.length;
+  const title = count === 1 ? (n.title || 'WIB Riders').toString().trim() || 'WIB Riders' : 'WIB Riders';
+  const body =
+    count === 1
+      ? ((n.message || '').toString().trim() || 'New notification')
+      : `${count} new notifications. Open the dashboard to view.`;
+  try {
+    new Notification(title, {
+      body,
+      silent: false,
+      tag: count === 1 ? `wib-rider-${String(n.id)}` : 'wib-rider-summary',
+    });
+  } catch (_) {
+    /* ignore */
   }
 }
 
@@ -111,6 +134,8 @@ export function useNotifications() {
   const audioRef = useRef(null);
   const mountedRef = useRef(true);
   const pollErrorLoggedRef = useRef(false);
+  const firstPollDoneRef = useRef(false);
+  const baselineMsRef = useRef(null);
 
   /** Bell badge: items not yet acknowledged (panel opened) or cleared. */
   const unreadCount = useMemo(() => items.filter((i) => i && !i.localRead).length, [items]);
@@ -184,6 +209,13 @@ export function useNotifications() {
       setItems([]);
       setPollError(null);
       pollErrorLoggedRef.current = false;
+      firstPollDoneRef.current = false;
+      baselineMsRef.current = null;
+      try {
+        sessionStorage.removeItem(NOTIF_SESSION_BASELINE_MS_KEY);
+      } catch (_) {
+        /* ignore */
+      }
       return;
     }
 
@@ -194,10 +226,55 @@ export function useNotifications() {
       setPollError(null);
       pollErrorLoggedRef.current = false;
       const list = Array.isArray(data.notifications) ? data.notifications : [];
-      const fresh = list.filter((n) => n && n.id != null && !processedIdsGlobal.has(String(n.id)));
-      if (fresh.length === 0) return;
+      const freshAll = list.filter((n) => n && n.id != null && !processedIdsGlobal.has(String(n.id)));
 
-      for (const n of fresh) {
+      // Option 1: baseline on first load so reopening the site doesn't flood toasts/OS notifications.
+      if (!firstPollDoneRef.current) {
+        firstPollDoneRef.current = true;
+        let baseline = Date.now();
+        try {
+          const fromStore = parseInt(sessionStorage.getItem(NOTIF_SESSION_BASELINE_MS_KEY) || '0', 10);
+          if (Number.isFinite(fromStore) && fromStore > 0) baseline = fromStore;
+          else sessionStorage.setItem(NOTIF_SESSION_BASELINE_MS_KEY, String(baseline));
+        } catch (_) {
+          /* ignore */
+        }
+        baselineMsRef.current = baseline;
+        // Mark existing backlog as "seen for this session" (but DO NOT mark viewed in DB).
+        for (const n of list) {
+          if (n && n.id != null) processedIdsGlobal.add(String(n.id));
+        }
+        return;
+      }
+
+      if (freshAll.length === 0) return;
+
+      // Only popup items created after baseline.
+      const baselineMs =
+        baselineMsRef.current != null
+          ? Number(baselineMsRef.current)
+          : (() => {
+              try {
+                const fromStore = parseInt(sessionStorage.getItem(NOTIF_SESSION_BASELINE_MS_KEY) || '0', 10);
+                return Number.isFinite(fromStore) && fromStore > 0 ? fromStore : Date.now();
+              } catch (_) {
+                return Date.now();
+              }
+            })();
+
+      const fresh = freshAll.filter((n) => {
+        const d = n?.createdAt ? new Date(n.createdAt) : null;
+        const ms = d && !Number.isNaN(d.getTime()) ? d.getTime() : Date.now();
+        return ms >= baselineMs;
+      });
+      if (fresh.length === 0) {
+        for (const n of freshAll) processedIdsGlobal.add(String(n.id));
+        return;
+      }
+
+      // Option 3: batch multiple new items into a single toast.
+      if (fresh.length === 1) {
+        const n = fresh[0];
         const title = (n.title || 'Notification').toString();
         const message = (n.message || '').toString().trim();
         const actor = message ? parseActorFromNotificationMessage(message) : '';
@@ -217,15 +294,37 @@ export function useNotifications() {
           progressClassName: 'rider-notif-toast-progress',
           pauseOnHover: true,
         });
+      } else {
+        const count = fresh.length;
+        const first = fresh[0];
+        const t1 = (first?.title || 'Notification').toString();
+        const m1 = (first?.message || '').toString().trim();
+        const actor1 = m1 ? parseActorFromNotificationMessage(m1) : '';
+        const msg1 = m1 ? stripActorSuffixForDisplay(m1) : '';
+        const body = createElement(
+          'div',
+          { className: 'rider-notif-toast-stacked' },
+          createElement('div', { className: 'rider-notif-toast-line1' }, `${count} new notifications`),
+          actor1 ? createElement('div', { className: 'rider-notif-toast-line-by' }, `Latest: By ${actor1}`) : null,
+          createElement('div', { className: 'rider-notif-toast-line2' }, `${t1}${msg1 ? ` — ${msg1}` : ''}`)
+        );
+        toast.info(body, {
+          toastId: `rider-notif-batch-${String(fresh[0]?.id ?? 'x')}`,
+          autoClose: 12500,
+          className: 'rider-notif-toast',
+          bodyClassName: 'rider-notif-toast-body',
+          progressClassName: 'rider-notif-toast-progress',
+          pauseOnHover: true,
+        });
       }
 
-      showDesktopNotificationsForEach(fresh);
+      // OS notifications: prefer summary to avoid spamming the OS.
+      showDesktopNotificationSummary(fresh);
 
       if (isSoundOn()) {
         const tabHidden = typeof document !== 'undefined' && document.visibilityState === 'hidden';
-        const staggerMs = 320;
-        const playOne = async (index) => {
-          if (index === 0 && !tabHidden && audioRef.current) {
+        const playOne = async () => {
+          if (!tabHidden && audioRef.current) {
             const el = audioRef.current;
             try {
               el.volume = 0.72;
@@ -238,17 +337,12 @@ export function useNotifications() {
           }
           playWebAudioChime();
         };
-        for (let i = 0; i < fresh.length; i++) {
-          window.setTimeout(() => {
-            void playOne(i);
-          }, i * staggerMs);
-        }
+        void playOne();
       }
 
       await markRiderNotificationsViewed(fresh.map((n) => String(n.id)));
-      for (const n of fresh) {
-        processedIdsGlobal.add(String(n.id));
-      }
+      for (const n of fresh) processedIdsGlobal.add(String(n.id));
+      for (const n of freshAll) processedIdsGlobal.add(String(n.id));
 
       setItems((prev) => {
         const map = new Map(prev.map((p) => [String(p.id), { ...p }]));

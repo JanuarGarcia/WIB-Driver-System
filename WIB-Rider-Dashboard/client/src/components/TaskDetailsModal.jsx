@@ -1798,6 +1798,12 @@ export default function TaskDetailsModal({
                             : order.convenience_fee;
                       const convNum = convRaw != null && String(convRaw).trim() !== '' ? Number(convRaw) : NaN;
                       const convenienceDisplay = !Number.isNaN(convNum) ? `₱${convNum.toFixed(2)}` : '—';
+                      const deliveryRaw = isErrandTask
+                        ? (order.delivery_fee ?? order.deliveryFee ?? null)
+                        : (order.delivery_charge ?? order.deliveryCharge ?? order.order_delivery_charge ?? null);
+                      const deliveryNum =
+                        deliveryRaw != null && String(deliveryRaw).trim() !== '' ? Number(deliveryRaw) : NaN;
+                      const deliveryDisplay = !Number.isNaN(deliveryNum) ? `₱${deliveryNum.toFixed(2)}` : '—';
                       const tipRow = formatOrderTipRow(order);
                       return (
                         <div className="task-detail-section order-summary-block order-summary-block--ref">
@@ -1811,6 +1817,10 @@ export default function TaskDetailsModal({
                               <div className="order-summary-ref-cell">
                                 <span className="order-summary-ref-label">CONVENIENCE</span>
                                 <span className="order-summary-ref-value">{convenienceDisplay}</span>
+                              </div>
+                              <div className="order-summary-ref-cell">
+                                <span className="order-summary-ref-label">DELIVERY FEE</span>
+                                <span className="order-summary-ref-value">{deliveryDisplay}</span>
                               </div>
                               <div className="order-summary-ref-cell">
                                 <span className="order-summary-ref-label">{tipRow.summaryLabel}</span>

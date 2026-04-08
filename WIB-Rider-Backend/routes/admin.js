@@ -260,6 +260,23 @@ router.post('/internal/notify-task-status', express.json(), async (req, res) => 
     if (!payload) {
       return res.json({ ok: true, notified: false, reason: 'status_does_not_map_to_notification' });
     }
+    const rawNorm = normalizeTimelineNotifyKey(rawStatus);
+    const cat =
+      payload.type === 'task_accepted'
+        ? 'accepted'
+        : payload.type === 'ready_pickup'
+          ? 'ready_for_pickup'
+          : payload.type === 'task_done'
+            ? 'successful'
+            : rawNorm === 'started'
+              ? 'started'
+              : rawNorm === 'inprogress'
+                ? 'inprogress'
+                : '';
+    const dedupeKey = milestoneDedupeKeyForTask(taskId, cat || payload.type);
+    if (dedupeKey && !(await riderNotificationService.tryConsumeTimelineNotifyKey(pool, dedupeKey))) {
+      return res.json({ ok: true, notified: false, reason: 'deduped', dedupeKey });
+    }
     await notifyAllDashboardAdmins(pool, payload);
     return res.json({ ok: true, notified: true });
   } catch (e) {
@@ -1676,6 +1693,14 @@ function normalizeTimelineNotifyKey(s) {
     .replace(/_/g, '');
 }
 
+function milestoneDedupeKeyForTask(taskId, category) {
+  const tid = Number(taskId);
+  if (!Number.isFinite(tid) || tid <= 0) return '';
+  const c = normalizeTimelineNotifyKey(category);
+  if (!c) return '';
+  return `mt-task-${tid}-${c}`;
+}
+
 /** True if normalized status/remarks blob clearly means rider accepted (legacy free-text rows). */
 function normalizedBlobImpliesTaskAccepted(blob) {
   if (!blob) return false;
@@ -1772,7 +1797,7 @@ function timelineNotifyActorFromFeedEvent(ev) {
   return timelineNotifyActorFromHistoryRow(ev);
 }
 
-function ensureFoodTaskIdInMessage(message, taskId) {
+function ensureTaskIdMarkerInMessage(message, taskId) {
   const tid = Number(taskId);
   if (!Number.isFinite(tid) || tid <= 0) return String(message || '').trim();
   const s = String(message || '').trim();
@@ -1783,11 +1808,12 @@ function ensureFoodTaskIdInMessage(message, taskId) {
 /**
  * @param {number|null|undefined} taskId — food task id; omit when errandOpts set
  * @param {string|null|undefined} taskDescription — label line (merchant / description)
+ * @param {string|number|null|undefined} orderId — order number admins recognize (preferred in message)
  * @param {string} category
  * @param {string} [actorLabel] — rider or updater (appended via attachActorToPayload)
  * @param {{ errandOrderId?: number }} [errandOpts] — Mangan: include order id in message for dashboard deep-link
  */
-function timelineNotifyPayloadFromCategory(taskId, taskDescription, category, actorLabel, errandOpts) {
+function timelineNotifyPayloadFromCategory(taskId, taskDescription, orderId, category, actorLabel, errandOpts) {
   let messageBase = '';
   if (errandOpts != null && errandOpts.errandOrderId != null) {
     const oid = Number(errandOpts.errandOrderId);
@@ -1796,8 +1822,9 @@ function timelineNotifyPayloadFromCategory(taskId, taskDescription, category, ac
     messageBase = hasRef ? label : `${label} · Mangan order #${oid}`;
   } else {
     const tid = Number(taskId);
-    const base = (taskDescription && String(taskDescription).trim()) || `Task #${tid}`;
-    messageBase = ensureFoodTaskIdInMessage(base, tid);
+    const ord = orderId != null && String(orderId).trim() !== '' && String(orderId).trim() !== '0' ? String(orderId).trim() : '';
+    const base = ord ? `Order #${ord}` : (taskDescription && String(taskDescription).trim()) || `Task #${tid}`;
+    messageBase = ensureTaskIdMarkerInMessage(base, tid);
   }
 
   let payload = null;
@@ -1825,19 +1852,20 @@ function driverActorFromTaskDriverJoinRow(row) {
 /**
  * One notification per mt_driver_task_photo row; dedupe `mt-p-<id>` (timeline modal + global poller share keys).
  */
-async function notifyAdminsForSingleTaskPhoto(pool, photoId, taskId, taskDescription, actorLabel) {
+async function notifyAdminsForSingleTaskPhoto(pool, photoId, taskId, orderId, taskDescription, actorLabel) {
   const pid = photoId != null ? Number(photoId) : NaN;
   const tid = taskId != null ? Number(taskId) : NaN;
   if (!Number.isFinite(pid) || !Number.isFinite(tid) || tid <= 0) return;
   const dedupeKey = `mt-p-${pid}`;
   if (!(await riderNotificationService.tryConsumeTimelineNotifyKey(pool, dedupeKey))) return;
-  const label = (taskDescription && String(taskDescription).trim()) || `Task #${tid}`;
+  const ord = orderId != null && String(orderId).trim() !== '' && String(orderId).trim() !== '0' ? String(orderId).trim() : '';
+  const label = ord ? `Order #${ord}` : `Task #${tid}`;
   notifyAllDashboardAdminsFireAndForget(
     pool,
     attachActorToPayload(
       {
         title: 'Photo added',
-        message: ensureFoodTaskIdInMessage(`${label} · Rider added a photo`, tid),
+        message: ensureTaskIdMarkerInMessage(`${label} · Rider added a photo`, tid),
         type: 'task_photo',
       },
       actorLabel
@@ -1848,7 +1876,7 @@ async function notifyAdminsForSingleTaskPhoto(pool, photoId, taskId, taskDescrip
 async function fanOutGlobalTaskPhotoNotifySinceRows(pool, rows) {
   for (const r of rows || []) {
     const actor = driverActorFromTaskDriverJoinRow(r);
-    await notifyAdminsForSingleTaskPhoto(pool, r.id, r.task_id, r.task_description, actor);
+    await notifyAdminsForSingleTaskPhoto(pool, r.id, r.task_id, r.order_id ?? null, r.task_description, actor);
   }
 }
 
@@ -1860,27 +1888,31 @@ async function fanOutTimelineMilestonesToRiderNotifications(pool, taskId, taskDe
     if (!cat) continue;
     const dedupeKey = `mt-h-${hid}`;
     if (!(await riderNotificationService.tryConsumeTimelineNotifyKey(pool, dedupeKey))) continue;
+    const milestoneKey = milestoneDedupeKeyForTask(taskId, cat);
+    if (milestoneKey && !(await riderNotificationService.tryConsumeTimelineNotifyKey(pool, milestoneKey))) continue;
     const actor = timelineNotifyActorFromHistoryRow(row);
-    const payload = timelineNotifyPayloadFromCategory(taskId, taskDescription, cat, actor);
+    const payload = timelineNotifyPayloadFromCategory(taskId, taskDescription, row.order_id ?? null, cat, actor);
     if (payload) notifyAllDashboardAdminsFireAndForget(pool, payload);
   }
   let photoActor = '';
+  let photoOrderId = null;
   if ((photoRows || []).length > 0 && Number.isFinite(Number(taskId)) && Number(taskId) > 0) {
     try {
       const [[dr]] = await pool.query(
-        `SELECT t.driver_id, d.first_name, d.last_name, d.username
+        `SELECT t.order_id, t.driver_id, d.first_name, d.last_name, d.username
          FROM mt_driver_task t
          LEFT JOIN mt_driver d ON d.driver_id = t.driver_id
          WHERE t.task_id = ? LIMIT 1`,
         [taskId]
       );
       photoActor = driverActorFromTaskDriverJoinRow(dr);
+      photoOrderId = dr?.order_id ?? null;
     } catch (_) {
       /* optional */
     }
   }
   for (const ph of photoRows || []) {
-    await notifyAdminsForSingleTaskPhoto(pool, ph && ph.id, taskId, taskDescription, photoActor);
+    await notifyAdminsForSingleTaskPhoto(pool, ph && ph.id, taskId, photoOrderId, taskDescription, photoActor);
   }
 }
 
@@ -1908,14 +1940,25 @@ async function fanOutOrderHistoryFeedEventsToRiderNotifications(pool, events) {
     ),
   ];
   const descByTask = new Map();
+  const driverByTask = new Map();
   if (taskIds.length > 0) {
     try {
       const ph = taskIds.map(() => '?').join(',');
       const [rows] = await pool.query(
-        `SELECT task_id, task_description FROM mt_driver_task WHERE task_id IN (${ph})`,
+        `SELECT t.task_id, t.task_description, t.driver_id,
+          d.username, CONCAT(COALESCE(d.first_name,''), ' ', COALESCE(d.last_name,'')) AS full_name
+         FROM mt_driver_task t
+         LEFT JOIN mt_driver d ON d.driver_id = t.driver_id
+         WHERE t.task_id IN (${ph})`,
         taskIds
       );
-      for (const r of rows || []) descByTask.set(Number(r.task_id), r.task_description);
+      for (const r of rows || []) {
+        const tid = Number(r.task_id);
+        if (Number.isFinite(tid) && tid > 0) {
+          descByTask.set(tid, r.task_description);
+          driverByTask.set(tid, formatActorFromDriver({ id: r.driver_id, username: r.username, full_name: r.full_name }));
+        }
+      }
     } catch (_) {
       /* optional */
     }
@@ -1929,9 +1972,11 @@ async function fanOutOrderHistoryFeedEventsToRiderNotifications(pool, events) {
     if (!cat) continue;
     const dedupeKey = `mt-h-${hid}`;
     if (!(await riderNotificationService.tryConsumeTimelineNotifyKey(pool, dedupeKey))) continue;
+    const milestoneKey = milestoneDedupeKeyForTask(tid, cat);
+    if (milestoneKey && !(await riderNotificationService.tryConsumeTimelineNotifyKey(pool, milestoneKey))) continue;
     const td = descByTask.get(tid);
-    const actor = timelineNotifyActorFromFeedEvent(ev);
-    const payload = timelineNotifyPayloadFromCategory(tid, td, cat, actor);
+    const actor = timelineNotifyActorFromFeedEvent(ev) || driverByTask.get(tid) || '';
+    const payload = timelineNotifyPayloadFromCategory(tid, td, ev.order_id ?? null, cat, actor);
     if (payload) notifyAllDashboardAdminsFireAndForget(pool, payload);
   }
 }
@@ -1976,7 +2021,7 @@ async function fanOutErrandHistoryFeedEventsToRiderNotifications(pool, errandPoo
     const ref = (ev.order_reference || '').trim();
     const label = ref ? `Mangan ${ref}` : `Mangan order #${oid}`;
     const actor = timelineNotifyActorFromFeedEvent(ev);
-    const payload = timelineNotifyPayloadFromCategory(null, label, cat, actor, { errandOrderId: oid });
+    const payload = timelineNotifyPayloadFromCategory(null, label, null, cat, actor, { errandOrderId: oid });
     if (payload) notifyAllDashboardAdminsFireAndForget(pool, payload);
   }
 }
@@ -2502,6 +2547,7 @@ router.get('/order-history/task-photo-notify-since', async (req, res) => {
 
     const listSql = `
       SELECT p.id, p.task_id, p.photo_name, p.date_created,
+        t.order_id,
         t.task_description,
         t.driver_id,
         d.first_name, d.last_name, d.username
