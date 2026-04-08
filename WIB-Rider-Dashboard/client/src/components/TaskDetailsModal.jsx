@@ -89,6 +89,15 @@ function normalizedBlobImpliesTaskAccepted(blob) {
   return false;
 }
 
+function normalizedBlobImpliesReadyForPickup(blob) {
+  if (!blob) return false;
+  if (blob.includes('notready') && blob.includes('pickup')) return false;
+  if (blob === 'readyforpickup' || blob === 'readypickup') return true;
+  if (blob.includes('readyforpickup') || blob.includes('readypickup')) return true;
+  if (blob.includes('ready') && blob.includes('pickup')) return true;
+  return false;
+}
+
 function normalizedBlobImpliesInProgress(blob) {
   if (!blob) return false;
   if (blob.includes('notinprogress')) return false;
@@ -187,6 +196,9 @@ function classifyHistoryRowForTimelineNotify(row) {
     normalizeTimelineStatusKey(row.notes),
   ].filter(Boolean);
   if (keys.some((k) => k === 'successful' || k === 'completed' || k === 'delivered')) return 'successful';
+  if (keys.some((k) => k === 'readyforpickup' || k === 'readypickup' || normalizedBlobImpliesReadyForPickup(k))) {
+    return 'ready_for_pickup';
+  }
   if (keys.some((k) => k === 'inprogress' || normalizedBlobImpliesInProgress(k))) return 'inprogress';
   if (keys.some((k) => k === 'started')) return 'started';
   if (historyRowIsRiderAcceptance(row)) return 'accepted';

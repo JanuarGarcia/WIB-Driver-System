@@ -1681,6 +1681,10 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
   background: var(--color-warning-bg);
   color: var(--color-warning);
 }
+.rider-notif-card--rfp .rider-notif-card__badge {
+  background: var(--color-primary-tint-strong);
+  color: var(--color-primary-light);
+}
 .rider-notif-card--default .rider-notif-card__badge {
   background: var(--bg-hover);
   color: var(--text-secondary);

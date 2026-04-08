@@ -1,89 +1,125 @@
 /**
- * In-memory rider (dashboard admin) notifications — no DB table.
- * Single Node process only: PM2 cluster / multiple API instances each have their own empty store.
+ * Dashboard (dispatcher) notifications — persisted on primary DB so all Node workers and restarts see the same inbox.
  */
-
-const crypto = require('crypto');
-
-/** @typedef {{ id: string, riderId: string, title: string, message: string, type: string, viewed: boolean, createdAt: Date }} RiderNotification */
-
-/** @type {RiderNotification[]} */
-let notifications = [];
-
-/** Dedupe timeline-driven fan-out when multiple dispatchers poll the same task (in-memory, single process). */
-const timelineNotifyDedupeKeys = new Set();
-const TIMELINE_NOTIFY_DEDUPE_CAP = 8000;
 
 /**
- * @param {string} key e.g. `mt-h-<history_id>` or `mt-p-<photo_id>`
- * @returns {boolean} true if this is the first time for this key (caller should notify)
+ * @typedef {{ id: string, riderId: string, title: string, message: string, type: string, viewed: boolean, createdAt: Date }} RiderNotification
  */
-function tryConsumeTimelineNotifyKey(key) {
-  const k = String(key || '').trim();
+
+/**
+ * Timeline / photo fan-out dedupe across workers (INSERT IGNORE).
+ * @param {import('mysql2/promise').Pool} pool
+ * @param {string} key
+ * @returns {Promise<boolean>} true if this is the first time for this key (caller should notify)
+ */
+async function tryConsumeTimelineNotifyKey(pool, key) {
+  const k = String(key || '').trim().slice(0, 190);
   if (!k) return false;
-  if (timelineNotifyDedupeKeys.has(k)) return false;
-  timelineNotifyDedupeKeys.add(k);
-  while (timelineNotifyDedupeKeys.size > TIMELINE_NOTIFY_DEDUPE_CAP) {
-    const first = timelineNotifyDedupeKeys.values().next().value;
-    timelineNotifyDedupeKeys.delete(first);
+  try {
+    const [r] = await pool.query(
+      'INSERT IGNORE INTO mt_dashboard_notification_dedupe (dedupe_key) VALUES (?)',
+      [k]
+    );
+    return r.affectedRows === 1;
+  } catch (e) {
+    if (e.code === 'ER_NO_SUCH_TABLE') return false;
+    return false;
   }
-  return true;
-}
-
-function newId() {
-  return `n-${Date.now()}-${crypto.randomBytes(6).toString('hex')}`;
 }
 
 /**
+ * @param {import('mysql2/promise').Pool} pool
  * @param {string} riderId
- * @returns {RiderNotification[]}
+ * @returns {Promise<RiderNotification[]>}
  */
-function listUnreadForRider(riderId) {
-  const rid = String(riderId);
-  return notifications.filter((n) => n.riderId === rid && !n.viewed);
+async function listUnreadForRider(pool, riderId) {
+  const aid = parseInt(String(riderId), 10);
+  if (!Number.isFinite(aid)) return [];
+  try {
+    const [rows] = await pool.query(
+      `SELECT id, admin_id, title, message, type, viewed, date_created
+       FROM mt_dashboard_rider_notification
+       WHERE admin_id = ? AND viewed = 0
+       ORDER BY date_created DESC, id DESC
+       LIMIT 100`,
+      [aid]
+    );
+    return (rows || []).map((row) => ({
+      id: String(row.id),
+      riderId: String(row.admin_id),
+      title: row.title,
+      message: row.message != null ? String(row.message) : '',
+      type: row.type || 'info',
+      viewed: Boolean(row.viewed),
+      createdAt: row.date_created instanceof Date ? row.date_created : new Date(row.date_created),
+    }));
+  } catch (e) {
+    if (e.code === 'ER_NO_SUCH_TABLE') return [];
+    throw e;
+  }
 }
 
 /**
+ * @param {import('mysql2/promise').Pool} pool
  * @param {string} riderId
  * @param {string[]} notificationIds
- * @returns {number}
+ * @returns {Promise<number>}
  */
-function markViewedForRider(riderId, notificationIds) {
-  const rid = String(riderId);
-  const want = new Set((notificationIds || []).map((x) => String(x)));
-  if (want.size === 0) return 0;
-  let n = 0;
-  for (const row of notifications) {
-    if (row.riderId === rid && want.has(String(row.id))) {
-      row.viewed = true;
-      n += 1;
-    }
+async function markViewedForRider(pool, riderId, notificationIds) {
+  const aid = parseInt(String(riderId), 10);
+  if (!Number.isFinite(aid)) return 0;
+  const numericIds = (notificationIds || [])
+    .map((x) => parseInt(String(x), 10))
+    .filter((n) => Number.isFinite(n) && n > 0);
+  if (numericIds.length === 0) return 0;
+  const ph = numericIds.map(() => '?').join(',');
+  try {
+    const [r] = await pool.query(
+      `UPDATE mt_dashboard_rider_notification SET viewed = 1 WHERE admin_id = ? AND viewed = 0 AND id IN (${ph})`,
+      [aid, ...numericIds]
+    );
+    return r.affectedRows || 0;
+  } catch (e) {
+    if (e.code === 'ER_NO_SUCH_TABLE') return 0;
+    throw e;
   }
-  return n;
 }
 
 /**
+ * @param {import('mysql2/promise').Pool} pool
  * @param {string} riderId
  * @param {{ title?: string, message?: string, type?: string }} payload
- * @returns {RiderNotification}
+ * @returns {Promise<RiderNotification>}
  */
-function createForRider(riderId, payload) {
-  const rid = String(riderId);
+async function createForRider(pool, riderId, payload) {
+  const aid = parseInt(String(riderId), 10);
+  if (!Number.isFinite(aid)) throw new Error('Invalid rider id');
+  const title = (payload?.title || 'Notification').toString().trim() || 'Notification';
+  const message = payload?.message != null ? String(payload.message) : '';
+  const type = (payload?.type || 'info').toString().trim() || 'info';
+  const [r] = await pool.query(
+    `INSERT INTO mt_dashboard_rider_notification (admin_id, title, message, type) VALUES (?, ?, ?, ?)`,
+    [aid, title, message, type]
+  );
+  const id = r.insertId;
   const row = {
-    id: newId(),
-    riderId: rid,
-    title: (payload?.title || 'Notification').toString().trim() || 'Notification',
-    message: payload?.message != null ? String(payload.message) : '',
-    type: (payload?.type || 'info').toString().trim() || 'info',
+    id: String(id),
+    riderId: String(aid),
+    title,
+    message,
+    type,
     viewed: false,
     createdAt: new Date(),
   };
-  notifications.push(row);
   return row;
 }
 
-function _clearAll() {
-  notifications = [];
+/**
+ * @param {import('mysql2/promise').Pool} pool
+ */
+async function _clearAll(pool) {
+  await pool.query('DELETE FROM mt_dashboard_rider_notification');
+  await pool.query('DELETE FROM mt_dashboard_notification_dedupe');
 }
 
 module.exports = {

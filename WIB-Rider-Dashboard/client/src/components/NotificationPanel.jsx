@@ -38,6 +38,8 @@ function typeMeta(type) {
     case 'task_assigned':
     case 'assign':
       return { label: 'Assign', mod: 'rider-notif-card--assign' };
+    case 'ready_pickup':
+      return { label: 'Ready for pickup', mod: 'rider-notif-card--rfp' };
     default:
       return { label: 'Alert', mod: 'rider-notif-card--default' };
   }

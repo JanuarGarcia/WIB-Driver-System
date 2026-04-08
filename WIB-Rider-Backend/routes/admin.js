@@ -1685,6 +1685,16 @@ function normalizedBlobImpliesTaskAccepted(blob) {
   return false;
 }
 
+/** Merchant / order timeline: Ready For Pickup (matches task list RFP badge logic). */
+function normalizedBlobImpliesReadyForPickup(blob) {
+  if (!blob) return false;
+  if (blob.includes('notready') && blob.includes('pickup')) return false;
+  if (blob === 'readyforpickup' || blob === 'readypickup') return true;
+  if (blob.includes('readyforpickup') || blob.includes('readypickup')) return true;
+  if (blob.includes('ready') && blob.includes('pickup')) return true;
+  return false;
+}
+
 /** Timeline rows often use free text (e.g. "reached the destination") while UI maps them to in progress. */
 function normalizedBlobImpliesInProgress(blob) {
   if (!blob) return false;
@@ -1724,6 +1734,9 @@ function classifyTimelineHistoryForDashboardNotify(row) {
     normalizeTimelineNotifyKey(row.notes),
   ].filter(Boolean);
   if (keys.some((k) => k === 'successful' || k === 'completed' || k === 'delivered')) return 'successful';
+  if (keys.some((k) => k === 'readyforpickup' || k === 'readypickup' || normalizedBlobImpliesReadyForPickup(k))) {
+    return 'ready_for_pickup';
+  }
   if (keys.some((k) => k === 'inprogress' || normalizedBlobImpliesInProgress(k))) return 'inprogress';
   if (keys.some((k) => k === 'started')) return 'started';
   if (historyRowIsRiderAcceptanceForNotify(row)) return 'accepted';
@@ -1735,19 +1748,20 @@ function timelineNotifyPayloadFromCategory(taskId, taskDescription, category) {
   const label = (taskDescription && String(taskDescription).trim()) || `Task #${taskId}`;
   if (category === 'accepted') return { title: 'Task accepted', message: label, type: 'task_accepted' };
   if (category === 'successful') return { title: 'Successful delivery', message: label, type: 'task_done' };
+  if (category === 'ready_for_pickup') return { title: 'Ready for pickup', message: label, type: 'ready_pickup' };
   if (category === 'started') return { title: 'Rider started', message: label, type: 'new_task' };
   if (category === 'inprogress') return { title: 'Task in progress', message: label, type: 'new_task' };
   return null;
 }
 
-function fanOutTimelineMilestonesToRiderNotifications(pool, taskId, taskDescription, newHistoryRows, photoRows) {
+async function fanOutTimelineMilestonesToRiderNotifications(pool, taskId, taskDescription, newHistoryRows, photoRows) {
   for (const row of newHistoryRows || []) {
     const hid = row && row.id != null ? Number(row.id) : NaN;
     if (!Number.isFinite(hid)) continue;
     const cat = classifyTimelineHistoryForDashboardNotify(row);
     if (!cat) continue;
     const dedupeKey = `mt-h-${hid}`;
-    if (!riderNotificationService.tryConsumeTimelineNotifyKey(dedupeKey)) continue;
+    if (!(await riderNotificationService.tryConsumeTimelineNotifyKey(pool, dedupeKey))) continue;
     const payload = timelineNotifyPayloadFromCategory(taskId, taskDescription, cat);
     if (payload) notifyAllDashboardAdminsFireAndForget(pool, payload);
   }
@@ -1756,7 +1770,7 @@ function fanOutTimelineMilestonesToRiderNotifications(pool, taskId, taskDescript
     const pid = ph && ph.id != null ? Number(ph.id) : NaN;
     if (!Number.isFinite(pid)) continue;
     const dedupeKey = `mt-p-${pid}`;
-    if (!riderNotificationService.tryConsumeTimelineNotifyKey(dedupeKey)) continue;
+    if (!(await riderNotificationService.tryConsumeTimelineNotifyKey(pool, dedupeKey))) continue;
     notifyAllDashboardAdminsFireAndForget(pool, {
       title: 'Proof of delivery',
       message: `${label} · Photo uploaded`,
@@ -1877,7 +1891,7 @@ router.get('/tasks/:id/timeline-updates', async (req, res) => {
       if (e.code !== 'ER_NO_SUCH_TABLE' && e.code !== 'ER_BAD_FIELD_ERROR') throw e;
     }
 
-    fanOutTimelineMilestonesToRiderNotifications(pool, id, taskDescription, newHistory, photo_events);
+    await fanOutTimelineMilestonesToRiderNotifications(pool, id, taskDescription, newHistory, photo_events);
 
     return res.json({
       cursor_history: nextH,

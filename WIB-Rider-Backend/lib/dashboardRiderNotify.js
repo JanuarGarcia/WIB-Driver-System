@@ -1,5 +1,5 @@
 /**
- * Fan-out dashboard (dispatcher) notifications — in-memory store (see riderNotification.service).
+ * Fan-out dashboard (dispatcher) notifications — persisted (see riderNotification.service + mt_dashboard_rider_notification).
  * riderId === mt_admin_user.admin_id
  */
 
@@ -79,11 +79,22 @@ async function notifyAllDashboardAdmins(pool, payload) {
   const title = (payload?.title || 'Notification').toString().trim() || 'Notification';
   const message = payload?.message != null ? String(payload.message) : '';
   const type = (payload?.type || 'info').toString().trim() || 'info';
-  for (const rid of ids) {
-    try {
-      riderNotificationService.createForRider(rid, { title, message, type });
-    } catch {
-      /* ignore per-admin */
+  if (ids.length === 0) return;
+  const numericIds = ids.map((rid) => parseInt(String(rid), 10)).filter((n) => Number.isFinite(n) && n > 0);
+  if (numericIds.length === 0) return;
+  try {
+    const values = numericIds.map((adminId) => [adminId, title, message, type]);
+    await pool.query(
+      'INSERT INTO mt_dashboard_rider_notification (admin_id, title, message, type) VALUES ?',
+      [values]
+    );
+  } catch {
+    for (const rid of numericIds) {
+      try {
+        await riderNotificationService.createForRider(pool, String(rid), { title, message, type });
+      } catch {
+        /* ignore per-admin */
+      }
     }
   }
 }
@@ -109,6 +120,8 @@ function normalizeFoodTaskStatusKey(raw) {
   }
   if (c === 'delivered' || c === 'completed' || c === 'complete') return 'successful';
   if (c === 'canceled' || c === 'cancelled') return 'cancelled';
+  if (c === 'readyforpickup' || c === 'readypickup') return 'ready_for_pickup';
+  if (c.includes('ready') && c.includes('pickup') && !c.includes('notready')) return 'ready_for_pickup';
   /* In-progress phrases (driver / PHP) before generic "accepted" fuzzy match. */
   if (!c.includes('notinprogress') && c.includes('inprogress')) return 'inprogress';
   if (c.includes('reached') && c.includes('destination')) return 'inprogress';
@@ -147,6 +160,8 @@ function foodTaskNotifyFromStatus(taskId, orderId, taskDescription, rawStatus, a
     out = { title: 'Task delivered', message: `${label}${ordBit}`, type: 'task_done' };
   } else if (norm === 'assigned' || norm === 'new') {
     out = { title: 'Task assigned', message: `${label}${ordBit}`, type: 'task_assigned' };
+  } else if (norm === 'ready_for_pickup' || norm === 'readyforpickup' || norm === 'readypickup') {
+    out = { title: 'Ready for pickup', message: `${label}${ordBit}`, type: 'ready_pickup' };
   } else if (norm === 'started' || norm === 'inprogress' || norm === 'in_progress') {
     out = { title: 'Task in progress', message: `${label}${ordBit}`, type: 'new_task' };
   } else if (

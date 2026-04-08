@@ -1,8 +1,9 @@
 require('dotenv').config();
 const app = require('./app');
 const { initFirebase } = require('./services/fcm');
-const { errandWibPool } = require('./config/db');
+const { pool, errandWibPool } = require('./config/db');
 const { ensureErrandProofTable } = require('./lib/errandProof');
+const { ensureDashboardRiderNotificationTables } = require('./lib/ensureDashboardRiderNotifications');
 
 const PORT = process.env.PORT || 3000;
 
@@ -13,6 +14,12 @@ async function start() {
     await ensureErrandProofTable(errandWibPool);
   } catch (e) {
     console.warn('[errand] could not ensure st_driver_errand_photo:', e.message || e);
+  }
+
+  try {
+    await ensureDashboardRiderNotificationTables(pool);
+  } catch (e) {
+    console.warn('[dashboard] could not ensure mt_dashboard_rider_notification:', e.message || e);
   }
 
   app.listen(PORT, () => {

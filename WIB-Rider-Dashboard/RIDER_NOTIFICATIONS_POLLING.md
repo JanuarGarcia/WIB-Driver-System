@@ -6,7 +6,8 @@ Simple in-app alerts for the **WIB Rider Dashboard**: poll every **10s** (or **4
 
 Files:
 
-- `services/riderNotification.service.js` — in-memory store (no DB table; use a **single** API Node process, or notifications may look empty under PM2 cluster / multiple instances)
+- `services/riderNotification.service.js` — MySQL-backed store (`mt_dashboard_rider_notification`; works with PM2 cluster / multiple workers)
+- `lib/ensureDashboardRiderNotifications.js` — `CREATE TABLE IF NOT EXISTS` for that table + `mt_dashboard_notification_dedupe` (called from `server.js` on boot)
 - `lib/dashboardRiderNotify.js` — fan-out to every **active** `mt_admin_user` (dashboard dispatchers)
 - `controllers/riderNotifications.controller.js`
 - `routes/riderNotifications.routes.js`
@@ -60,6 +61,6 @@ curl -s http://localhost:3000/admin/api/rider/notifications -H "x-dashboard-toke
 2. `cd WIB-Rider-Dashboard/client && npm run dev`
 3. Open the dashboard, log in; use the bell icon. In dev, trigger `dev/create-notification` as above and wait for the next poll (≤10s).
 
-## Upgrading later
+## Notes
 
-Replace `riderNotification.service.js` with DB queries keyed by `admin_id` (or real rider id), keep the same route shapes and JSON so the React hook stays unchanged.
+Notifications are persisted on **`DB_NAME`** (same DB as `mt_admin_user`). Restart the backend after deploy so tables are ensured and all workers run the new code.
