@@ -135,3 +135,32 @@ export async function fetchErrandNotifySince(afterHistoryId) {
     processed: Number(data.processed) || 0,
   };
 }
+
+/**
+ * Global mt_driver_task_photo cursor (rider proof uploads).
+ * @param {number} afterPhotoRowId
+ * @returns {Promise<{ cursor: number, processed: number }>}
+ */
+export async function fetchTaskPhotoNotifySince(afterPhotoRowId) {
+  const id = Number(afterPhotoRowId);
+  const q = Number.isFinite(id) && id >= 0 ? id : 0;
+  const r = await fetch(`${API_BASE}/order-history/task-photo-notify-since?after_photo_id=${encodeURIComponent(String(q))}`, {
+    headers: authHeaders(),
+    credentials: 'same-origin',
+  });
+  const text = await r.text();
+  if (looksLikeHtmlResponse(text)) {
+    throw new Error('Task photo notify-since API returned HTML instead of JSON.');
+  }
+  let data = {};
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch {
+    throw new Error('Task photo notify-since API returned invalid JSON.');
+  }
+  if (!r.ok) throw new Error(typeof data.error === 'string' ? data.error : r.statusText || 'Request failed');
+  return {
+    cursor: Number(data.cursor) || 0,
+    processed: Number(data.processed) || 0,
+  };
+}

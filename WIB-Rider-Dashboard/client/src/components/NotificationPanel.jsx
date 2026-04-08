@@ -35,6 +35,8 @@ function typeMeta(type) {
       return { label: 'Accepted', mod: 'rider-notif-card--accepted' };
     case 'task_done':
       return { label: 'Completed', mod: 'rider-notif-card--done' };
+    case 'task_photo':
+      return { label: 'Photo', mod: 'rider-notif-card--done' };
     case 'task_assigned':
     case 'assign':
       return { label: 'Assign', mod: 'rider-notif-card--assign' };

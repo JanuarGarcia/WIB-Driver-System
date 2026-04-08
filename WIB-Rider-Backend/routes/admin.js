@@ -1813,11 +1813,13 @@ function driverActorFromTaskDriverJoinRow(row) {
   if (!row || typeof row !== 'object') return '';
   const fn = row.first_name != null ? String(row.first_name).trim() : '';
   const ln = row.last_name != null ? String(row.last_name).trim() : '';
-  const name = [fn, ln].filter(Boolean).join(' ').trim();
-  if (name) return name;
-  const u = row.username != null ? String(row.username).trim() : '';
-  if (u) return u;
-  return '';
+  const full = [fn, ln].filter(Boolean).join(' ').trim();
+  const did = row.driver_id != null ? Number(row.driver_id) : NaN;
+  return formatActorFromDriver({
+    id: Number.isFinite(did) && did > 0 ? did : undefined,
+    full_name: full || null,
+    username: row.username != null ? String(row.username).trim() : null,
+  });
 }
 
 /**
@@ -1866,7 +1868,7 @@ async function fanOutTimelineMilestonesToRiderNotifications(pool, taskId, taskDe
   if ((photoRows || []).length > 0 && Number.isFinite(Number(taskId)) && Number(taskId) > 0) {
     try {
       const [[dr]] = await pool.query(
-        `SELECT d.first_name, d.last_name, d.username
+        `SELECT t.driver_id, d.first_name, d.last_name, d.username
          FROM mt_driver_task t
          LEFT JOIN mt_driver d ON d.driver_id = t.driver_id
          WHERE t.task_id = ? LIMIT 1`,
@@ -2478,6 +2480,56 @@ router.get('/order-history/errand-notify-since', async (req, res) => {
       return res.json({ cursor: afterId, processed: 0 });
     }
     console.error('[order-history/errand-notify-since]', e.message || e, e.code);
+    return res.status(200).json({ cursor: afterId, processed: 0 });
+  }
+});
+
+/**
+ * Global cursor for mt_driver_task_photo (rider proof / delivery photos). Same pattern as notify-since so
+ * admins get bell + sound without opening the task timeline.
+ * ?after_photo_id=0 → { cursor: MAX(id) } only. ?after_photo_id=N → rows id>N, fan-out, new cursor.
+ */
+router.get('/order-history/task-photo-notify-since', async (req, res) => {
+  const afterRaw = req.query.after_photo_id != null ? parseInt(String(req.query.after_photo_id), 10) : 0;
+  const afterId = Number.isFinite(afterRaw) && afterRaw >= 0 ? afterRaw : 0;
+
+  try {
+    if (afterId === 0) {
+      const [[row]] = await pool.query('SELECT COALESCE(MAX(id), 0) AS m FROM mt_driver_task_photo');
+      const cursor = row && row.m != null ? Number(row.m) || 0 : 0;
+      return res.json({ cursor, processed: 0 });
+    }
+
+    const listSql = `
+      SELECT p.id, p.task_id, p.photo_name, p.date_created,
+        t.task_description,
+        t.driver_id,
+        d.first_name, d.last_name, d.username
+      FROM mt_driver_task_photo p
+      INNER JOIN mt_driver_task t ON t.task_id = p.task_id
+      LEFT JOIN mt_driver d ON d.driver_id = t.driver_id
+      WHERE p.id > ?
+      ORDER BY p.id ASC
+      LIMIT 40`;
+
+    const [rows] = await pool.query(listSql, [afterId]);
+    const list = rows || [];
+    let nextCursor = afterId;
+    for (const r of list) {
+      const n = Number(r.id);
+      if (Number.isFinite(n) && n > nextCursor) nextCursor = n;
+    }
+    if (list.length > 0) {
+      fanOutGlobalTaskPhotoNotifySinceRows(pool, list).catch((err) => {
+        console.warn('[order-history/task-photo-notify-since]', err && err.message ? err.message : err);
+      });
+    }
+    return res.json({ cursor: nextCursor, processed: list.length });
+  } catch (e) {
+    if (e.code === 'ER_NO_SUCH_TABLE' || e.code === 'ER_BAD_FIELD_ERROR') {
+      return res.json({ cursor: afterId, processed: 0 });
+    }
+    console.error('[order-history/task-photo-notify-since]', e.message || e, e.code);
     return res.status(200).json({ cursor: afterId, processed: 0 });
   }
 });

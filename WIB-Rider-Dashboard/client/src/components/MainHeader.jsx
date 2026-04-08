@@ -3,13 +3,18 @@ import { Link, useLocation } from 'react-router-dom';
 import { isAuthenticated } from '../auth';
 import { useTeamFilter } from '../context/TeamFilterContext';
 import { useNotifications, RIDER_NOTIFICATIONS_POLL_EVENT } from '../hooks/useNotifications';
-import { fetchOrderHistoryNotifySince, fetchErrandNotifySince } from '../services/notificationApi';
+import {
+  fetchOrderHistoryNotifySince,
+  fetchErrandNotifySince,
+  fetchTaskPhotoNotifySince,
+} from '../services/notificationApi';
 import NotificationBell from './NotificationBell';
 import NotificationPanel from './NotificationPanel';
 import NotificationMuteToggle from './NotificationMuteToggle';
 
 const STORAGE_MT_NOTIFY_CURSOR = 'wib_notify_mt_history_cursor';
 const STORAGE_ERRAND_NOTIFY_CURSOR = 'wib_notify_errand_history_cursor';
+const STORAGE_TASK_PHOTO_NOTIFY_CURSOR = 'wib_notify_task_photo_cursor';
 
 const PATH_TITLES = {
   '/': 'Dashboard',
@@ -113,6 +118,27 @@ export default function MainHeader({ onMenuClick, onOpenNewTask }) {
           } else if (soNext > soAfter) {
             sessionStorage.setItem(STORAGE_ERRAND_NOTIFY_CURSOR, String(soNext));
             if (soProcessed > 0) {
+              window.dispatchEvent(new CustomEvent(RIDER_NOTIFICATIONS_POLL_EVENT, { detail: { delayMs: 250 } }));
+            }
+          }
+        }
+
+        let phAfter = 0;
+        try {
+          phAfter = parseInt(sessionStorage.getItem(STORAGE_TASK_PHOTO_NOTIFY_CURSOR) || '0', 10) || 0;
+        } catch (_) {
+          phAfter = 0;
+        }
+        const phData = await fetchTaskPhotoNotifySince(phAfter);
+        if (cancelled) return;
+        const phNext = Number(phData.cursor);
+        const phProcessed = Number(phData.processed) || 0;
+        if (Number.isFinite(phNext)) {
+          if (phAfter === 0) {
+            sessionStorage.setItem(STORAGE_TASK_PHOTO_NOTIFY_CURSOR, String(phNext));
+          } else if (phNext > phAfter) {
+            sessionStorage.setItem(STORAGE_TASK_PHOTO_NOTIFY_CURSOR, String(phNext));
+            if (phProcessed > 0) {
               window.dispatchEvent(new CustomEvent(RIDER_NOTIFICATIONS_POLL_EVENT, { detail: { delayMs: 250 } }));
             }
           }
