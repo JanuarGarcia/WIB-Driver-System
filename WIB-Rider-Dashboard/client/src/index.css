@@ -1640,6 +1640,49 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
 [data-theme="dark"] .rider-notif-card--unread {
   background: var(--color-primary-tint-strong);
 }
+.rider-notif-card--clickable .rider-notif-card__hit:hover {
+  background: var(--bg-hover, rgba(0, 0, 0, 0.04));
+}
+[data-theme="dark"] .rider-notif-card--clickable .rider-notif-card__hit:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+.rider-notif-card__hit {
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  color: inherit;
+  border-radius: 8px;
+}
+.rider-notif-card__hit--static {
+  cursor: default;
+}
+.rider-notif-card__actor {
+  margin: 0.35rem 0 0;
+  font-size: 0.8125rem;
+  line-height: 1.4;
+  color: var(--text-dark);
+  font-weight: 500;
+}
+.rider-notif-card__actor-label {
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-right: 0.25rem;
+}
+.rider-notif-card__open-hint {
+  display: inline-block;
+  margin-top: 0.45rem;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-primary);
+}
 .rider-notif-card__top {
   display: flex;
   align-items: center;
@@ -1770,6 +1813,12 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
   font-size: 0.9rem;
   line-height: 1.35;
   color: var(--text-dark);
+}
+.rider-notif-toast-line-by {
+  font-weight: 600;
+  font-size: 0.8125rem;
+  line-height: 1.35;
+  color: var(--color-primary);
 }
 .rider-notif-toast-line2 {
   font-weight: 400;

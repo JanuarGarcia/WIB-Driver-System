@@ -65,6 +65,21 @@ function MapMerchantFilterServerSync() {
   return null;
 }
 
+/** Notification panel → open task modal on Dashboard (navigate home if on another route). */
+function OpenTaskFromNotificationBridge() {
+  const navigate = useNavigate();
+  useEffect(() => {
+    const onOpen = (e) => {
+      const raw = e?.detail?.taskId;
+      if (raw == null || !Number.isFinite(Number(raw)) || Number(raw) === 0) return;
+      navigate('/', { state: { wibOpenTaskId: Number(raw) } });
+    };
+    window.addEventListener('wib-dashboard-open-task', onOpen);
+    return () => window.removeEventListener('wib-dashboard-open-task', onOpen);
+  }, [navigate]);
+  return null;
+}
+
 /** After api.js clears the token on 401/HTML auth walls, return the user to login. */
 function SessionExpiredRedirect() {
   const navigate = useNavigate();
@@ -125,6 +140,7 @@ export default function App() {
       <div className="main-wrap">
         <TeamFilterProvider>
           <SessionExpiredRedirect />
+          <OpenTaskFromNotificationBridge />
           <MapMerchantFilterServerSync />
           <MainHeader onMenuClick={() => setSidebarOpen(true)} onOpenNewTask={() => setShowNewTaskModal(true)} />
           <main className="main">

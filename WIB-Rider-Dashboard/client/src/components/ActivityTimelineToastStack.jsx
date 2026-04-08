@@ -113,7 +113,6 @@ export default function ActivityTimelineToastStack({ dateStr, onOpenTaskTimeline
     let cancelled = false;
 
     const tick = async () => {
-      if (document.visibilityState !== 'visible') return;
       try {
         const params = new URLSearchParams();
         params.set('date', dateStr);
@@ -136,7 +135,7 @@ export default function ActivityTimelineToastStack({ dateStr, onOpenTaskTimeline
             const hid = ev && ev.id != null ? Number(ev.id) : NaN;
             if (!Number.isFinite(hid) || seenIdsRef.current.has(hid)) continue;
             seenIdsRef.current.add(hid);
-            pushToast(ev);
+            if (document.visibilityState === 'visible') pushToast(ev);
             newTaskActivity = true;
           }
         }
@@ -156,7 +155,6 @@ export default function ActivityTimelineToastStack({ dateStr, onOpenTaskTimeline
     };
 
     const tickErrand = async () => {
-      if (document.visibilityState !== 'visible') return;
       try {
         const params = new URLSearchParams();
         params.set('date', dateStr);
@@ -179,7 +177,7 @@ export default function ActivityTimelineToastStack({ dateStr, onOpenTaskTimeline
             const hid = ev && ev.id != null ? Number(ev.id) : NaN;
             if (!Number.isFinite(hid) || errandSeenIdsRef.current.has(hid)) continue;
             errandSeenIdsRef.current.add(hid);
-            pushToast(ev);
+            if (document.visibilityState === 'visible') pushToast(ev);
             newErrandActivity = true;
           }
         }

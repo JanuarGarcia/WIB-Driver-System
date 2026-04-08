@@ -41,6 +41,7 @@ const {
   errandNotifyFromCanonical,
   formatActorFromAdminUser,
   formatActorFromDriver,
+  attachActorToPayload,
 } = require('../lib/dashboardRiderNotify');
 const { insertMtOrderHistoryRow } = require('../lib/mtOrderHistoryInsert');
 
@@ -1745,14 +1746,108 @@ function classifyTimelineHistoryForDashboardNotify(row) {
   return null;
 }
 
-function timelineNotifyPayloadFromCategory(taskId, taskDescription, category) {
-  const label = (taskDescription && String(taskDescription).trim()) || `Task #${taskId}`;
-  if (category === 'accepted') return { title: 'Task accepted', message: label, type: 'task_accepted' };
-  if (category === 'successful') return { title: 'Successful delivery', message: label, type: 'task_done' };
-  if (category === 'ready_for_pickup') return { title: 'Ready for pickup', message: label, type: 'ready_pickup' };
-  if (category === 'started') return { title: 'Rider started', message: label, type: 'new_task' };
-  if (category === 'inprogress') return { title: 'Task in progress', message: label, type: 'new_task' };
-  return null;
+/** Prefer timeline / feed `update_by_name`; else parse "Name accepted the task" from remarks. */
+function timelineNotifyActorFromHistoryRow(row) {
+  if (!row || typeof row !== 'object') return '';
+  const n = row.update_by_name != null ? String(row.update_by_name).trim() : '';
+  if (n) return n;
+  const tryParseAccept = (text) => {
+    const t = String(text || '').trim();
+    if (!t) return '';
+    const m = t.match(/^(.+?)\s+accepted the task\b/i);
+    if (m) return m[1].trim();
+    return '';
+  };
+  const fromRem = tryParseAccept(row.remarks);
+  if (fromRem) return fromRem;
+  const fromDesc = tryParseAccept(row.description);
+  if (fromDesc) return fromDesc;
+  return '';
+}
+
+function timelineNotifyActorFromFeedEvent(ev) {
+  if (!ev || typeof ev !== 'object') return '';
+  const n = ev.update_by_name != null ? String(ev.update_by_name).trim() : '';
+  if (n) return n;
+  return timelineNotifyActorFromHistoryRow(ev);
+}
+
+function ensureFoodTaskIdInMessage(message, taskId) {
+  const tid = Number(taskId);
+  if (!Number.isFinite(tid) || tid <= 0) return String(message || '').trim();
+  const s = String(message || '').trim();
+  if (new RegExp(`task\\s*#\\s*${tid}\\b`, 'i').test(s)) return s;
+  return s ? `${s} · Task #${tid}` : `Task #${tid}`;
+}
+
+/**
+ * @param {number|null|undefined} taskId — food task id; omit when errandOpts set
+ * @param {string|null|undefined} taskDescription — label line (merchant / description)
+ * @param {string} category
+ * @param {string} [actorLabel] — rider or updater (appended via attachActorToPayload)
+ * @param {{ errandOrderId?: number }} [errandOpts] — Mangan: include order id in message for dashboard deep-link
+ */
+function timelineNotifyPayloadFromCategory(taskId, taskDescription, category, actorLabel, errandOpts) {
+  let messageBase = '';
+  if (errandOpts != null && errandOpts.errandOrderId != null) {
+    const oid = Number(errandOpts.errandOrderId);
+    const label = (taskDescription && String(taskDescription).trim()) || `Mangan order #${oid}`;
+    const hasRef = new RegExp(`#\\s*${oid}\\b`).test(label) || /mangan\s+order/i.test(label);
+    messageBase = hasRef ? label : `${label} · Mangan order #${oid}`;
+  } else {
+    const tid = Number(taskId);
+    const base = (taskDescription && String(taskDescription).trim()) || `Task #${tid}`;
+    messageBase = ensureFoodTaskIdInMessage(base, tid);
+  }
+
+  let payload = null;
+  if (category === 'accepted') payload = { title: 'Task accepted', message: messageBase, type: 'task_accepted' };
+  else if (category === 'successful') payload = { title: 'Successful delivery', message: messageBase, type: 'task_done' };
+  else if (category === 'ready_for_pickup') payload = { title: 'Ready for pickup', message: messageBase, type: 'ready_pickup' };
+  else if (category === 'started') payload = { title: 'Rider started', message: messageBase, type: 'new_task' };
+  else if (category === 'inprogress') payload = { title: 'Task in progress', message: messageBase, type: 'new_task' };
+  return attachActorToPayload(payload, actorLabel);
+}
+
+function driverActorFromTaskDriverJoinRow(row) {
+  if (!row || typeof row !== 'object') return '';
+  const fn = row.first_name != null ? String(row.first_name).trim() : '';
+  const ln = row.last_name != null ? String(row.last_name).trim() : '';
+  const name = [fn, ln].filter(Boolean).join(' ').trim();
+  if (name) return name;
+  const u = row.username != null ? String(row.username).trim() : '';
+  if (u) return u;
+  return '';
+}
+
+/**
+ * One notification per mt_driver_task_photo row; dedupe `mt-p-<id>` (timeline modal + global poller share keys).
+ */
+async function notifyAdminsForSingleTaskPhoto(pool, photoId, taskId, taskDescription, actorLabel) {
+  const pid = photoId != null ? Number(photoId) : NaN;
+  const tid = taskId != null ? Number(taskId) : NaN;
+  if (!Number.isFinite(pid) || !Number.isFinite(tid) || tid <= 0) return;
+  const dedupeKey = `mt-p-${pid}`;
+  if (!(await riderNotificationService.tryConsumeTimelineNotifyKey(pool, dedupeKey))) return;
+  const label = (taskDescription && String(taskDescription).trim()) || `Task #${tid}`;
+  notifyAllDashboardAdminsFireAndForget(
+    pool,
+    attachActorToPayload(
+      {
+        title: 'Photo added',
+        message: ensureFoodTaskIdInMessage(`${label} · Rider added a photo`, tid),
+        type: 'task_photo',
+      },
+      actorLabel
+    )
+  );
+}
+
+async function fanOutGlobalTaskPhotoNotifySinceRows(pool, rows) {
+  for (const r of rows || []) {
+    const actor = driverActorFromTaskDriverJoinRow(r);
+    await notifyAdminsForSingleTaskPhoto(pool, r.id, r.task_id, r.task_description, actor);
+  }
 }
 
 async function fanOutTimelineMilestonesToRiderNotifications(pool, taskId, taskDescription, newHistoryRows, photoRows) {
@@ -1763,20 +1858,27 @@ async function fanOutTimelineMilestonesToRiderNotifications(pool, taskId, taskDe
     if (!cat) continue;
     const dedupeKey = `mt-h-${hid}`;
     if (!(await riderNotificationService.tryConsumeTimelineNotifyKey(pool, dedupeKey))) continue;
-    const payload = timelineNotifyPayloadFromCategory(taskId, taskDescription, cat);
+    const actor = timelineNotifyActorFromHistoryRow(row);
+    const payload = timelineNotifyPayloadFromCategory(taskId, taskDescription, cat, actor);
     if (payload) notifyAllDashboardAdminsFireAndForget(pool, payload);
   }
-  const label = (taskDescription && String(taskDescription).trim()) || `Task #${taskId}`;
+  let photoActor = '';
+  if ((photoRows || []).length > 0 && Number.isFinite(Number(taskId)) && Number(taskId) > 0) {
+    try {
+      const [[dr]] = await pool.query(
+        `SELECT d.first_name, d.last_name, d.username
+         FROM mt_driver_task t
+         LEFT JOIN mt_driver d ON d.driver_id = t.driver_id
+         WHERE t.task_id = ? LIMIT 1`,
+        [taskId]
+      );
+      photoActor = driverActorFromTaskDriverJoinRow(dr);
+    } catch (_) {
+      /* optional */
+    }
+  }
   for (const ph of photoRows || []) {
-    const pid = ph && ph.id != null ? Number(ph.id) : NaN;
-    if (!Number.isFinite(pid)) continue;
-    const dedupeKey = `mt-p-${pid}`;
-    if (!(await riderNotificationService.tryConsumeTimelineNotifyKey(pool, dedupeKey))) continue;
-    notifyAllDashboardAdminsFireAndForget(pool, {
-      title: 'Proof of delivery',
-      message: `${label} · Photo uploaded`,
-      type: 'task_done',
-    });
+    await notifyAdminsForSingleTaskPhoto(pool, ph && ph.id, taskId, taskDescription, photoActor);
   }
 }
 
@@ -1826,7 +1928,8 @@ async function fanOutOrderHistoryFeedEventsToRiderNotifications(pool, events) {
     const dedupeKey = `mt-h-${hid}`;
     if (!(await riderNotificationService.tryConsumeTimelineNotifyKey(pool, dedupeKey))) continue;
     const td = descByTask.get(tid);
-    const payload = timelineNotifyPayloadFromCategory(tid, td, cat);
+    const actor = timelineNotifyActorFromFeedEvent(ev);
+    const payload = timelineNotifyPayloadFromCategory(tid, td, cat, actor);
     if (payload) notifyAllDashboardAdminsFireAndForget(pool, payload);
   }
 }
@@ -1870,7 +1973,8 @@ async function fanOutErrandHistoryFeedEventsToRiderNotifications(pool, errandPoo
     if (!(await riderNotificationService.tryConsumeTimelineNotifyKey(pool, dedupeKey))) continue;
     const ref = (ev.order_reference || '').trim();
     const label = ref ? `Mangan ${ref}` : `Mangan order #${oid}`;
-    const payload = timelineNotifyPayloadFromCategory(oid, label, cat);
+    const actor = timelineNotifyActorFromFeedEvent(ev);
+    const payload = timelineNotifyPayloadFromCategory(null, label, cat, actor, { errandOrderId: oid });
     if (payload) notifyAllDashboardAdminsFireAndForget(pool, payload);
   }
 }
@@ -2258,6 +2362,123 @@ router.get('/order-history/errand-feed', async (req, res) => {
     }
     console.error('[order-history/errand-feed]', e.message || e, e.code);
     return res.status(200).json({ cursor: afterId, events: [] });
+  }
+});
+
+/**
+ * Global cursor for mt_order_history — no delivery_date filter. Mounted from MainHeader on every page so
+ * milestone notifications fan-out in near–real time without opening the task timeline or staying on /.
+ * ?after_history_id=0 → { cursor: MAX(id) } only (client stores cursor). ?after_history_id=N → rows id>N, fan-out, advance cursor.
+ */
+router.get('/order-history/notify-since', async (req, res) => {
+  const afterRaw = req.query.after_history_id != null ? parseInt(String(req.query.after_history_id), 10) : 0;
+  const afterId = Number.isFinite(afterRaw) && afterRaw >= 0 ? afterRaw : 0;
+
+  try {
+    if (afterId === 0) {
+      const [[row]] = await pool.query('SELECT COALESCE(MAX(id), 0) AS m FROM mt_order_history');
+      const cursor = row && row.m != null ? Number(row.m) || 0 : 0;
+      return res.json({ cursor, processed: 0 });
+    }
+
+    const listSql = `
+      SELECT h.id, h.order_id, h.status, h.remarks, h.date_created, h.update_by_type,
+        COALESCE(
+          NULLIF(TRIM(h.update_by_name), ''),
+          NULLIF(TRIM(CONCAT(COALESCE(d.first_name, ''), ' ', COALESCE(d.last_name, ''))), ''),
+          NULLIF(TRIM(d.username), '')
+        ) AS update_by_name,
+        h.reason, h.notes,
+        (CASE
+          WHEN h.task_id IS NOT NULL AND TRIM(CAST(h.task_id AS CHAR)) REGEXP '^[0-9]+$' AND CAST(h.task_id AS UNSIGNED) > 0
+          THEN CAST(h.task_id AS UNSIGNED)
+          ELSE (
+            SELECT MIN(t2.task_id) FROM mt_driver_task t2
+            WHERE t2.order_id = h.order_id AND h.order_id IS NOT NULL AND CAST(h.order_id AS UNSIGNED) > 0
+            LIMIT 1
+          )
+        END) AS resolved_task_id
+      FROM mt_order_history h
+      LEFT JOIN mt_driver d ON LOWER(TRIM(h.update_by_type)) = 'driver'
+        AND h.update_by_id IS NOT NULL AND CAST(h.update_by_id AS UNSIGNED) = d.driver_id
+      WHERE h.id > ?
+      ORDER BY h.id ASC
+      LIMIT 40`;
+
+    const [events] = await pool.query(listSql, [afterId]);
+    const list = (events || []).map((row) => ({
+      id: row.id,
+      order_id: row.order_id,
+      status: row.status,
+      remarks: row.remarks,
+      date_created: row.date_created,
+      update_by_type: row.update_by_type,
+      update_by_name: row.update_by_name,
+      reason: row.reason,
+      notes: row.notes,
+      resolved_task_id: row.resolved_task_id,
+    }));
+
+    let nextCursor = afterId;
+    for (const ev of list) {
+      const n = Number(ev.id);
+      if (Number.isFinite(n) && n > nextCursor) nextCursor = n;
+    }
+    if (list.length > 0) {
+      fanOutOrderHistoryFeedEventsToRiderNotifications(pool, list).catch((err) => {
+        console.warn('[order-history/notify-since]', err && err.message ? err.message : err);
+      });
+    }
+    return res.json({ cursor: nextCursor, processed: list.length });
+  } catch (e) {
+    if (e.code === 'ER_NO_SUCH_TABLE' || e.code === 'ER_BAD_FIELD_ERROR') {
+      return res.json({ cursor: afterId, processed: 0 });
+    }
+    console.error('[order-history/notify-since]', e.message || e, e.code);
+    return res.status(200).json({ cursor: afterId, processed: 0 });
+  }
+});
+
+/** Global st_ordernew_history cursor (Mangan) — same pattern as notify-since. */
+router.get('/order-history/errand-notify-since', async (req, res) => {
+  const afterRaw = req.query.after_history_id != null ? parseInt(String(req.query.after_history_id), 10) : 0;
+  const afterId = Number.isFinite(afterRaw) && afterRaw >= 0 ? afterRaw : 0;
+
+  if (!errandWibPool) {
+    return res.json({ cursor: 0, processed: 0 });
+  }
+
+  try {
+    if (afterId === 0) {
+      const [[row]] = await errandWibPool.query('SELECT COALESCE(MAX(id), 0) AS m FROM st_ordernew_history');
+      const cursor = row && row.m != null ? Number(row.m) || 0 : 0;
+      return res.json({ cursor, processed: 0 });
+    }
+
+    const [rawRows] = await errandWibPool.query(
+      'SELECT h.* FROM st_ordernew_history h WHERE h.id > ? ORDER BY h.id ASC LIMIT 40',
+      [afterId]
+    );
+    const list = (rawRows || []).map((h) =>
+      mapStOrdernewHistoryRowToFeedEvent(h, h.order_reference ?? h.order_ref ?? null)
+    );
+    let nextCursor = afterId;
+    for (const ev of list) {
+      const n = Number(ev.id);
+      if (Number.isFinite(n) && n > nextCursor) nextCursor = n;
+    }
+    if (list.length > 0) {
+      fanOutErrandHistoryFeedEventsToRiderNotifications(pool, errandWibPool, list).catch((err) => {
+        console.warn('[order-history/errand-notify-since]', err && err.message ? err.message : err);
+      });
+    }
+    return res.json({ cursor: nextCursor, processed: list.length });
+  } catch (e) {
+    if (e.code === 'ER_NO_SUCH_TABLE' || e.code === 'ER_BAD_FIELD_ERROR') {
+      return res.json({ cursor: afterId, processed: 0 });
+    }
+    console.error('[order-history/errand-notify-since]', e.message || e, e.code);
+    return res.status(200).json({ cursor: afterId, processed: 0 });
   }
 });
 

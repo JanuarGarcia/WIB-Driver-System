@@ -74,6 +74,13 @@ export default function Dashboard() {
     setTaskDetailsId(id);
   }, []);
 
+  useEffect(() => {
+    const id = location.state && location.state.wibOpenTaskId;
+    if (id == null || !Number.isFinite(Number(id)) || Number(id) === 0) return;
+    openTaskDetails(id, { initialTab: 'details' });
+    navigate(location.pathname + (location.search || ''), { replace: true, state: {} });
+  }, [location.state, location.pathname, location.search, navigate, openTaskDetails]);
+
   const handleOpenTaskDetailsFromPanel = useCallback(
     (id) => openTaskDetails(id, { initialTab: 'details' }),
     [openTaskDetails]

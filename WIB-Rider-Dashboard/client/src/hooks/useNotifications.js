@@ -2,6 +2,10 @@ import { useState, useEffect, useRef, useCallback, useMemo, createElement } from
 import { toast } from 'react-toastify';
 import { isAuthenticated } from '../auth';
 import { fetchRiderNotifications, markRiderNotificationsViewed } from '../services/notificationApi';
+import {
+  parseActorFromNotificationMessage,
+  stripActorSuffixForDisplay,
+} from '../utils/riderNotificationNavigate';
 
 /** `public/fb-alert.mp3` — Vite serves `public/` at `import.meta.env.BASE_URL`. */
 const alertSoundUrl = `${import.meta.env.BASE_URL}fb-alert.mp3`;
@@ -196,13 +200,14 @@ export function useNotifications() {
       for (const n of fresh) {
         const title = (n.title || 'Notification').toString();
         const message = (n.message || '').toString().trim();
+        const actor = message ? parseActorFromNotificationMessage(message) : '';
+        const messageMain = message ? stripActorSuffixForDisplay(message) : '';
         const body = createElement(
           'div',
           { className: 'rider-notif-toast-stacked' },
           createElement('div', { className: 'rider-notif-toast-line1' }, title),
-          message
-            ? createElement('div', { className: 'rider-notif-toast-line2' }, message)
-            : null
+          actor ? createElement('div', { className: 'rider-notif-toast-line-by' }, `By ${actor}`) : null,
+          messageMain ? createElement('div', { className: 'rider-notif-toast-line2' }, messageMain) : null
         );
         toast.info(body, {
           toastId: `rider-notif-${n.id}`,
@@ -317,18 +322,16 @@ export function useNotifications() {
   }, [pollTick]);
 
   const markAllRead = useCallback(async () => {
-    const unread = items.filter((i) => !i.localRead);
-    if (unread.length === 0) {
-      setItems((prev) => prev.map((p) => ({ ...p, localRead: true })));
-      return;
+    const ids = items.map((i) => String(i.id)).filter(Boolean);
+    if (ids.length) {
+      try {
+        await markRiderNotificationsViewed(ids);
+        ids.forEach((id) => processedIdsGlobal.add(id));
+      } catch {
+        /* still clear session list */
+      }
     }
-    const ids = unread.map((i) => String(i.id));
-    try {
-      await markRiderNotificationsViewed(ids);
-      setItems((prev) => prev.map((p) => (ids.includes(String(p.id)) ? { ...p, localRead: true } : p)));
-    } catch {
-      /* ignore */
-    }
+    setItems([]);
   }, [items]);
 
   return {

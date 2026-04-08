@@ -1,10 +1,15 @@
 import { useState, useEffect, useRef } from 'react';
 import { Link, useLocation } from 'react-router-dom';
+import { isAuthenticated } from '../auth';
 import { useTeamFilter } from '../context/TeamFilterContext';
-import { useNotifications } from '../hooks/useNotifications';
+import { useNotifications, RIDER_NOTIFICATIONS_POLL_EVENT } from '../hooks/useNotifications';
+import { fetchOrderHistoryNotifySince, fetchErrandNotifySince } from '../services/notificationApi';
 import NotificationBell from './NotificationBell';
 import NotificationPanel from './NotificationPanel';
 import NotificationMuteToggle from './NotificationMuteToggle';
+
+const STORAGE_MT_NOTIFY_CURSOR = 'wib_notify_mt_history_cursor';
+const STORAGE_ERRAND_NOTIFY_CURSOR = 'wib_notify_errand_history_cursor';
 
 const PATH_TITLES = {
   '/': 'Dashboard',
@@ -62,6 +67,69 @@ export default function MainHeader({ onMenuClick, onOpenNewTask }) {
     if (notificationsOpen) acknowledgePanelOpen();
   }, [notificationsOpen, acknowledgePanelOpen]);
 
+  /** Poll global history cursors on every page so bell + fan-out run without opening the dashboard timeline. */
+  useEffect(() => {
+    if (!isAuthenticated()) return undefined;
+    let cancelled = false;
+    const intervalMs = 7000;
+
+    const tick = async () => {
+      if (cancelled) return;
+      try {
+        let mtAfter = 0;
+        try {
+          mtAfter = parseInt(sessionStorage.getItem(STORAGE_MT_NOTIFY_CURSOR) || '0', 10) || 0;
+        } catch (_) {
+          mtAfter = 0;
+        }
+        const mtData = await fetchOrderHistoryNotifySince(mtAfter);
+        if (cancelled) return;
+        const mtNext = Number(mtData.cursor);
+        const mtProcessed = Number(mtData.processed) || 0;
+        if (Number.isFinite(mtNext)) {
+          if (mtAfter === 0) {
+            sessionStorage.setItem(STORAGE_MT_NOTIFY_CURSOR, String(mtNext));
+          } else if (mtNext > mtAfter) {
+            sessionStorage.setItem(STORAGE_MT_NOTIFY_CURSOR, String(mtNext));
+            if (mtProcessed > 0) {
+              window.dispatchEvent(new CustomEvent(RIDER_NOTIFICATIONS_POLL_EVENT, { detail: { delayMs: 250 } }));
+            }
+          }
+        }
+
+        let soAfter = 0;
+        try {
+          soAfter = parseInt(sessionStorage.getItem(STORAGE_ERRAND_NOTIFY_CURSOR) || '0', 10) || 0;
+        } catch (_) {
+          soAfter = 0;
+        }
+        const soData = await fetchErrandNotifySince(soAfter);
+        if (cancelled) return;
+        const soNext = Number(soData.cursor);
+        const soProcessed = Number(soData.processed) || 0;
+        if (Number.isFinite(soNext)) {
+          if (soAfter === 0) {
+            sessionStorage.setItem(STORAGE_ERRAND_NOTIFY_CURSOR, String(soNext));
+          } else if (soNext > soAfter) {
+            sessionStorage.setItem(STORAGE_ERRAND_NOTIFY_CURSOR, String(soNext));
+            if (soProcessed > 0) {
+              window.dispatchEvent(new CustomEvent(RIDER_NOTIFICATIONS_POLL_EVENT, { detail: { delayMs: 250 } }));
+            }
+          }
+        }
+      } catch (_) {
+        /* ignore transient / network errors */
+      }
+    };
+
+    tick();
+    const id = setInterval(tick, intervalMs);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, []);
+
   const handleMarkAllRead = () => {
     markAllRead();
   };
@@ -117,7 +185,12 @@ export default function MainHeader({ onMenuClick, onOpenNewTask }) {
             }}
           />
           {notificationsOpen ? (
-            <NotificationPanel items={riderNotifications} pollError={pollError} onMarkAllRead={handleMarkAllRead} />
+            <NotificationPanel
+              items={riderNotifications}
+              pollError={pollError}
+              onMarkAllRead={handleMarkAllRead}
+              onClosePanel={() => setNotificationsOpen(false)}
+            />
           ) : null}
         </div>
         <Link to="/settings" className="main-header-icon" aria-label="Settings" title="App settings, map keys, and preferences">
