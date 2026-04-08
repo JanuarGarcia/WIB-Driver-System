@@ -49,7 +49,7 @@ function typeMeta(type) {
 
 import {
   parseActorFromNotificationMessage,
-  stripActorSuffixForDisplay,
+  formatNotificationMessageForDisplay,
   parseTaskIdFromNotificationMessage,
   dispatchOpenTaskFromNotification,
 } from '../utils/riderNotificationNavigate';
@@ -102,7 +102,7 @@ export default function NotificationPanel({ items, pollError, onMarkAllRead, onC
               const rel = formatRelative(n.createdAt);
               const unread = !n.localRead;
               const actor = n.message ? parseActorFromNotificationMessage(n.message) : '';
-              const messageMain = n.message ? stripActorSuffixForDisplay(n.message) : '';
+              const messageMain = n.message ? formatNotificationMessageForDisplay(n.message) : '';
               const taskNavId = n.message ? parseTaskIdFromNotificationMessage(n.message) : null;
               const canOpenTask = taskNavId != null;
 

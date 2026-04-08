@@ -783,7 +783,12 @@ function errandLineFirstLine(text, maxLen) {
   if (text == null) return '';
   const t = String(text).trim();
   if (!t) return '';
-  const line = t.split(/\r?\n/)[0].trim();
+  // Some legacy rows contain a leading blank line; use the first non-empty line.
+  const line = t
+    .split(/\r?\n/)
+    .map((x) => x.trim())
+    .find(Boolean);
+  if (!line) return '';
   if (maxLen != null && line.length > maxLen) {
     return `${line.slice(0, maxLen).trim()}…`;
   }
@@ -807,46 +812,35 @@ function pickErrandLineItemDisplayName(row) {
     if (!t || t === '0') return '';
     return t;
   };
-  const catalogName = tryLabel(row.catalog_item_name);
+  // Prefer explicit item-name fields from DB line/catalog sources.
   const lineItemName = tryLabel(row.item_name);
-  const catShort = tryLabel(row.catalog_short_description);
-  const catLong = tryLabel(row.catalog_description);
+  const catalogName = tryLabel(row.catalog_item_name);
+  const dbNameAliases = [
+    row.line_item_name,
+    row.service_name,
+    row.product_name,
+    row.package_name,
+    row.item_label,
+    row.name,
+    row.label,
+    row.title,
+  ]
+    .map((v) => tryLabel(v))
+    .filter(Boolean);
   const lineShort = tryLabel(row.item_short_description);
+  const catShort = tryLabel(row.catalog_short_description);
   const lineLong = tryLabel(row.item_description);
-  const instructions = tryLabel(row.special_instructions);
+  const catLong = tryLabel(row.catalog_description);
   const orderedKeys = [
     lineItemName,
     catalogName,
-    catShort,
-    catLong,
+    ...dbNameAliases,
     lineShort,
+    catShort,
     lineLong,
-    instructions,
+    catLong,
   ];
   for (const t of orderedKeys) {
-    if (t) return t;
-  }
-  const extraKeys = [
-    'line_item_name',
-    'package_name',
-    'product_name',
-    'service_name',
-    'item_label',
-    'title',
-    'label',
-    'name',
-    'description',
-    'notes',
-    'note',
-    'line_notes',
-    'item_notes',
-    'item_remarks',
-    'remarks',
-    'errand_description',
-    'transaction_description',
-  ];
-  for (const k of extraKeys) {
-    const t = tryLabel(row[k]);
     if (t) return t;
   }
   const itemIdNum = row.item_id != null ? parseInt(String(row.item_id), 10) : NaN;
@@ -890,6 +884,7 @@ function mapErrandOrderLineToOrderDetail(row) {
     itemName: name,
     name,
     label: name,
+    service_name: name,
     item_name_display: name,
     normal_price: unit,
     discounted_price: unit,
@@ -904,6 +899,126 @@ function mapErrandOrderLineToOrderDetail(row) {
     out.itemId = itemIdNum;
   }
   return out;
+}
+
+function isGenericErrandItemName(nameRaw) {
+  const s = nameRaw != null ? String(nameRaw).trim().toLowerCase() : '';
+  if (!s) return true;
+  return s === 'errand service' || s === 'item' || /^item\s*#\s*0$/i.test(s);
+}
+
+function parseErrandJsonDetails(raw) {
+  if (raw == null) return null;
+  try {
+    const text = Buffer.isBuffer(raw) ? raw.toString('utf8') : String(raw);
+    const trimmed = text.trim();
+    if (!trimmed) return null;
+    return JSON.parse(trimmed);
+  } catch (_) {
+    return null;
+  }
+}
+
+function pickArrayOfObjects(v) {
+  if (!Array.isArray(v)) return [];
+  return v.filter((x) => x && typeof x === 'object');
+}
+
+function extractErrandJsonDetailRows(jsonValue) {
+  if (!jsonValue) return [];
+  if (Array.isArray(jsonValue)) return pickArrayOfObjects(jsonValue);
+  if (typeof jsonValue !== 'object') return [];
+  const keys = [
+    'order_details',
+    'mt_order_details',
+    'orderDetails',
+    'order_line_items',
+    'orderLineItems',
+    'items',
+    'line_items',
+    'lineItems',
+    'cart_details',
+    'cartDetails',
+    'details',
+  ];
+  for (const k of keys) {
+    const rows = pickArrayOfObjects(jsonValue[k]);
+    if (rows.length) return rows;
+  }
+  // Common nested wrappers.
+  for (const k of ['data', 'payload', 'order', 'cart']) {
+    const nested = jsonValue[k];
+    if (!nested || typeof nested !== 'object') continue;
+    const rows = extractErrandJsonDetailRows(nested);
+    if (rows.length) return rows;
+  }
+  return [];
+}
+
+function pickErrandJsonItemName(row) {
+  if (!row || typeof row !== 'object') return '';
+  const keys = [
+    'item_name',
+    'itemName',
+    'line_item_name',
+    'service_name',
+    'product_name',
+    'package_name',
+    'item_label',
+    'name',
+    'label',
+    'title',
+  ];
+  for (const k of keys) {
+    const t = errandPickLabel(row[k], 280);
+    if (t && t !== '0') return t;
+  }
+  return '';
+}
+
+/**
+ * Preserve normalized `order_details` rows, but replace generic names using order-level `json_details` hints
+ * when edited/added lines are reflected there first.
+ * Never overrides already-valid non-generic names.
+ * @param {Record<string, unknown>[]} orderDetails
+ * @param {Record<string, unknown>} stOrderRow
+ */
+function mergeErrandOrderDetailsWithJsonNames(orderDetails, stOrderRow) {
+  const list = Array.isArray(orderDetails) ? orderDetails : [];
+  if (!list.length || !stOrderRow || typeof stOrderRow !== 'object') return list;
+  const parsed = parseErrandJsonDetails(stOrderRow.json_details ?? stOrderRow.jsonDetails);
+  const jsonRows = extractErrandJsonDetailRows(parsed);
+  if (!jsonRows.length) return list;
+
+  const hintsByItemId = new Map();
+  const hintsByIndex = [];
+  for (let i = 0; i < jsonRows.length; i += 1) {
+    const jr = jsonRows[i];
+    const nm = pickErrandJsonItemName(jr);
+    if (!nm || isGenericErrandItemName(nm)) continue;
+    hintsByIndex[i] = nm;
+    const iid = jr.item_id != null ? parseInt(String(jr.item_id), 10) : NaN;
+    if (Number.isFinite(iid) && iid > 0) hintsByItemId.set(iid, nm);
+  }
+  if (!hintsByItemId.size && !hintsByIndex.some(Boolean)) return list;
+
+  return list.map((line, idx) => {
+    const current = line?.item_name;
+    if (!isGenericErrandItemName(current)) return line;
+    const itemId = line?.item_id != null ? parseInt(String(line.item_id), 10) : NaN;
+    const better =
+      (Number.isFinite(itemId) && itemId > 0 ? hintsByItemId.get(itemId) : null) || hintsByIndex[idx] || null;
+    if (!better) return line;
+    return {
+      ...line,
+      item_name: better,
+      itemName: better,
+      name: better,
+      label: better,
+      service_name: better,
+      item_name_display: better,
+    };
+  });
 }
 
 /**
@@ -1435,7 +1550,7 @@ function buildErrandTaskDetailPayload(
       }
     : null;
 
-  const lines = Array.isArray(orderDetails) ? orderDetails : [];
+  const lines = mergeErrandOrderDetailsWithJsonNames(orderDetails, row);
 
   const historyList = Array.isArray(orderHistoryRows) ? orderHistoryRows : [];
 

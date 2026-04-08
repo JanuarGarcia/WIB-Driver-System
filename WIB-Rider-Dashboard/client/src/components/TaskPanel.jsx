@@ -885,7 +885,6 @@ export default function TaskPanel({ onOpenTaskDetails, onFocusTaskOnMap, listRev
                       </button>
                     )}
                   </div>
-                  {!advanceLines && showRfpBanner ? <TaskCardReadyForPickupBanner /> : null}
                   <div className="task-card-v2-row task-card-v2-customer-row">
                     <span className="task-card-v2-icon task-card-v2-icon-user" aria-hidden="true">
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>
@@ -904,6 +903,7 @@ export default function TaskPanel({ onOpenTaskDetails, onFocusTaskOnMap, listRev
                       })()}
                     </div>
                   </div>
+                  {!advanceLines && showRfpBanner ? <TaskCardReadyForPickupBanner /> : null}
                   {advanceLines && (
                     <div className="task-card-v2-advance" role="status" aria-label="Advance order schedule">
                       <span className="task-card-v2-advance-line">{advanceLines.deliveryLine}</span>

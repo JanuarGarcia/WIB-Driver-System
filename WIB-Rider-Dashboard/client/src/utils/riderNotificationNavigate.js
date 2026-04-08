@@ -19,6 +19,21 @@ export function stripActorSuffixForDisplay(message) {
 }
 
 /**
+ * UI-safe notification line:
+ * - removes trailing " · By ..."
+ * - removes trailing deep-link marker " · Task #..."
+ * - if a legacy payload only has "Task #...", show it as "Order #..." in UI
+ */
+export function formatNotificationMessageForDisplay(message) {
+  const base = stripActorSuffixForDisplay(message);
+  if (!base) return '';
+  if (!/order\s*#/i.test(base) && /task\s*#\s*\d+/i.test(base)) {
+    return base.replace(/task\s*#\s*(\d+)/gi, 'Order #$1').trim();
+  }
+  return base;
+}
+
+/**
  * @returns {number|null} food task id (positive) or errand pseudo-id (negative order id)
  */
 export function parseTaskIdFromNotificationMessage(message) {
@@ -34,6 +49,21 @@ export function parseTaskIdFromNotificationMessage(message) {
     return Number.isFinite(n) && n > 0 ? n : null;
   }
   return null;
+}
+
+/**
+ * Build a dedupe key for "same status, same target" notifications.
+ * This is used client-side to collapse duplicate rows where one payload has actor and one does not.
+ */
+export function buildNotificationDedupeKey(notification) {
+  const n = notification || {};
+  const type = String(n.type || '').trim().toLowerCase();
+  const title = String(n.title || '').trim().toLowerCase();
+  const message = String(n.message || '');
+  const targetId = parseTaskIdFromNotificationMessage(message);
+  const actorless = formatNotificationMessageForDisplay(message).toLowerCase();
+  const targetPart = targetId != null ? `target:${targetId}` : `msg:${actorless}`;
+  return `${type}|${title}|${targetPart}`;
 }
 
 /** Open dashboard task / Mangan order modal (Dashboard listens; App routes home first if needed). */

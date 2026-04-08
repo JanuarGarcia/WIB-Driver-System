@@ -4,7 +4,8 @@ import { isAuthenticated } from '../auth';
 import { fetchRiderNotifications, markRiderNotificationsViewed } from '../services/notificationApi';
 import {
   parseActorFromNotificationMessage,
-  stripActorSuffixForDisplay,
+  formatNotificationMessageForDisplay,
+  buildNotificationDedupeKey,
 } from '../utils/riderNotificationNavigate';
 
 /** `public/fb-alert.mp3` — Vite serves `public/` at `import.meta.env.BASE_URL`. */
@@ -25,6 +26,30 @@ const processedIdsGlobal = new Set();
 let pollInFlight = false;
 
 const NOTIF_SESSION_BASELINE_MS_KEY = 'wib_dashboard_notif_baseline_ms';
+
+function hasActorName(notification) {
+  const msg = notification?.message != null ? String(notification.message) : '';
+  return Boolean(parseActorFromNotificationMessage(msg));
+}
+
+function dedupeNotificationsPreferActor(list) {
+  if (!Array.isArray(list) || list.length === 0) return [];
+  const kept = new Map();
+  for (const n of list) {
+    if (!n || n.id == null) continue;
+    const key = buildNotificationDedupeKey(n);
+    const prev = kept.get(key);
+    if (!prev) {
+      kept.set(key, n);
+      continue;
+    }
+    const pickCurrent =
+      (hasActorName(n) && !hasActorName(prev)) ||
+      (Number(new Date(n.createdAt).getTime()) || 0) > (Number(new Date(prev.createdAt).getTime()) || 0);
+    if (pickCurrent) kept.set(key, n);
+  }
+  return Array.from(kept.values());
+}
 
 /** Short beep when <audio> play() is blocked (common in background tabs). */
 function playWebAudioChime() {
@@ -226,7 +251,9 @@ export function useNotifications() {
       setPollError(null);
       pollErrorLoggedRef.current = false;
       const list = Array.isArray(data.notifications) ? data.notifications : [];
-      const freshAll = list.filter((n) => n && n.id != null && !processedIdsGlobal.has(String(n.id)));
+      const freshAll = dedupeNotificationsPreferActor(
+        list.filter((n) => n && n.id != null && !processedIdsGlobal.has(String(n.id)))
+      );
 
       // Option 1: baseline on first load so reopening the site doesn't flood toasts/OS notifications.
       if (!firstPollDoneRef.current) {
@@ -278,7 +305,7 @@ export function useNotifications() {
         const title = (n.title || 'Notification').toString();
         const message = (n.message || '').toString().trim();
         const actor = message ? parseActorFromNotificationMessage(message) : '';
-        const messageMain = message ? stripActorSuffixForDisplay(message) : '';
+        const messageMain = message ? formatNotificationMessageForDisplay(message) : '';
         const body = createElement(
           'div',
           { className: 'rider-notif-toast-stacked' },
@@ -300,7 +327,7 @@ export function useNotifications() {
         const t1 = (first?.title || 'Notification').toString();
         const m1 = (first?.message || '').toString().trim();
         const actor1 = m1 ? parseActorFromNotificationMessage(m1) : '';
-        const msg1 = m1 ? stripActorSuffixForDisplay(m1) : '';
+        const msg1 = m1 ? formatNotificationMessageForDisplay(m1) : '';
         const body = createElement(
           'div',
           { className: 'rider-notif-toast-stacked' },
@@ -345,13 +372,12 @@ export function useNotifications() {
       for (const n of freshAll) processedIdsGlobal.add(String(n.id));
 
       setItems((prev) => {
-        const map = new Map(prev.map((p) => [String(p.id), { ...p }]));
-        for (const n of fresh) {
-          map.set(String(n.id), { ...n, localRead: false });
-        }
-        return Array.from(map.values()).sort(
+        const byId = new Map(prev.map((p) => [String(p.id), { ...p }]));
+        for (const n of fresh) byId.set(String(n.id), { ...n, localRead: false });
+        const merged = Array.from(byId.values()).sort(
           (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
         );
+        return dedupeNotificationsPreferActor(merged);
       });
     } catch (err) {
       const msg =
