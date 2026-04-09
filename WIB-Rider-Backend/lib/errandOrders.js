@@ -15,8 +15,10 @@ const {
 
 /** Non-enumerable on the `order_details` array: filtered `st_ordernew_item` rows (SQL order) for name merge. */
 const ERRAND_ORDER_LINES_RAW = Symbol.for('wib.errandOrderLinesRaw');
+/** Non-enumerable: UUID → display name from `st_ordernew_history` ramarks_trans / remarks_trans (same source as timeline). */
+const ERRAND_HISTORY_UUID_HINTS = Symbol.for('wib.errandHistoryUuidHints');
 
-function attachErrandOrderLinesRaw(mergedLines, rawFilteredRows) {
+function attachErrandOrderLineMergeMeta(mergedLines, rawFilteredRows, historyUuidHints = null) {
   if (!Array.isArray(mergedLines) || !Array.isArray(rawFilteredRows)) return mergedLines;
   try {
     Object.defineProperty(mergedLines, ERRAND_ORDER_LINES_RAW, {
@@ -24,6 +26,13 @@ function attachErrandOrderLinesRaw(mergedLines, rawFilteredRows) {
       enumerable: false,
       configurable: true,
     });
+    if (historyUuidHints instanceof Map && historyUuidHints.size > 0) {
+      Object.defineProperty(mergedLines, ERRAND_HISTORY_UUID_HINTS, {
+        value: historyUuidHints,
+        enumerable: false,
+        configurable: true,
+      });
+    }
   } catch (_) {
     /* ignore */
   }
@@ -866,8 +875,9 @@ function pickErrandLineItemDisplayName(row) {
     lineLong,
     catLong,
   ];
+  // Do not let placeholder `st_item.item_name` ("Errand service") win over JSON / real line text (Mangan edits).
   for (const t of orderedKeys) {
-    if (t) return t;
+    if (t && !isGenericErrandItemName(t)) return t;
   }
   const itemIdNum = row.item_id != null ? parseInt(String(row.item_id), 10) : NaN;
   if (Number.isFinite(itemIdNum) && itemIdNum > 0) return `Item #${itemIdNum}`;
@@ -1245,14 +1255,29 @@ function buildErrandJsonDetailNameHintMaps(jsonRows) {
  * @param {Record<string, unknown>[]} orderDetails
  * @param {Record<string, unknown>} stOrderRow
  * @param {Record<string, unknown>[]|null} [rawLineRows] - same order as `orderDetails` from SQL `oi.*`
+ * @param {Map<string, string>|null} [historyUuidHints] - UUID → label from history `ramarks_trans` / `remarks_trans`
  */
-function mergeErrandOrderDetailsWithJsonNames(orderDetails, stOrderRow, rawLineRows = null) {
+function mergeErrandOrderDetailsWithJsonNames(orderDetails, stOrderRow, rawLineRows = null, historyUuidHints = null) {
   const list = Array.isArray(orderDetails) ? orderDetails : [];
-  if (!list.length || !stOrderRow || typeof stOrderRow !== 'object') return list;
-  const parsed = parseErrandJsonDetails(stOrderRow.json_details ?? stOrderRow.jsonDetails);
-  const jsonRows = extractErrandJsonDetailRows(parsed);
+  if (!list.length) return list;
+
+  const hasOrderRow = stOrderRow && typeof stOrderRow === 'object';
+  const histMap = historyUuidHints instanceof Map && historyUuidHints.size > 0 ? historyUuidHints : null;
+  if (!hasOrderRow && !histMap) return list;
+
+  const parsed = hasOrderRow ? parseErrandJsonDetails(stOrderRow.json_details ?? stOrderRow.jsonDetails) : null;
+  const jsonRows = parsed ? extractErrandJsonDetailRows(parsed) : [];
   const { hintsByItemId, hintsByLineKey, hintsByUuid, hintsByIndex } = buildErrandJsonDetailNameHintMaps(jsonRows);
   const priceHints = buildErrandJsonDetailPriceHintMap(jsonRows);
+
+  if (histMap) {
+    for (const [u, nm] of histMap) {
+      const uk = String(u).toLowerCase();
+      const nms = errandPickLabel(nm, 280);
+      if (!nms || isGenericErrandItemName(nms)) continue;
+      if (!hintsByUuid.has(uk)) hintsByUuid.set(uk, nms);
+    }
+  }
 
   const raw = Array.isArray(rawLineRows) ? rawLineRows : [];
 
@@ -1322,6 +1347,67 @@ function filterNonVoidedErrandLines(rows) {
 }
 
 /**
+ * Build UUID → label map from `st_ordernew_history` translation JSON (feeds timeline “Edited items…” text).
+ * Order Details uses the same map when `json_details` / catalog names are placeholders.
+ */
+async function fetchErrandUuidNameHintsFromHistory(errandPool, orderId) {
+  const map = new Map();
+  if (!errandPool || orderId == null) return map;
+  const oid = parseInt(String(orderId), 10);
+  if (!Number.isFinite(oid)) return map;
+  try {
+    const [rows] = await errandPool.query(
+      `SELECT ramarks_trans, remarks_trans FROM st_ordernew_history WHERE order_id = ?`,
+      [oid]
+    );
+    const uuidRe = new RegExp(ERRAND_LINE_ITEM_UUID_RE.source, 'gi');
+    for (const row of rows || []) {
+      const raw = row.ramarks_trans ?? row.remarks_trans;
+      if (raw == null || raw === '') continue;
+      let parsed = null;
+      try {
+        const text = Buffer.isBuffer(raw) ? raw.toString('utf8') : String(raw);
+        const t = text.trim();
+        if (!t || (t[0] !== '{' && t[0] !== '[')) continue;
+        parsed = JSON.parse(t);
+      } catch (_) {
+        continue;
+      }
+      if (!parsed || typeof parsed !== 'object') continue;
+      for (const [k, v] of Object.entries(parsed)) {
+        const keyStr = String(k).trim();
+        const valRaw = v != null ? String(v).trim() : '';
+        if (keyStr && valRaw) {
+          const uuidInVal = valRaw.match(ERRAND_LINE_ITEM_UUID_RE);
+          if (uuidInVal) {
+            const nameGuess = errandPickLabel(keyStr, 280) || keyStr;
+            if (
+              nameGuess &&
+              !isGenericErrandItemName(nameGuess) &&
+              !ERRAND_LINE_ITEM_UUID_RE.test(nameGuess)
+            ) {
+              const u = uuidInVal[0].toLowerCase();
+              if (!map.has(u)) map.set(u, nameGuess);
+            }
+          }
+        }
+        const val = v != null ? errandPickLabel(v, 280) : '';
+        if (!val || isGenericErrandItemName(val)) continue;
+        uuidRe.lastIndex = 0;
+        let m;
+        while ((m = uuidRe.exec(keyStr)) !== null) {
+          const u = m[0].toLowerCase();
+          if (!map.has(u)) map.set(u, val);
+        }
+      }
+    }
+  } catch (_) {
+    /* missing table/columns */
+  }
+  return map;
+}
+
+/**
  * Load line items (`st_ordernew_item` JOIN `st_item`), then merge human names from `st_ordernew.json_details` when `stOrderRow` is passed.
  * @param {import('mysql2/promise').Pool} errandPool
  * @param {number} orderId
@@ -1339,34 +1425,43 @@ async function fetchErrandOrderLineItems(errandPool, orderId, stOrderRow = null)
        LEFT JOIN st_item i ON i.item_id = oi.item_id
        WHERE oi.order_id = ?
        ORDER BY oi.id ASC`;
-  const finish = (rows) => {
+  const finish = (rows, historyHints) => {
     const filtered = filterNonVoidedErrandLines(rows);
     const mapped = filtered.map(mapErrandOrderLineToOrderDetail);
-    const merged =
-      stOrderRow && typeof stOrderRow === 'object'
-        ? mergeErrandOrderDetailsWithJsonNames(mapped, stOrderRow, filtered)
-        : mapped;
-    return attachErrandOrderLinesRaw(merged, filtered);
+    const hintMap = historyHints instanceof Map ? historyHints : new Map();
+    const merged = mergeErrandOrderDetailsWithJsonNames(
+      mapped,
+      stOrderRow && typeof stOrderRow === 'object' ? stOrderRow : null,
+      filtered,
+      hintMap
+    );
+    return attachErrandOrderLineMergeMeta(merged, filtered, hintMap);
   };
   try {
-    const [rows] = await errandPool.query(sqlFull, [orderId]);
-    return finish(rows);
+    const [[rows], historyHints] = await Promise.all([
+      errandPool.query(sqlFull, [orderId]),
+      fetchErrandUuidNameHintsFromHistory(errandPool, orderId),
+    ]);
+    return finish(rows, historyHints);
   } catch (e) {
     if (e.code === 'ER_NO_SUCH_TABLE') return [];
     if (e.code === 'ER_BAD_FIELD_ERROR') {
       try {
-        const [rows2] = await errandPool.query(
-          `SELECT oi.*,
-                  i.item_name AS catalog_item_name,
-                  i.photo AS catalog_item_photo,
-                  i.path AS catalog_item_path
-           FROM st_ordernew_item oi
-           LEFT JOIN st_item i ON i.item_id = oi.item_id
-           WHERE oi.order_id = ?
-           ORDER BY oi.id ASC`,
-          [orderId]
-        );
-        return finish(rows2);
+        const [[rows2], historyHints] = await Promise.all([
+          errandPool.query(
+            `SELECT oi.*,
+                    i.item_name AS catalog_item_name,
+                    i.photo AS catalog_item_photo,
+                    i.path AS catalog_item_path
+             FROM st_ordernew_item oi
+             LEFT JOIN st_item i ON i.item_id = oi.item_id
+             WHERE oi.order_id = ?
+             ORDER BY oi.id ASC`,
+            [orderId]
+          ),
+          fetchErrandUuidNameHintsFromHistory(errandPool, orderId),
+        ]);
+        return finish(rows2, historyHints);
       } catch (e2) {
         if (e2.code === 'ER_NO_SUCH_TABLE') return [];
         throw e2;
@@ -1870,7 +1965,14 @@ function buildErrandTaskDetailPayload(
 
   const rawLines =
     Array.isArray(orderDetails) && ERRAND_ORDER_LINES_RAW in orderDetails ? orderDetails[ERRAND_ORDER_LINES_RAW] : null;
-  const lines = mergeErrandOrderDetailsWithJsonNames(orderDetails, row, Array.isArray(rawLines) ? rawLines : null);
+  const histHints =
+    Array.isArray(orderDetails) && ERRAND_HISTORY_UUID_HINTS in orderDetails ? orderDetails[ERRAND_HISTORY_UUID_HINTS] : null;
+  const lines = mergeErrandOrderDetailsWithJsonNames(
+    orderDetails,
+    row,
+    Array.isArray(rawLines) ? rawLines : null,
+    histHints instanceof Map ? histHints : null
+  );
 
   const historyList = Array.isArray(orderHistoryRows) ? orderHistoryRows : [];
 
