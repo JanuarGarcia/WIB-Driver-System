@@ -14,7 +14,8 @@ const VALID_PROOF_TYPES = new Set(['receipt', 'delivery']);
 function parseProofTypeParam(raw) {
   if (raw == null || raw === '') return null;
   const s = String(raw).trim().toLowerCase();
-  if (s === 'receipt' || s === 'delivery') return s;
+  if (s === 'receipt' || s === 'proof_receipt' || s === 'proof_of_receipt') return 'receipt';
+  if (s === 'delivery' || s === 'proof_delivery' || s === 'proof_of_delivery') return 'delivery';
   return null;
 }
 
@@ -39,7 +40,8 @@ function normalizeStoredProofType(stored, photoName) {
     return 'delivery';
   }
   const s = String(stored).trim().toLowerCase();
-  return s === 'receipt' ? 'receipt' : 'delivery';
+  if (s === 'receipt' || s === 'proof_receipt' || s === 'proof_of_receipt') return 'receipt';
+  return 'delivery';
 }
 
 /**

@@ -8333,6 +8333,19 @@ tr:hover { background: var(--bg-hover) !important; }
 .activity-timeline-proof-cell {
   min-width: 0;
 }
+.activity-timeline-proof-missing {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 72px;
+  padding: 0.5rem;
+  border: 1px dashed var(--border-soft, #d1d5db);
+  border-radius: 6px;
+  color: var(--text-muted, #6b7280);
+  background: var(--bg-surface-1, #f9fafb);
+  font-size: 0.8rem;
+  text-align: center;
+}
 .activity-timeline-proof-link {
   display: block;
   border-radius: 6px;

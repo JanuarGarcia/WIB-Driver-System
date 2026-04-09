@@ -1625,6 +1625,12 @@ router.post(
     let savedPath = null;
     try {
       await conn.beginTransaction();
+      console.info('[UploadTaskProof] inserting mt_driver_task_photo', {
+        task_id: tid,
+        proof_type: proofKind,
+        order_id: orderIdForRow,
+        driver_id: req.driver.id,
+      });
       await deleteDriverTaskProofSlot(conn, tid, proofKind);
       const ext = path.extname(file.originalname || '') || '.jpg';
       const newName = `task_${tid}_${proofKind}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}${ext}`;
@@ -1641,6 +1647,12 @@ router.post(
         req.driver.id
       );
       const proof_url = buildTaskProofImageUrl(newName);
+      console.info('[UploadTaskProof] inserted mt_driver_task_photo', {
+        id: insertId,
+        task_id: tid,
+        proof_type: proofKind,
+        photo_name: newName,
+      });
       await conn.commit();
       return success(res, {
         id: insertId,

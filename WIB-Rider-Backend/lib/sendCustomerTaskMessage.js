@@ -10,6 +10,71 @@ const RATE_MS = 10_000;
 const NOTIFY_BODY_MAX = 230;
 const MESSAGE_MAX = 500;
 
+function envFlag(name, fallback) {
+  const raw = process.env[name];
+  if (raw == null || String(raw).trim() === '') return fallback;
+  const v = String(raw).trim().toLowerCase();
+  return v === '1' || v === 'true' || v === 'yes' || v === 'on';
+}
+
+function envInt(name, fallback) {
+  const raw = process.env[name];
+  if (raw == null || String(raw).trim() === '') return fallback;
+  const n = parseInt(String(raw).trim(), 10);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function normalizeVersionTokens(versionRaw) {
+  return String(versionRaw || '')
+    .trim()
+    .split(/[.\-_+]/)
+    .map((part) => {
+      const n = parseInt(String(part), 10);
+      return Number.isFinite(n) ? n : 0;
+    });
+}
+
+function isVersionAtLeast(versionRaw, minVersionRaw) {
+  const a = normalizeVersionTokens(versionRaw);
+  const b = normalizeVersionTokens(minVersionRaw);
+  const maxLen = Math.max(a.length, b.length);
+  for (let i = 0; i < maxLen; i += 1) {
+    const av = a[i] ?? 0;
+    const bv = b[i] ?? 0;
+    if (av > bv) return true;
+    if (av < bv) return false;
+  }
+  return true;
+}
+
+function isOutdatedVersionBlocked(appVersion) {
+  if (envFlag('RIDER_APP_FORCE_COMPATIBILITY', true)) return null;
+
+  const minVersion = String(process.env.RIDER_APP_MIN_SUPPORTED_VERSION || '').trim();
+  if (!minVersion) return null;
+
+  const appVersionNormalized = String(appVersion || '').trim();
+  const allowUnknown = envFlag('RIDER_APP_ALLOW_UNKNOWN_VERSION', true);
+  if (!appVersionNormalized) {
+    return allowUnknown
+      ? null
+      : 'Please update your Rider app to continue';
+  }
+
+  if (isVersionAtLeast(appVersionNormalized, minVersion)) return null;
+
+  const enforceAfterRaw = String(process.env.RIDER_APP_MIN_SUPPORTED_ENFORCE_AFTER || '').trim();
+  if (!enforceAfterRaw) return null;
+  const enforceAfter = new Date(enforceAfterRaw);
+  if (Number.isNaN(enforceAfter.getTime())) return null;
+
+  const graceDays = Math.max(0, envInt('RIDER_APP_VERSION_GRACE_DAYS', 14));
+  const graceMs = graceDays * 24 * 60 * 60 * 1000;
+  if (Date.now() < enforceAfter.getTime() + graceMs) return null;
+
+  return `Please update your Rider app to at least version ${minVersion}`;
+}
+
 function pruneRateMap() {
   if (rateLastSent.size < 5000) return;
   const now = Date.now();
@@ -73,8 +138,9 @@ function truncNotifyBody(s) {
 async function sendCustomerTaskMessage(pool, errandWibPool, driver, body) {
   const b = body || {};
   const appVersion = b.app_version ?? b.appVersion;
-  if (appVersion == null || String(appVersion).trim() === '') {
-    return { err: 'app_version required', details: null };
+  const versionBlockReason = isOutdatedVersionBlocked(appVersion);
+  if (versionBlockReason) {
+    return { err: versionBlockReason, details: null };
   }
 
   const taskIdRaw = parseInt(String(b.task_id ?? b.taskId ?? ''), 10);

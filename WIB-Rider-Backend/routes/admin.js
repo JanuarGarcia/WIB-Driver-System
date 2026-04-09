@@ -2085,26 +2085,88 @@ router.get('/tasks/:id/timeline-updates', async (req, res) => {
     let photo_events = [];
     let nextP = afterP;
     try {
-      let photoRows;
+      /** @type {Record<number, any>} */
+      const photoById = {};
       try {
         const [r] = await pool.query(
           'SELECT id, task_id, photo_name, proof_type, date_created, ip_address FROM mt_driver_task_photo WHERE task_id = ? AND id > ? ORDER BY id ASC',
           [id, afterP]
         );
-        photoRows = r;
+        for (const row of r || []) {
+          if (row && row.id != null) photoById[Number(row.id)] = row;
+        }
       } catch (e) {
         if (e.code !== 'ER_BAD_FIELD_ERROR') throw e;
         const [r] = await pool.query(
           'SELECT id, task_id, photo_name, date_created, ip_address FROM mt_driver_task_photo WHERE task_id = ? AND id > ? ORDER BY id ASC',
           [id, afterP]
         );
-        photoRows = r;
+        for (const row of r || []) {
+          if (row && row.id != null) photoById[Number(row.id)] = row;
+        }
       }
-      photo_events = (photoRows || []).map((row) => ({
-        ...row,
-        proof_type: normalizeStoredProofType(row.proof_type, row.photo_name),
-        proof_url: buildTaskProofImageUrl(row.photo_name),
-      }));
+
+      const oid =
+        orderId != null && String(orderId).trim() !== '' && String(orderId).trim() !== '0'
+          ? parseInt(String(orderId), 10)
+          : NaN;
+      if (Number.isFinite(oid) && oid > 0) {
+        try {
+          const [r2] = await pool.query(
+            'SELECT id, task_id, order_id, photo_name, proof_type, driver_id, date_created, ip_address FROM mt_driver_task_photo WHERE order_id = ? AND (task_id IS NULL OR task_id = 0) AND id > ? ORDER BY id ASC',
+            [oid, afterP]
+          );
+          for (const row of r2 || []) {
+            if (row && row.id != null) photoById[Number(row.id)] = row;
+          }
+        } catch (e) {
+          if (e.code !== 'ER_BAD_FIELD_ERROR' && e.code !== 'ER_NO_SUCH_TABLE') throw e;
+        }
+      }
+
+      photo_events = Object.values(photoById)
+        .sort((a, b) => {
+          const ta = a.date_created ? new Date(a.date_created).getTime() : 0;
+          const tb = b.date_created ? new Date(b.date_created).getTime() : 0;
+          if (ta !== tb) return ta - tb;
+          return Number(a.id) - Number(b.id);
+        })
+        .map((row) => {
+          const proofType = normalizeStoredProofType(row.proof_type, row.photo_name);
+          const proofUrl = buildTaskProofImageUrl(row.photo_name);
+          if (!proofUrl) {
+            console.warn('[tasks/:id/timeline-updates] proof URL missing', {
+              task_id: id,
+              photo_id: row.id,
+              proof_type: proofType,
+              photo_name: row.photo_name || null,
+            });
+          }
+          return {
+            ...row,
+            task_id: row.task_id || id,
+            proof_type: proofType,
+            proof_url: proofUrl,
+            eventType: proofType === 'receipt' ? 'proof_of_receipt' : 'proof_of_delivery',
+            timestamp: row.date_created || null,
+            taskId: row.task_id || id,
+            driverId: row.driver_id != null ? Number(row.driver_id) : null,
+            attachmentUrl: proofUrl || null,
+            attachmentMeta: proofUrl
+              ? null
+              : {
+                  reason: 'missing_url_mapping',
+                  photo_name: row.photo_name || null,
+                },
+          };
+        });
+      if (photo_events.length > 0) {
+        console.info('[tasks/:id/timeline-updates] proof events added', {
+          task_id: id,
+          count: photo_events.length,
+          after_photo_id: afterP,
+        });
+      }
       for (const r of photo_events) {
         const n = Number(r.id);
         if (Number.isFinite(n) && n > nextP) nextP = n;

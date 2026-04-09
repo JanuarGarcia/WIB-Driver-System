@@ -288,7 +288,8 @@ function timelineDriverShortName(full) {
 }
 
 function timelineProofKindFromRow(row) {
-  if (row && String(row.proof_type || '').toLowerCase() === 'receipt') return 'receipt';
+  const raw = row && row.proof_type != null ? String(row.proof_type).toLowerCase() : '';
+  if (raw === 'receipt' || raw === 'proof_receipt' || raw === 'proof_of_receipt') return 'receipt';
   return 'delivery';
 }
 
@@ -494,6 +495,9 @@ function TaskPhotoImage({ photoId, photoName }) {
   const variants = ['upload_driver', 'upload_task', 'task_photos', 'root'];
   const uploadsUrl = photoName ? taskPhotoUrl(photoName, variants[Math.min(variantIdx, variants.length - 1)]) : '';
   const url = (!skipApiBlob && apiImageUrl) || uploadsUrl;
+  if (!url) {
+    return <div className="activity-timeline-proof-missing">Proof image unavailable</div>;
+  }
   const bumpVariant = () => {
     if (apiImageUrl && !skipApiBlob) {
       setSkipApiBlob(true);
@@ -524,7 +528,7 @@ function ProofTimelineThumb({ url, photoId, photoName }) {
   }
   if (!url) {
     if (photoId != null || photoName) return <TaskPhotoImage photoId={photoId} photoName={photoName} />;
-    return null;
+    return <div className="activity-timeline-proof-missing">Proof image unavailable</div>;
   }
   return (
     <div className="activity-timeline-proof-cell">
