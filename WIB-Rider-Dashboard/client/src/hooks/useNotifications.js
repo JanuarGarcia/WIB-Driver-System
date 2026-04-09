@@ -27,6 +27,8 @@ const processedIdsGlobal = new Set();
 let pollInFlight = false;
 
 const NOTIF_SESSION_BASELINE_MS_KEY = 'wib_dashboard_notif_baseline_ms';
+const CRITICAL_TOAST_TYPES = new Set(['ready_pickup']);
+const FIRST_POLL_CRITICAL_WINDOW_MS = 120000;
 
 function hasActorName(notification) {
   const msg = notification?.message != null ? String(notification.message) : '';
@@ -168,6 +170,83 @@ export function useNotifications() {
   const firstPollDoneRef = useRef(false);
   const baselineMsRef = useRef(null);
 
+  const emitToastSoundAndDesktop = useCallback((fresh) => {
+    if (!Array.isArray(fresh) || fresh.length === 0) return;
+    const toastFresh = fresh.filter((n) => !shouldSuppressRiderNotificationToast(n));
+
+    if (toastFresh.length === 1) {
+      const n = toastFresh[0];
+      const title = (n.title || 'Notification').toString();
+      const message = (n.message || '').toString().trim();
+      const actor = message ? parseActorFromNotificationMessage(message) : '';
+      const messageMain = message ? formatNotificationMessageForDisplay(message) : '';
+      const body = createElement(
+        'div',
+        { className: 'rider-notif-toast-stacked' },
+        createElement('div', { className: 'rider-notif-toast-line1' }, title),
+        actor ? createElement('div', { className: 'rider-notif-toast-line-by' }, `By ${actor}`) : null,
+        messageMain ? createElement('div', { className: 'rider-notif-toast-line2' }, messageMain) : null
+      );
+      toast.info(body, {
+        toastId: `rider-notif-${n.id}`,
+        autoClose: 12500,
+        className: 'rider-notif-toast',
+        bodyClassName: 'rider-notif-toast-body',
+        progressClassName: 'rider-notif-toast-progress',
+        pauseOnHover: true,
+      });
+    } else if (toastFresh.length > 1) {
+      const count = toastFresh.length;
+      const first = toastFresh[0];
+      const t1 = (first?.title || 'Notification').toString();
+      const m1 = (first?.message || '').toString().trim();
+      const actor1 = m1 ? parseActorFromNotificationMessage(m1) : '';
+      const msg1 = m1 ? formatNotificationMessageForDisplay(m1) : '';
+      const body = createElement(
+        'div',
+        { className: 'rider-notif-toast-stacked' },
+        createElement('div', { className: 'rider-notif-toast-line1' }, `${count} new notifications`),
+        actor1 ? createElement('div', { className: 'rider-notif-toast-line-by' }, `Latest: By ${actor1}`) : null,
+        createElement('div', { className: 'rider-notif-toast-line2' }, `${t1}${msg1 ? ` — ${msg1}` : ''}`)
+      );
+      toast.info(body, {
+        toastId: `rider-notif-batch-${String(toastFresh[0]?.id ?? 'x')}`,
+        autoClose: 12500,
+        className: 'rider-notif-toast',
+        bodyClassName: 'rider-notif-toast-body',
+        progressClassName: 'rider-notif-toast-progress',
+        pauseOnHover: true,
+      });
+    }
+
+    if (toastFresh.length > 0) {
+      const hasCritical = toastFresh.some((n) =>
+        CRITICAL_TOAST_TYPES.has(String(n?.type || '').trim().toLowerCase())
+      );
+      if (hasCritical) showDesktopNotificationsForEach(toastFresh);
+      else showDesktopNotificationSummary(toastFresh);
+    }
+
+    if (toastFresh.length > 0 && isSoundOn()) {
+      const tabHidden = typeof document !== 'undefined' && document.visibilityState === 'hidden';
+      const playOne = async () => {
+        if (!tabHidden && audioRef.current) {
+          const el = audioRef.current;
+          try {
+            el.volume = 0.72;
+            el.currentTime = 0;
+            await el.play();
+            return;
+          } catch {
+            /* fall through to chime */
+          }
+        }
+        playWebAudioChime();
+      };
+      void playOne();
+    }
+  }, []);
+
   /** Bell badge: items not yet acknowledged (panel opened) or cleared. */
   const unreadCount = useMemo(() => items.filter((i) => i && !i.localRead).length, [items]);
 
@@ -273,6 +352,23 @@ export function useNotifications() {
           /* ignore */
         }
         baselineMsRef.current = baseline;
+        const firstPollCritical = dedupeNotificationsPreferActor(
+          list.filter((n) => {
+            const t = String(n?.type || '').trim().toLowerCase();
+            if (!CRITICAL_TOAST_TYPES.has(t)) return false;
+            const eventMs = notificationEventMs(n);
+            return eventMs > 0 && Date.now() - eventMs <= FIRST_POLL_CRITICAL_WINDOW_MS;
+          })
+        );
+        if (firstPollCritical.length > 0) {
+          emitToastSoundAndDesktop(firstPollCritical);
+          try {
+            await markRiderNotificationsViewed(firstPollCritical.map((n) => String(n.id)));
+          } catch (_) {
+            /* ignore */
+          }
+          for (const n of firstPollCritical) processedIdsGlobal.add(String(n.id));
+        }
         // Mark existing backlog as "seen for this session" (but DO NOT mark viewed in DB).
         for (const n of list) {
           if (n && n.id != null) processedIdsGlobal.add(String(n.id));
@@ -305,77 +401,7 @@ export function useNotifications() {
         return;
       }
 
-      const toastFresh = fresh.filter((n) => !shouldSuppressRiderNotificationToast(n));
-
-      // Option 3: batch multiple new items into a single toast (skip items already surfaced as timeline teal toasts).
-      if (toastFresh.length === 1) {
-        const n = toastFresh[0];
-        const title = (n.title || 'Notification').toString();
-        const message = (n.message || '').toString().trim();
-        const actor = message ? parseActorFromNotificationMessage(message) : '';
-        const messageMain = message ? formatNotificationMessageForDisplay(message) : '';
-        const body = createElement(
-          'div',
-          { className: 'rider-notif-toast-stacked' },
-          createElement('div', { className: 'rider-notif-toast-line1' }, title),
-          actor ? createElement('div', { className: 'rider-notif-toast-line-by' }, `By ${actor}`) : null,
-          messageMain ? createElement('div', { className: 'rider-notif-toast-line2' }, messageMain) : null
-        );
-        toast.info(body, {
-          toastId: `rider-notif-${n.id}`,
-          autoClose: 12500,
-          className: 'rider-notif-toast',
-          bodyClassName: 'rider-notif-toast-body',
-          progressClassName: 'rider-notif-toast-progress',
-          pauseOnHover: true,
-        });
-      } else if (toastFresh.length > 1) {
-        const count = toastFresh.length;
-        const first = toastFresh[0];
-        const t1 = (first?.title || 'Notification').toString();
-        const m1 = (first?.message || '').toString().trim();
-        const actor1 = m1 ? parseActorFromNotificationMessage(m1) : '';
-        const msg1 = m1 ? formatNotificationMessageForDisplay(m1) : '';
-        const body = createElement(
-          'div',
-          { className: 'rider-notif-toast-stacked' },
-          createElement('div', { className: 'rider-notif-toast-line1' }, `${count} new notifications`),
-          actor1 ? createElement('div', { className: 'rider-notif-toast-line-by' }, `Latest: By ${actor1}`) : null,
-          createElement('div', { className: 'rider-notif-toast-line2' }, `${t1}${msg1 ? ` — ${msg1}` : ''}`)
-        );
-        toast.info(body, {
-          toastId: `rider-notif-batch-${String(toastFresh[0]?.id ?? 'x')}`,
-          autoClose: 12500,
-          className: 'rider-notif-toast',
-          bodyClassName: 'rider-notif-toast-body',
-          progressClassName: 'rider-notif-toast-progress',
-          pauseOnHover: true,
-        });
-      }
-
-      // OS notifications: prefer summary to avoid spamming the OS.
-      if (toastFresh.length > 0) {
-        showDesktopNotificationSummary(toastFresh);
-      }
-
-      if (toastFresh.length > 0 && isSoundOn()) {
-        const tabHidden = typeof document !== 'undefined' && document.visibilityState === 'hidden';
-        const playOne = async () => {
-          if (!tabHidden && audioRef.current) {
-            const el = audioRef.current;
-            try {
-              el.volume = 0.72;
-              el.currentTime = 0;
-              await el.play();
-              return;
-            } catch {
-              /* fall through to chime */
-            }
-          }
-          playWebAudioChime();
-        };
-        void playOne();
-      }
+      emitToastSoundAndDesktop(fresh);
 
       await markRiderNotificationsViewed(fresh.map((n) => String(n.id)));
       for (const n of fresh) processedIdsGlobal.add(String(n.id));
@@ -400,7 +426,7 @@ export function useNotifications() {
     } finally {
       pollInFlight = false;
     }
-  }, []);
+  }, [emitToastSoundAndDesktop]);
 
   useEffect(() => {
     if (!isAuthenticated()) return undefined;
