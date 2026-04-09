@@ -15,6 +15,7 @@ import {
   todayDateStrLocal,
   taskDropoffLatLng,
 } from '../utils/mapTasks';
+import { getLocationZone, getLocationZoneLabel } from '../utils/locationZones';
 
 /** Match dashboard map `tasks?date=` on first paint so GET dedupe shares one request with Dashboard. */
 function initialTaskPanelSelectedDate() {
@@ -28,11 +29,6 @@ function initialTaskPanelSelectedDate() {
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const MONTH_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const DAY_HEADERS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-
-function toDisplayDate(date) {
-  const d = date instanceof Date ? date : new Date(date);
-  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
-}
 /** e.g. March 21, 2026 — matches Activity Timeline style */
 function toDisplayDateLong(date) {
   const d = date instanceof Date ? date : new Date(date);
@@ -41,16 +37,6 @@ function toDisplayDateLong(date) {
 function toDisplayTime12h(date) {
   const d = date instanceof Date ? date : new Date(date);
   return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
-}
-function toDisplayDateTime(date) {
-  const d = date instanceof Date ? date : new Date(date);
-  const dateStr = d.toISOString().slice(0, 10);
-  const timeStr = d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit', hour12: true });
-  return `${dateStr} - ${timeStr}`;
-}
-function toInputDateTime(date) {
-  const d = date instanceof Date ? date : new Date(date);
-  return `${d.toISOString().slice(0, 10)}T${d.toTimeString().slice(0, 5)}`;
 }
 function toDatePickerLabel(date) {
   const d = date instanceof Date ? date : new Date(date);
@@ -90,6 +76,9 @@ function getCalendarGrid(viewYear, viewMonth) {
 
 const PROBLEM_FILTER_STORAGE_KEY = 'wib-tasks-problem-filter';
 const PROBLEM_STATUS_IN = 'cancelled,canceled,declined,failed';
+const ASSIGNED_TASK_STATUSES = new Set(['assigned', 'acknowledged', 'started', 'inprogress']);
+const COMPLETED_TASK_STATUSES = new Set(['completed', 'delivered', 'successful']);
+const PROBLEM_TASK_STATUSES = new Set(['cancelled', 'canceled', 'declined', 'failed']);
 
 function readStoredProblemFilter() {
   try {
@@ -392,15 +381,30 @@ export default function TaskPanel({ onOpenTaskDetails, onFocusTaskOnMap, listRev
         setTasks(raw);
         const norm = (status) => (status || '').toLowerCase().replace(/\s+/g, '').replace(/_/g, '');
         if (taskMode === 'active') {
-          const u = raw.filter((t) => norm(t.status) === 'unassigned').length;
-          const a = raw.filter((t) => ['assigned', 'acknowledged', 'started', 'inprogress'].includes(norm(t.status))).length;
-          const c = raw.filter((t) => ['completed', 'delivered', 'successful'].includes(norm(t.status))).length;
+          let u = 0;
+          let a = 0;
+          let c = 0;
+          for (const task of raw) {
+            const s = norm(task.status);
+            if (s === 'unassigned') u += 1;
+            else if (ASSIGNED_TASK_STATUSES.has(s)) a += 1;
+            else if (COMPLETED_TASK_STATUSES.has(s)) c += 1;
+          }
           setCounts({ unassigned: u, assigned: a, completed: c });
         } else {
+          let cancelled = 0;
+          let declined = 0;
+          let failed = 0;
+          for (const task of raw) {
+            const s = norm(task.status);
+            if (s === 'cancelled' || s === 'canceled') cancelled += 1;
+            else if (s === 'declined') declined += 1;
+            else if (s === 'failed') failed += 1;
+          }
           setProblemCounts({
-            cancelled: raw.filter((t) => norm(t.status) === 'cancelled' || norm(t.status) === 'canceled').length,
-            declined: raw.filter((t) => norm(t.status) === 'declined').length,
-            failed: raw.filter((t) => norm(t.status) === 'failed').length,
+            cancelled,
+            declined,
+            failed,
           });
         }
       })
@@ -460,8 +464,8 @@ export default function TaskPanel({ onOpenTaskDetails, onFocusTaskOnMap, listRev
     return tasks.filter((t) => {
       const s = normStatus(t.status);
       if (activeTab === 'unassigned') return s === 'unassigned';
-      if (activeTab === 'assigned') return ['assigned', 'acknowledged', 'started', 'inprogress'].includes(s);
-      return ['completed', 'delivered', 'successful'].includes(s);
+      if (activeTab === 'assigned') return ASSIGNED_TASK_STATUSES.has(s);
+      return COMPLETED_TASK_STATUSES.has(s);
     });
   }, [tasks, activeTab]);
 
@@ -852,14 +856,24 @@ export default function TaskPanel({ onOpenTaskDetails, onFocusTaskOnMap, listRev
               const isAcknowledged = statusNorm === 'acknowledged';
               const isStarted = statusNorm === 'started';
               const isInProgress = statusNorm === 'inprogress';
-              const isCompleted = ['completed', 'delivered', 'successful'].includes(statusNorm);
-              const isProblemStatus = ['cancelled', 'canceled', 'declined', 'failed'].includes(statusNorm);
+              const isCompleted = COMPLETED_TASK_STATUSES.has(statusNorm);
+              const isProblemStatus = PROBLEM_TASK_STATUSES.has(statusNorm);
               const isCritical = taskCriticalEnabled && isUnassigned && minsWaiting !== null && minsWaiting >= taskCriticalMinutes;
               const driverName = (t.driver_name || '').trim();
               const advanceLines = getAdvanceOrderLines(t, t.date_created);
               const showRfpBanner = Boolean(t.timeline_ready_for_pickup);
               const mapFocusCoords = taskDropoffLatLng(t);
               const canFocusMap = Boolean(mapFocusCoords && onFocusTaskOnMap);
+              const deliveryAddress = sanitizeLocationDisplayName(t.delivery_address) || '—';
+              const locationZone = deliveryAddress !== '—' ? getLocationZone(deliveryAddress) : 'default';
+              const direction = getDirectionFromTask(t);
+              const merchantRaw =
+                t.restaurant_name ||
+                (t.dropoff_merchant && !/^\d+$/.test(String(t.dropoff_merchant).trim()) ? t.dropoff_merchant : null) ||
+                '—';
+              const merchantName = sanitizeMerchantDisplayName(merchantRaw) || '—';
+              const shortMerchantName = merchantName.length > 40 ? `${merchantName.slice(0, 40)}…` : merchantName;
+              const shortDeliveryAddress = deliveryAddress.length > 90 ? `${deliveryAddress.slice(0, 90)}…` : deliveryAddress;
               return (
                 <li
                   key={t.task_source === 'errand' ? `errand-${t.order_id ?? t.task_id}` : t.task_id}
@@ -870,11 +884,11 @@ export default function TaskPanel({ onOpenTaskDetails, onFocusTaskOnMap, listRev
                   <div className="task-card-v2-top">
                     <div className="task-card-v2-direction" title="Delivery direction">
                       <span className="task-card-v2-direction-icon" aria-hidden="true">
-                        <svg viewBox="0 0 24 24" fill="currentColor" style={{ transform: `rotate(${directionArrowRotation(getDirectionFromTask(t))}deg)` }}>
+                        <svg viewBox="0 0 24 24" fill="currentColor" style={{ transform: `rotate(${directionArrowRotation(direction)}deg)` }}>
                           <path d="M12 4l-6 8h4v8h4v-8h4L12 4z"/>
                         </svg>
                       </span>
-                      <span className="task-card-v2-direction-label">{directionDisplayLabel(getDirectionFromTask(t))}</span>
+                      <span className="task-card-v2-direction-label">{directionDisplayLabel(direction)}</span>
                     </div>
                     <span className="task-card-v2-order">
                       <span className="task-card-v2-order-label">Order No.</span>
@@ -890,12 +904,7 @@ export default function TaskPanel({ onOpenTaskDetails, onFocusTaskOnMap, listRev
                     <span className="task-card-v2-icon task-card-v2-icon-pin" aria-hidden="true">
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/></svg>
                     </span>
-                    <span className="task-card-v2-merchant-name">{(() => {
-                      const raw = t.restaurant_name || (t.dropoff_merchant && !/^\d+$/.test(String(t.dropoff_merchant).trim()) ? t.dropoff_merchant : null) || '—';
-                      const name = sanitizeMerchantDisplayName(raw) || '—';
-                      const s = String(name).slice(0, 40);
-                      return s + (String(name).length > 40 ? '…' : '');
-                    })()}</span>
+                    <span className="task-card-v2-merchant-name">{shortMerchantName}</span>
                     {isUnassigned && (
                       <button
                         type="button"
@@ -920,15 +929,16 @@ export default function TaskPanel({ onOpenTaskDetails, onFocusTaskOnMap, listRev
                     <span className="task-card-v2-customer">{t.customer_name || '—'}</span>
                   </div>
                   <div className="task-card-v2-address-wrap">
+                    <div className="task-card-v2-address-zone">
+                      <span className={`task-location-chip task-location-chip--${locationZone}`} title={`Location zone: ${getLocationZoneLabel(locationZone)}`}>
+                        {getLocationZoneLabel(locationZone)}
+                      </span>
+                    </div>
                     <div
                       className="task-card-v2-address"
-                      title={sanitizeLocationDisplayName(t.delivery_address) || undefined}
+                      title={deliveryAddress || undefined}
                     >
-                      {(() => {
-                        const addr = sanitizeLocationDisplayName(t.delivery_address) || '—';
-                        const maxLen = 90;
-                        return addr.length > maxLen ? `${addr.slice(0, maxLen)}…` : addr;
-                      })()}
+                      {shortDeliveryAddress}
                     </div>
                   </div>
                   {advanceLines && (

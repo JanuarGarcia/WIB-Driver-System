@@ -71,6 +71,23 @@
   /* Errand (ErrandWib) — distinct from orange task + purple merchant */
   --map-pin-errand-fill: #c026d3;
   --map-pin-errand-inner: #fdf4ff;
+  /* Task location zones (light) */
+  --zone-default: #94a3b8;
+  --zone-trinidad: #bcc2cc;
+  --zone-brookside: #41c3df;
+  --zone-pacdal: #dcc64f;
+  --zone-session: #b8b35d;
+  --zone-alonzo: #6fb7cd;
+  --zone-pinsao: #86cb8f;
+  --zone-engineer: #d08fb9;
+  --zone-loakan: #ea6b79;
+  --zone-camp7: #e0b35a;
+  --zone-citycamp: #8a95e7;
+  --zone-bakakeng: #5f84e0;
+  --zone-campo: #bc9a7d;
+  --zone-asin: #9a62c6;
+  --zone-irisan-start: #57c3af;
+  --zone-irisan-end: #b07fc5;
   /* Agent panel: queue count on primary-green header (readable in light & dark) */
   --agent-queue-badge-ring: rgba(255, 255, 255, 0.98);
   --agent-queue-badge-shadow: 0 1px 3px rgba(0, 0, 0, 0.22), 0 0 0 1px rgba(0, 0, 0, 0.06);
@@ -147,6 +164,23 @@
   --map-pin-task-inner: #fff7ed;
   --map-pin-errand-fill: #e879f9;
   --map-pin-errand-inner: #3b0764;
+  /* Task location zones (dark, toned for readability) */
+  --zone-default: #64748b;
+  --zone-trinidad: #9aa4b1;
+  --zone-brookside: #56b8cd;
+  --zone-pacdal: #d7c067;
+  --zone-session: #bcb870;
+  --zone-alonzo: #66a3b7;
+  --zone-pinsao: #73b980;
+  --zone-engineer: #be86ac;
+  --zone-loakan: #dc6f7f;
+  --zone-camp7: #d4a75c;
+  --zone-citycamp: #7c89d8;
+  --zone-bakakeng: #6d8bda;
+  --zone-campo: #a98a71;
+  --zone-asin: #8b66b4;
+  --zone-irisan-start: #479e8f;
+  --zone-irisan-end: #86689a;
 }
 
 /* Dark mode: ensure all text inputs have visible text, placeholder, and caret */
@@ -4888,6 +4922,75 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
   border: none;
 }
 [data-theme="dark"] .task-card-v2-address-wrap { background: rgba(255, 255, 255, 0.05); }
+.task-card-v2-address-zone {
+  display: flex;
+  align-items: center;
+  margin-bottom: 0.38rem;
+}
+.task-card-all-tasks-location-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+.task-location-chip {
+  --zone-solid: var(--zone-default);
+  display: inline-flex;
+  align-items: center;
+  max-width: fit-content;
+  border-radius: 999px;
+  padding: 0.14rem 0.52rem 0.14rem 0.44rem;
+  border: 1px solid color-mix(in srgb, var(--zone-solid) 44%, transparent);
+  background: color-mix(in srgb, var(--zone-solid) 18%, var(--bg-card));
+  color: var(--text-dark);
+  font-size: 0.66rem;
+  line-height: 1.1;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  font-weight: 700;
+}
+.task-location-chip::before {
+  content: '';
+  width: 0.34rem;
+  height: 0.34rem;
+  border-radius: 50%;
+  margin-right: 0.34rem;
+  background: var(--zone-solid);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--zone-solid) 26%, transparent);
+}
+.task-location-chip--default { --zone-solid: var(--zone-default); }
+.task-location-chip--trinidad { --zone-solid: var(--zone-trinidad); }
+.task-location-chip--brookside { --zone-solid: var(--zone-brookside); }
+.task-location-chip--pacdal { --zone-solid: var(--zone-pacdal); }
+.task-location-chip--session { --zone-solid: var(--zone-session); }
+.task-location-chip--alonzo { --zone-solid: var(--zone-alonzo); }
+.task-location-chip--pinsao { --zone-solid: var(--zone-pinsao); }
+.task-location-chip--engineer { --zone-solid: var(--zone-engineer); }
+.task-location-chip--loakan { --zone-solid: var(--zone-loakan); }
+.task-location-chip--camp7 { --zone-solid: var(--zone-camp7); }
+.task-location-chip--citycamp { --zone-solid: var(--zone-citycamp); }
+.task-location-chip--bakakeng { --zone-solid: var(--zone-bakakeng); }
+.task-location-chip--campo { --zone-solid: var(--zone-campo); }
+.task-location-chip--asin { --zone-solid: var(--zone-asin); }
+.task-location-chip--irisanGradient {
+  --zone-solid: var(--zone-irisan-start);
+  border-color: color-mix(in srgb, var(--zone-irisan-start) 45%, var(--zone-irisan-end));
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--zone-irisan-start) 28%, var(--bg-card)) 0%,
+    color-mix(in srgb, var(--zone-irisan-end) 26%, var(--bg-card)) 100%
+  );
+}
+[data-theme="dark"] .task-location-chip {
+  border-color: color-mix(in srgb, var(--zone-solid) 56%, transparent);
+  background: color-mix(in srgb, var(--zone-solid) 24%, var(--bg-card));
+}
+[data-theme="dark"] .task-location-chip--irisanGradient {
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--zone-irisan-start) 26%, var(--bg-card)) 0%,
+    color-mix(in srgb, var(--zone-irisan-end) 24%, var(--bg-card)) 100%
+  );
+}
 /* Advance order (scheduled delivery from mt_order) */
 .task-card-v2-advance {
   margin-top: 0.5rem;

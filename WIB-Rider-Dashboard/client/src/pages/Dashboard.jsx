@@ -24,8 +24,12 @@ import { useMapMerchantFilterSelection } from '../components/MapMerchantFilter';
 import { hydrateMapMerchantFilterFromServer } from '../utils/mapMerchantFilterPrefs';
 import { api, userFacingApiError } from '../api';
 import { RIDER_NOTIFICATIONS_POLL_EVENT } from '../hooks/useNotifications';
+import { getToken } from '../auth';
 
 const MOBILE_DASHBOARD_MQ = '(max-width: 768px)';
+const MAP_DATA_MIN_REFRESH_MS = 1200;
+const MERCHANTS_REFRESH_MS = 60000;
+const ACTIVE_DRIVER_IDS_REFRESH_MS = 10000;
 import { useTeamFilter } from '../context/TeamFilterContext';
 import {
   DASHBOARD_TASKS_MAP_DATE_KEY,
@@ -119,6 +123,11 @@ export default function Dashboard() {
   const [tasksMapDateStr, setTasksMapDateStr] = useState(() => readEffectiveDashboardTaskDate());
   const [rawMapTasks, setRawMapTasks] = useState([]);
   const realtimeRefreshAtRef = useRef(0);
+  const mapDataInFlightRef = useRef(null);
+  const lastMapDataRefreshAtRef = useRef(0);
+  const lastMerchantsRefreshAtRef = useRef(0);
+  const activeIdsInFlightRef = useRef(null);
+  const lastActiveIdsRefreshAtRef = useRef(0);
   /** null = agent roster still loading (map shows all rider GPS pins); then filtered to Active panel roster. */
   const [activePanelDriverIdSet, setActivePanelDriverIdSet] = useState(null);
   const handleFocusRiderOnMap = useCallback(
@@ -138,33 +147,13 @@ export default function Dashboard() {
     ? `drivers/locations?team_id=${encodeURIComponent(selectedTeamId)}`
     : 'drivers/locations';
 
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const [loc, mer, taskList] = await Promise.all([
-          api(driversLocationsUrl).catch(() => []),
-          api('merchants/locations').catch(() => []),
-          api(`tasks?date=${encodeURIComponent(tasksMapDateStr)}`).catch(() => []),
-        ]);
-        if (cancelled) return;
-        setLocations(Array.isArray(loc) ? loc : []);
-        setMerchants(Array.isArray(mer) ? mer : []);
-        setRawMapTasks(Array.isArray(taskList) ? taskList : []);
-      } catch {
-        if (!cancelled) {
-          setLocations([]);
-          setMerchants([]);
-          setRawMapTasks([]);
-        }
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [driversLocationsUrl, tasksMapDateStr, taskListRevision]);
-
-  const refreshActivePanelDriverIds = useCallback(async () => {
+  const refreshActivePanelDriverIds = useCallback(async (opts = {}) => {
+    const force = opts.force === true;
+    const now = Date.now();
+    if (!force && now - lastActiveIdsRefreshAtRef.current < ACTIVE_DRIVER_IDS_REFRESH_MS) return;
+    if (activeIdsInFlightRef.current) return activeIdsInFlightRef.current;
+    const request = (async () => {
+      lastActiveIdsRefreshAtRef.current = now;
     const params = new URLSearchParams();
     params.set('date', todayDateStrLocal());
     if (selectedTeamId != null && selectedTeamId !== '') {
@@ -196,15 +185,63 @@ export default function Dashboard() {
     } catch {
       setActivePanelDriverIdSet(new Set());
     }
+    })();
+    activeIdsInFlightRef.current = request;
+    try {
+      await request;
+    } finally {
+      activeIdsInFlightRef.current = null;
+    }
   }, [selectedTeamId]);
 
+  const refreshMapData = useCallback(
+    async (opts = {}) => {
+      const force = opts.force === true;
+      const now = Date.now();
+      if (!force && now - lastMapDataRefreshAtRef.current < MAP_DATA_MIN_REFRESH_MS) return;
+      if (mapDataInFlightRef.current) return mapDataInFlightRef.current;
+      const refreshMerchants = force || now - lastMerchantsRefreshAtRef.current >= MERCHANTS_REFRESH_MS;
+      const request = (async () => {
+        lastMapDataRefreshAtRef.current = now;
+        try {
+          const [loc, taskList, merchantsOrNull] = await Promise.all([
+            api(driversLocationsUrl).catch(() => []),
+            api(`tasks?date=${encodeURIComponent(tasksMapDateStr)}`).catch(() => []),
+            refreshMerchants ? api('merchants/locations').catch(() => []) : Promise.resolve(null),
+          ]);
+          setLocations(Array.isArray(loc) ? loc : []);
+          setRawMapTasks(Array.isArray(taskList) ? taskList : []);
+          if (refreshMerchants) {
+            setMerchants(Array.isArray(merchantsOrNull) ? merchantsOrNull : []);
+            lastMerchantsRefreshAtRef.current = Date.now();
+          }
+        } catch {
+          setLocations([]);
+          setRawMapTasks([]);
+          if (refreshMerchants) setMerchants([]);
+        }
+      })();
+      mapDataInFlightRef.current = request;
+      try {
+        await request;
+      } finally {
+        mapDataInFlightRef.current = null;
+      }
+    },
+    [driversLocationsUrl, tasksMapDateStr]
+  );
+
   useEffect(() => {
-    refreshActivePanelDriverIds();
+    refreshMapData({ force: true });
+  }, [refreshMapData, taskListRevision]);
+
+  useEffect(() => {
+    refreshActivePanelDriverIds({ force: true });
   }, [refreshActivePanelDriverIds]);
 
   useEffect(() => {
     if (taskListRevision < 1) return;
-    refreshActivePanelDriverIds();
+    refreshActivePanelDriverIds({ force: true });
   }, [taskListRevision, refreshActivePanelDriverIds]);
 
   const filteredMerchantsForMap = useMemo(() => {
@@ -270,26 +307,6 @@ export default function Dashboard() {
   const mapShowsNoMarkers =
     filteredLocationsForMap.length === 0 && filteredMerchantsForMap.length === 0 && filteredMapTasks.length === 0;
 
-  const refreshMapData = useCallback(() => {
-    (async () => {
-      try {
-        const [loc, mer, taskList] = await Promise.all([
-          api(driversLocationsUrl).catch(() => []),
-          api('merchants/locations').catch(() => []),
-          api(`tasks?date=${encodeURIComponent(tasksMapDateStr)}`).catch(() => []),
-        ]);
-        setLocations(Array.isArray(loc) ? loc : []);
-        setMerchants(Array.isArray(mer) ? mer : []);
-        setRawMapTasks(Array.isArray(taskList) ? taskList : []);
-      } catch {
-        setLocations([]);
-        setMerchants([]);
-        setRawMapTasks([]);
-      }
-    })();
-    refreshActivePanelDriverIds();
-  }, [driversLocationsUrl, tasksMapDateStr, refreshActivePanelDriverIds]);
-
   const refreshMapSettings = () => {
     api('settings')
       .then((s) => {
@@ -327,20 +344,58 @@ export default function Dashboard() {
       const now = Date.now();
       if (now - lastWindowFocusRefreshRef.current < 20000) return;
       lastWindowFocusRefreshRef.current = now;
-      refreshMapData();
+      refreshMapData({ force: true });
+      refreshActivePanelDriverIds({ force: true });
     };
     window.addEventListener('focus', onFocus);
     return () => window.removeEventListener('focus', onFocus);
-  }, [location.pathname, refreshMapData]);
+  }, [location.pathname, refreshMapData, refreshActivePanelDriverIds]);
 
   useEffect(() => {
     if (location.pathname !== '/' || disableActivityTracking) return;
     const ms = Math.min(10000, Math.max(5000, activityRefreshIntervalSec * 1000));
     const id = setInterval(() => {
-      if (document.visibilityState === 'visible') refreshMapData();
+      if (document.visibilityState === 'visible') {
+        refreshMapData();
+        refreshActivePanelDriverIds();
+      }
     }, ms);
     return () => clearInterval(id);
-  }, [location.pathname, disableActivityTracking, activityRefreshIntervalSec, driversLocationsUrl, refreshMapData]);
+  }, [location.pathname, disableActivityTracking, activityRefreshIntervalSec, driversLocationsUrl, refreshMapData, refreshActivePanelDriverIds]);
+
+  useEffect(() => {
+    if (location.pathname !== '/') return undefined;
+    const token = getToken();
+    if (!token) return undefined;
+    const date = encodeURIComponent(tasksMapDateStr || '');
+    const es = new EventSource(`/api/realtime/stream?token=${encodeURIComponent(token)}&date=${date}`);
+    let closed = false;
+
+    const onRealtime = () => {
+      if (closed) return;
+      try {
+        window.dispatchEvent(new CustomEvent(RIDER_NOTIFICATIONS_POLL_EVENT, { detail: { delayMs: 120 } }));
+      } catch (_) {}
+      bumpTaskLists();
+      refreshMapData();
+      refreshActivePanelDriverIds();
+    };
+
+    es.addEventListener('dashboard_update', onRealtime);
+    es.onerror = () => {
+      // EventSource auto-reconnects; keep existing polling fallback untouched.
+    };
+
+    return () => {
+      closed = true;
+      try {
+        es.removeEventListener('dashboard_update', onRealtime);
+      } catch (_) {}
+      try {
+        es.close();
+      } catch (_) {}
+    };
+  }, [location.pathname, tasksMapDateStr, bumpTaskLists, refreshMapData, refreshActivePanelDriverIds]);
 
   useEffect(() => {
     if (location.pathname !== '/') return undefined;
@@ -359,6 +414,7 @@ export default function Dashboard() {
         timer = null;
         bumpTaskLists();
         refreshMapData();
+        refreshActivePanelDriverIds();
       }, delayMs);
     };
     window.addEventListener(RIDER_NOTIFICATIONS_POLL_EVENT, onRealtime);
@@ -366,7 +422,7 @@ export default function Dashboard() {
       if (timer) clearTimeout(timer);
       window.removeEventListener(RIDER_NOTIFICATIONS_POLL_EVENT, onRealtime);
     };
-  }, [location.pathname, bumpTaskLists, refreshMapData]);
+  }, [location.pathname, bumpTaskLists, refreshMapData, refreshActivePanelDriverIds]);
 
   useEffect(() => {
     if (typeof window === 'undefined' || !window.matchMedia(MOBILE_DASHBOARD_MQ).matches) return undefined;

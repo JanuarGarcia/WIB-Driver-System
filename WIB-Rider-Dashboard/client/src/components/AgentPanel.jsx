@@ -9,6 +9,7 @@ import { sanitizeLocationDisplayName, sanitizeMerchantDisplayName, shortTaskOrde
 import { getAdvanceOrderLines } from '../utils/advanceOrder';
 import { todayDateStrLocal, taskDropoffLatLng, riderGpsFromLocations } from '../utils/mapTasks';
 import { isLiveConnection, isOnDuty, isAgentPanelOnline } from '../utils/agentPanelRiders';
+import { getLocationZone, getLocationZoneLabel } from '../utils/locationZones';
 
 const TABS = ['active', 'offline', 'total'];
 const AGENT_REFRESH_INTERVAL_MS = 8000;
@@ -696,62 +697,65 @@ const AgentPanel = forwardRef(function AgentPanel(
 
   // Statistics: only drivers with account status = active; normalize status/online fields safely.
   // Defensive team scope: always match dashboard team filter even if API returns extra rows.
-  const allDriversRaw = Array.isArray(details.total) ? details.total : [];
-  const allDrivers =
-    selectedTeamId != null && selectedTeamId !== ''
+  const allDrivers = useMemo(() => {
+    const allDriversRaw = Array.isArray(details.total) ? details.total : [];
+    return selectedTeamId != null && selectedTeamId !== ''
       ? allDriversRaw.filter((d) => String(d.team_id ?? '') === String(selectedTeamId))
       : allDriversRaw;
+  }, [details.total, selectedTeamId]);
 
-  const activeDrivers = allDrivers.filter((d) => {
-    const status = String(d?.status ?? '').toLowerCase().trim();
-    // Treat NULL/blank status as active (matches backend behavior and `/drivers` endpoint).
-    return status === '' || status === 'active';
-  });
+  const activeDrivers = useMemo(
+    () =>
+      allDrivers.filter((d) => {
+        const status = String(d?.status ?? '').toLowerCase().trim();
+        // Treat NULL/blank status as active (matches backend behavior and `/drivers` endpoint).
+        return status === '' || status === 'active';
+      }),
+    [allDrivers]
+  );
 
-  const totalCount = activeDrivers.length;
+  const derivedStats = useMemo(() => {
+    const total = activeDrivers.length;
+    const active = activeDrivers.filter(isAgentPanelOnline).length;
+    return {
+      total,
+      active,
+      offline: total - active,
+    };
+  }, [activeDrivers]);
 
-  const onlineCount = activeDrivers.filter(isAgentPanelOnline).length;
+  const filtered = useMemo(() => {
+    const filteredByTab =
+      activeTab === 'active'
+        ? activeDrivers.filter(isAgentPanelOnline)
+        : activeTab === 'offline'
+          ? activeDrivers.filter((d) => !isAgentPanelOnline(d))
+          : activeDrivers;
+    const searchLower = (searchQuery || '').trim().toLowerCase();
+    const filteredBySearch =
+      searchLower === ''
+        ? filteredByTab
+        : filteredByTab.filter((d) => {
+            const name = (d.full_name || d.username || '').toLowerCase();
+            const location = (d.current_location || '').toLowerCase();
+            const phone = String(d.phone || '').toLowerCase();
+            return name.includes(searchLower) || location.includes(searchLower) || phone.includes(searchLower);
+          });
+    return [...filteredBySearch].sort((a, b) => {
+      const nameA = (a.full_name || a.username || `Driver #${a.id}`).toLowerCase();
+      const nameB = (b.full_name || b.username || `Driver #${b.id}`).toLowerCase();
+      if (sortBy === 'name-asc') return nameA.localeCompare(nameB);
+      if (sortBy === 'name-desc') return nameB.localeCompare(nameA);
+      if (sortBy === 'status') return ((isOnDuty(a) ? 0 : 1) - (isOnDuty(b) ? 0 : 1));
+      return 0;
+    });
+  }, [activeTab, activeDrivers, searchQuery, sortBy]);
 
-  const offlineCount = totalCount - onlineCount;
-
-  const derivedStats = {
-    total: totalCount,
-    active: onlineCount,
-    offline: offlineCount,
-  };
-
-  const filteredByTab =
-    activeTab === 'active'
-      ? activeDrivers.filter(isAgentPanelOnline)
-      : activeTab === 'offline'
-        ? activeDrivers.filter((d) => !isAgentPanelOnline(d))
-        : activeDrivers;
-
-  const searchLower = (searchQuery || '').trim().toLowerCase();
-  const filteredBySearch =
-    searchLower === ''
-      ? filteredByTab
-      : filteredByTab.filter((d) => {
-          const name = (d.full_name || d.username || '').toLowerCase();
-          const location = (d.current_location || '').toLowerCase();
-          const phone = String(d.phone || '').toLowerCase();
-          return name.includes(searchLower) || location.includes(searchLower) || phone.includes(searchLower);
-        });
-
-  const filtered = [...filteredBySearch].sort((a, b) => {
-    const nameA = (a.full_name || a.username || `Driver #${a.id}`).toLowerCase();
-    const nameB = (b.full_name || b.username || `Driver #${b.id}`).toLowerCase();
-    if (sortBy === 'name-asc') return nameA.localeCompare(nameB);
-    if (sortBy === 'name-desc') return nameB.localeCompare(nameA);
-    if (sortBy === 'status') return ((isOnDuty(a) ? 0 : 1) - (isOnDuty(b) ? 0 : 1));
-    return 0;
-  });
-
-  const agentStatItems = [
+  const agentStatItems = useMemo(() => [
     { key: 'active', label: 'Active', count: derivedStats.active, highlight: activeTab === 'active', icon: 'active' },
     { key: 'offline', label: 'Offline', count: derivedStats.offline, highlight: activeTab === 'offline', icon: 'offline' },
     { key: 'total', label: 'Total', count: derivedStats.total, highlight: activeTab === 'total', icon: 'total' },
-  ];
+  ], [activeTab, derivedStats.active, derivedStats.offline, derivedStats.total]);
 
 
   const handleSendClick = () => {
@@ -759,7 +763,7 @@ const AgentPanel = forwardRef(function AgentPanel(
   };
 
   const totalQueued = queueList.length;
-  const nextInLine = totalQueued > 0 ? queueList[0] : null;
+  const nextInLine = useMemo(() => (totalQueued > 0 ? queueList[0] : null), [queueList, totalQueued]);
 
   return (
     <div
@@ -956,6 +960,8 @@ const AgentPanel = forwardRef(function AgentPanel(
                   const rawLocation = t.delivery_address || t.restaurant_name || (t.dropoff_merchant && !/^\d+$/.test(String(t.dropoff_merchant).trim()) ? t.dropoff_merchant : null) || '';
                   const location = sanitizeLocationDisplayName(rawLocation) || '—';
                   const locationShort = location.length > 50 ? `${location.slice(0, 50)}…` : location;
+                  const locationZone = location !== '—' ? getLocationZone(location) : 'default';
+                  const locationZoneLabel = getLocationZoneLabel(locationZone);
                   const orderedTime = created ? created.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit', hour12: true }) : null;
                   const advanceLines = getAdvanceOrderLines(t, t.date_created);
                   const mapFocusCoords = taskDropoffLatLng(t);
@@ -989,7 +995,12 @@ const AgentPanel = forwardRef(function AgentPanel(
                             )}
                           </div>
                           {location !== '—' && (
-                            <div className="task-card-all-tasks-location" title={location}>{locationShort}</div>
+                            <div className="task-card-all-tasks-location-wrap">
+                              <span className={`task-location-chip task-location-chip--${locationZone}`} title={`Location zone: ${locationZoneLabel}`}>
+                                {locationZoneLabel}
+                              </span>
+                              <div className="task-card-all-tasks-location" title={location}>{locationShort}</div>
+                            </div>
                           )}
                           {advanceLines && (
                             <div className="task-card-v2-advance task-card-all-tasks-advance" role="status" aria-label="Advance order schedule">

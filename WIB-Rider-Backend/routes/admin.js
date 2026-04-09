@@ -207,6 +207,136 @@ router.get('/auth/me', requireDashboardToken, (req, res) => {
   res.json(req.adminUser);
 });
 
+/** EventSource cannot set custom headers in browsers; allow token from query for SSE only. */
+async function requireDashboardTokenForSse(req, res, next) {
+  const token = (req.headers['x-dashboard-token'] || req.query.token || '').toString().trim();
+  if (!token) return res.status(401).json({ error: 'Unauthorized' });
+  try {
+    const [[user]] = await pool.query(
+      'SELECT admin_id, username, email_address, first_name, last_name, role FROM mt_admin_user WHERE session_token = ? AND (status IS NULL OR status = 1 OR status = ?) LIMIT 1',
+      [token, 'active']
+    );
+    if (!user) return res.status(401).json({ error: 'Unauthorized' });
+    req.adminUser = user;
+    return next();
+  } catch (e) {
+    if (e.code === 'ER_NO_SUCH_TABLE') return res.status(401).json({ error: 'Unauthorized' });
+    return next(e);
+  }
+}
+
+/**
+ * Real-time dashboard stream (SSE): emits lightweight update pings when task-related cursors move.
+ * Client keeps existing polling as fallback; this route only accelerates refresh-to-screen latency.
+ */
+router.get('/realtime/stream', requireDashboardTokenForSse, async (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  if (typeof res.flushHeaders === 'function') res.flushHeaders();
+  const safeWrite = (chunk) => {
+    try {
+      res.write(chunk);
+    } catch (_) {}
+  };
+  safeWrite(`event: hello\ndata: ${JSON.stringify({ ok: true, ts: Date.now() })}\n\n`);
+
+  const dateStr =
+    req.query.date != null && String(req.query.date).trim() !== '' && /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.date).trim())
+      ? String(req.query.date).trim()
+      : null;
+
+  let closed = false;
+  let cursorHistory = 0;
+  let cursorPhoto = 0;
+  let cursorErrand = 0;
+  let cursorTask = 0;
+
+  const poll = async () => {
+    if (closed) return;
+    let nextHistory = cursorHistory;
+    let nextPhoto = cursorPhoto;
+    let nextErrand = cursorErrand;
+    let nextTask = cursorTask;
+
+    try {
+      const [[h]] = await pool.query('SELECT COALESCE(MAX(id), 0) AS m FROM mt_order_history');
+      nextHistory = Number(h?.m) || 0;
+    } catch (e) {
+      if (e.code !== 'ER_NO_SUCH_TABLE' && e.code !== 'ER_BAD_FIELD_ERROR') throw e;
+    }
+    try {
+      const [[p]] = await pool.query('SELECT COALESCE(MAX(id), 0) AS m FROM mt_driver_task_photo');
+      nextPhoto = Number(p?.m) || 0;
+    } catch (e) {
+      if (e.code !== 'ER_NO_SUCH_TABLE' && e.code !== 'ER_BAD_FIELD_ERROR') throw e;
+    }
+    try {
+      if (dateStr) {
+        const [[t]] = await pool.query(
+          'SELECT COALESCE(MAX(task_id), 0) AS m FROM mt_driver_task WHERE (delivery_date = ? OR DATE(delivery_date) = ?)',
+          [dateStr, dateStr]
+        );
+        nextTask = Number(t?.m) || 0;
+      } else {
+        const [[t]] = await pool.query('SELECT COALESCE(MAX(task_id), 0) AS m FROM mt_driver_task');
+        nextTask = Number(t?.m) || 0;
+      }
+    } catch (e) {
+      if (e.code !== 'ER_NO_SUCH_TABLE' && e.code !== 'ER_BAD_FIELD_ERROR') throw e;
+    }
+    if (errandWibPool) {
+      try {
+        const [[eh]] = await errandWibPool.query('SELECT COALESCE(MAX(id), 0) AS m FROM st_ordernew_history');
+        nextErrand = Number(eh?.m) || 0;
+      } catch (e) {
+        if (e.code !== 'ER_NO_SUCH_TABLE' && e.code !== 'ER_BAD_FIELD_ERROR') throw e;
+      }
+    }
+
+    const changed =
+      nextHistory > cursorHistory ||
+      nextPhoto > cursorPhoto ||
+      nextErrand > cursorErrand ||
+      nextTask > cursorTask;
+
+    if (changed) {
+      cursorHistory = nextHistory;
+      cursorPhoto = nextPhoto;
+      cursorErrand = nextErrand;
+      cursorTask = nextTask;
+      safeWrite(
+        `event: dashboard_update\ndata: ${JSON.stringify({
+          ts: Date.now(),
+          historyCursor: cursorHistory,
+          photoCursor: cursorPhoto,
+          errandCursor: cursorErrand,
+          taskCursor: cursorTask,
+          hasUpdate: true,
+        })}\n\n`
+      );
+    }
+  };
+
+  const beatId = setInterval(() => {
+    if (!closed) safeWrite(`event: heartbeat\ndata: ${Date.now()}\n\n`);
+  }, 20000);
+  const pollId = setInterval(() => {
+    poll().catch((e) => {
+      safeWrite(`event: error\ndata: ${JSON.stringify({ error: e.message || 'stream error' })}\n\n`);
+    });
+  }, 2000);
+
+  poll().catch(() => {});
+
+  req.on('close', () => {
+    closed = true;
+    clearInterval(beatId);
+    clearInterval(pollId);
+  });
+});
+
 router.use(adminAuth);
 
 /**
