@@ -33,6 +33,8 @@ const { formatActorFromDriver } = require('../lib/dashboardRiderNotify');
 const { insertMtOrderHistoryRow } = require('../lib/mtOrderHistoryInsert');
 const { notifyDashboardAfterMtTaskHistoryRow } = require('../lib/mtTaskStatusDashboardNotify');
 const { sendCustomerTaskMessage } = require('../lib/sendCustomerTaskMessage');
+const { notifyCustomerFoodTaskStatusPushFireAndForget } = require('../lib/customerOrderPushDispatch');
+const { updateMtOrderStatusIfDeliveryComplete } = require('../lib/mtOrderStatusSync');
 
 const uploadDir = path.join(__dirname, '..', 'uploads', 'profiles');
 if (!fs.existsSync(uploadDir)) {
@@ -1311,7 +1313,7 @@ router.post('/ChangeTaskStatus', validateApiKey, resolveDriver, async (req, res)
     .trim();
 
   const [[task]] = await pool.query(
-    'SELECT task_id, order_id, driver_id, task_description FROM mt_driver_task WHERE task_id = ? LIMIT 1',
+    'SELECT task_id, order_id, driver_id, task_description, status AS prev_status FROM mt_driver_task WHERE task_id = ? LIMIT 1',
     [tid]
   );
   if (!task || task.driver_id !== req.driver.id) {
@@ -1365,6 +1367,11 @@ router.post('/ChangeTaskStatus', validateApiKey, resolveDriver, async (req, res)
     } catch (_) {
       /* optional payment update */
     }
+    try {
+      await updateMtOrderStatusIfDeliveryComplete(pool, oid, status);
+    } catch (_) {
+      /* mt_order.status optional — do not fail task status */
+    }
   }
 
   let historyInsertId = null;
@@ -1409,6 +1416,13 @@ router.post('/ChangeTaskStatus', validateApiKey, resolveDriver, async (req, res)
       },
     });
   } catch (_) {}
+
+  notifyCustomerFoodTaskStatusPushFireAndForget(pool, {
+    taskId: tid,
+    orderId: task.order_id,
+    prevStatusRaw: task.prev_status,
+    newStatusRaw: status,
+  });
 
   return success(res, null);
 });

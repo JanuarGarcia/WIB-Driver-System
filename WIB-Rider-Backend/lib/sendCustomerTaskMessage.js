@@ -1,5 +1,6 @@
 const { sendPushToFcmToken } = require('../services/fcm');
 const { fetchClientFcmTokenAndDeviceRef } = require('./customerFcmToken');
+const { insertMtMobile2PushLog } = require('./mtMobile2PushLogs');
 const { deriveErrandDriverTaskStatus, isTerminal } = require('./errandDriverStatus');
 const { fetchErrandLatestHistoryStatusByOrderIds } = require('./errandOrders');
 
@@ -60,39 +61,6 @@ function truncNotifyBody(s) {
   const t = String(s || '');
   if (t.length <= NOTIFY_BODY_MAX) return t;
   return `${t.slice(0, NOTIFY_BODY_MAX - 1)}…`;
-}
-
-/**
- * @param {import('mysql2/promise').Pool} pool
- * @param {object} row
- */
-async function tryLogMtMobile2Push(pool, row) {
-  const { clientId, deviceId, deviceUiid, title, body, pushType, status, jsonResponse } = row;
-  const attempts = [
-    {
-      sql: `INSERT INTO mt_mobile2_push_logs (client_id, device_id, device_uiid, push_title, push_message, push_type, status, json_response, date_created)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
-      args: [clientId, deviceId, deviceUiid, title, body, pushType, status, jsonResponse],
-    },
-    {
-      sql: `INSERT INTO mt_mobile2_push_logs (client_id, device_id, push_title, push_message, push_type, status, json_response, date_created)
-            VALUES (?, ?, ?, ?, ?, ?, ?, NOW())`,
-      args: [clientId, deviceId, title, body, pushType, status, jsonResponse],
-    },
-  ];
-  for (const p of attempts) {
-    try {
-      await pool.query(p.sql, p.args);
-      return;
-    } catch (e) {
-      if (e.code === 'ER_NO_SUCH_TABLE' || e.code === 'ER_BAD_FIELD_ERROR') {
-        /* try narrower insert */
-      } else {
-        /* optional log — do not fail API */
-        console.warn('[SendCustomerTaskMessage] mt_mobile2_push_logs insert:', e.message);
-      }
-    }
-  }
 }
 
 /**
@@ -279,7 +247,7 @@ async function sendCustomerTaskMessage(pool, errandWibPool, driver, body) {
     error: pushResult.error || null,
   });
 
-  await tryLogMtMobile2Push(pool, {
+  await insertMtMobile2PushLog(pool, {
     clientId,
     deviceId: fcmToken ? fcmToken.slice(0, 512) : null,
     deviceUiid: deviceRef ? deviceRef.slice(0, 255) : null,

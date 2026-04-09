@@ -51,7 +51,11 @@ const {
   milestoneDedupeKeyForTask,
   classifyTimelineHistoryForDashboardNotify,
 } = require('../lib/dashboardTimelineNotifyClassify');
-const { notifyCustomerRiderAssignedForFoodTaskFireAndForget } = require('../lib/customerOrderPushDispatch');
+const {
+  notifyCustomerRiderAssignedForFoodTaskFireAndForget,
+  notifyCustomerFoodTaskStatusPushFireAndForget,
+} = require('../lib/customerOrderPushDispatch');
+const { updateMtOrderStatusIfDeliveryComplete } = require('../lib/mtOrderStatusSync');
 
 const ADMIN_SECRET = process.env.ADMIN_SECRET || '';
 
@@ -3671,6 +3675,12 @@ router.put('/tasks/:id/status', express.json(), async (req, res) => {
   const remarks = reason != null && String(reason).trim() ? String(reason).trim() : '';
 
   try {
+    const [[taskBefore]] = await pool.query('SELECT order_id, status FROM mt_driver_task WHERE task_id = ? LIMIT 1', [
+      taskId,
+    ]);
+    if (!taskBefore) return res.status(404).json({ error: 'Task not found' });
+    const prevTaskStatus = taskBefore.status;
+
     let result;
     if (newStatus === 'unassigned') {
       try {
@@ -3695,6 +3705,16 @@ router.put('/tasks/:id/status', express.json(), async (req, res) => {
       );
     }
     if (result.affectedRows === 0) return res.status(404).json({ error: 'Task not found' });
+
+    try {
+      const oid =
+        taskBefore.order_id != null ? parseInt(String(taskBefore.order_id), 10) : NaN;
+      if (Number.isFinite(oid) && oid > 0) {
+        await updateMtOrderStatusIfDeliveryComplete(pool, oid, newStatus);
+      }
+    } catch (_) {
+      /* mt_order.status optional */
+    }
 
     let historyInsertId = null;
     try {
@@ -3734,6 +3754,13 @@ router.put('/tasks/:id/status', express.json(), async (req, res) => {
         },
       });
     } catch (_) {}
+
+    notifyCustomerFoodTaskStatusPushFireAndForget(pool, {
+      taskId,
+      orderId: taskBefore.order_id,
+      prevStatusRaw: prevTaskStatus,
+      newStatusRaw: newStatus,
+    });
 
     return res.json({ ok: true, status: newStatus });
   } catch (e) {
