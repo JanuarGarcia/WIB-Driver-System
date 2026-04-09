@@ -215,11 +215,12 @@ export default function Dashboard() {
           total_task: r.total_task ?? 0,
         }));
         idSet = buildActivePanelDriverIdSet({ active: [], offline: [], total: normalized }, selectedTeamId);
-        if (idSet === null) idSet = new Set();
+        if (idSet === null) idSet = null;
       }
       setActivePanelDriverIdSet(idSet);
     } catch {
-      setActivePanelDriverIdSet(new Set());
+      // Keep all rider GPS pins visible on transient failures.
+      setActivePanelDriverIdSet(null);
     }
     })();
     activeIdsInFlightRef.current = request;
@@ -240,23 +241,32 @@ export default function Dashboard() {
       const request = (async () => {
         lastMapDataRefreshAtRef.current = now;
         try {
-          const [loc, taskList, merchantsOrNull] = await Promise.all([
+          const [loc, taskList] = await Promise.all([
             api(driversLocationsUrl).catch(() => []),
             api(`tasks?date=${encodeURIComponent(tasksMapDateStr)}`).catch(() => []),
-            refreshMerchants ? api('merchants/locations').catch(() => []) : Promise.resolve(null),
           ]);
-          setLocations(Array.isArray(loc) ? loc : []);
-          setRawMapTasks(Array.isArray(taskList) ? taskList : []);
-          if (refreshMerchants) {
-            setMerchants(Array.isArray(merchantsOrNull) ? merchantsOrNull : []);
-            lastMerchantsRefreshAtRef.current = Date.now();
-          }
+          const nextLoc = Array.isArray(loc) ? loc : [];
+          const nextTasks = Array.isArray(taskList) ? taskList : [];
+          setLocations(nextLoc);
+          setRawMapTasks(nextTasks);
           writeJsonSessionStorage(mapDataCacheKey, {
             at: Date.now(),
-            locations: Array.isArray(loc) ? loc : [],
-            merchants: refreshMerchants ? (Array.isArray(merchantsOrNull) ? merchantsOrNull : []) : merchants,
-            tasks: Array.isArray(taskList) ? taskList : [],
+            locations: nextLoc,
+            merchants,
+            tasks: nextTasks,
           });
+          if (refreshMerchants) {
+            const merchantsOrNull = await api('merchants/locations').catch(() => null);
+            const nextMerchants = Array.isArray(merchantsOrNull) ? merchantsOrNull : merchants;
+            setMerchants(nextMerchants);
+            lastMerchantsRefreshAtRef.current = Date.now();
+            writeJsonSessionStorage(mapDataCacheKey, {
+              at: Date.now(),
+              locations: nextLoc,
+              merchants: nextMerchants,
+              tasks: nextTasks,
+            });
+          }
         } catch {
           setLocations([]);
           setRawMapTasks([]);

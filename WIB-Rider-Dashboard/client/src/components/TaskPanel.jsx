@@ -898,7 +898,7 @@ export default function TaskPanel({ onOpenTaskDetails, onFocusTaskOnMap, listRev
           ))}
       </div>
       <div className={`panel-body ${filtered.length === 0 ? 'empty' : ''}`}>
-        {loading && 'Loading…'}
+        {loading && filtered.length === 0 && 'Loading…'}
         {!loading && filtered.length === 0 && (
           scheduledOrdersOnly
             ? 'No scheduled orders for this date'
@@ -906,7 +906,7 @@ export default function TaskPanel({ onOpenTaskDetails, onFocusTaskOnMap, listRev
               ? `No ${problemTaskFilter} tasks for this date`
               : 'No tasks'
         )}
-        {!loading && filtered.length > 0 && (
+        {filtered.length > 0 && (
           <ul className="task-card-list">
             {(showAllInList ? filtered : filtered.slice(0, 20)).map((t) => {
               const statusNorm = normStatus(t.status);
@@ -981,7 +981,7 @@ export default function TaskPanel({ onOpenTaskDetails, onFocusTaskOnMap, listRev
                       </button>
                     )}
                   </div>
-                  {!advanceLines && showRfpBanner ? (
+                  {showRfpBanner ? (
                     <TaskCardReadyForPickupBanner className="task-card-v2-rfp-banner--below-pickup" />
                   ) : null}
                   <div className="task-card-v2-row task-card-v2-customer-row">
@@ -1014,9 +1014,6 @@ export default function TaskPanel({ onOpenTaskDetails, onFocusTaskOnMap, listRev
                       ) : null}
                     </div>
                   )}
-                  {advanceLines && showRfpBanner ? (
-                    <TaskCardReadyForPickupBanner className="task-card-v2-rfp-banner--below-advance" />
-                  ) : null}
                   {isUnassigned && waitingMins && (
                     <div className="task-card-v2-waiting">
                       <span className="task-card-v2-icon" aria-hidden="true">

@@ -1650,6 +1650,19 @@ function historyRowEffectiveStatusKey(row) {
 }
 
 /**
+ * Guardrail for task cards: Ready-for-pickup badge is only valid before pickup/delivery progresses.
+ * Even if older timeline rows contain an RFP milestone, hide it once task status moved forward.
+ */
+function allowReadyForPickupByCurrentTaskStatus(statusRaw) {
+  const s = normalizeDashboardHistoryStatusKey(statusRaw);
+  if (!s) return true;
+  if (s === 'unassigned' || s === 'assigned' || s === 'acknowledged' || s === 'readyforpickup') return true;
+  if (s === 'new' || s === 'queued' || s === 'pending') return true;
+  // Started/in-progress/completed/cancelled etc. should clear RFP badge on cards.
+  return false;
+}
+
+/**
  * Oldest-first history: RFP is "active" if the last Ready-for-pickup milestone has no later milestone
  * (same rules as dashboard notifications / timeline classifier: status, remarks, notes, etc.).
  */
@@ -1787,7 +1800,7 @@ async function attachTimelineReadyForPickupFlags(pool, errandPool, rows) {
       const merged = mergeOrderHistoryRowsForTaskFromPool(allMtHistory, tid, oid);
       active = isTimelineReadyForPickupActiveFromSortedHistory(merged);
     }
-    r.timeline_ready_for_pickup = Boolean(active);
+    r.timeline_ready_for_pickup = Boolean(active) && allowReadyForPickupByCurrentTaskStatus(r.status);
   }
 }
 

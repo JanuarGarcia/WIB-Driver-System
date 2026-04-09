@@ -1474,7 +1474,9 @@ function computeStOrdernewPaymentFieldsForDriver(row, clientAddressRow) {
     pickErrandMoneyStr(row.shipping_fee) ||
     pickErrandMoneyStr(row.delivery_fee);
 
+  // Mangan source of truth: st_ordernew.delivery_fee
   const delivery_fee =
+    pickErrandMoneyStr(row.delivery_fee) ||
     pickErrandMoneyStr(row.task_fee) ||
     pickErrandMoneyStr(row.rider_fee) ||
     pickErrandMoneyStr(row.driver_fee) ||
