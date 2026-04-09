@@ -27,12 +27,17 @@ function defaultProofTypeWhenOmitted() {
 }
 
 /**
- * DB NULL or missing → treated as delivery for legacy rows.
+ * DB NULL or missing → usually delivery. For legacy/ambiguous rows, detect receipt from filename hints.
  * @param {unknown} stored
+ * @param {unknown} photoName
  * @returns {TaskProofKind}
  */
-function normalizeStoredProofType(stored) {
-  if (stored == null || String(stored).trim() === '') return 'delivery';
+function normalizeStoredProofType(stored, photoName) {
+  if (stored == null || String(stored).trim() === '') {
+    const hint = String(photoName || '').trim().toLowerCase();
+    if (hint && /(receipt|proof[_-]?receipt)/i.test(hint)) return 'receipt';
+    return 'delivery';
+  }
   const s = String(stored).trim().toLowerCase();
   return s === 'receipt' ? 'receipt' : 'delivery';
 }
@@ -181,7 +186,7 @@ async function fetchTaskProofPhotosWithUrls(pool, taskId, orderId) {
     return Number(a.id) - Number(b.id);
   });
   const task_photos = rows.map((row) => {
-    const kind = normalizeStoredProofType(row.proof_type);
+    const kind = normalizeStoredProofType(row.proof_type, row.photo_name);
     return {
       ...row,
       proof_type: kind,
@@ -208,7 +213,7 @@ async function fetchTaskProofPhotosWithUrls(pool, taskId, orderId) {
 
 /**
  * Remove existing rows for this task + proof slot so a new upload replaces the same kind (receipt vs delivery).
- * Legacy rows with proof_type NULL count as delivery.
+ * Keep ambiguous legacy NULL rows (could include old receipt uploads) to avoid deleting valid proof history.
  * @param {import('mysql2/promise').Pool|import('mysql2/promise').PoolConnection} executor
  * @param {number} taskId
  * @param {TaskProofKind} proofKind
@@ -219,10 +224,10 @@ async function deleteDriverTaskProofSlot(executor, taskId, proofKind) {
     if (kind === 'receipt') {
       await executor.query('DELETE FROM mt_driver_task_photo WHERE task_id = ? AND proof_type = ?', [taskId, 'receipt']);
     } else {
-      await executor.query(
-        'DELETE FROM mt_driver_task_photo WHERE task_id = ? AND (proof_type = ? OR proof_type IS NULL)',
-        [taskId, 'delivery']
-      );
+      await executor.query('DELETE FROM mt_driver_task_photo WHERE task_id = ? AND proof_type = ?', [
+        taskId,
+        'delivery',
+      ]);
     }
   } catch (e) {
     if (e.code === 'ER_BAD_FIELD_ERROR') {

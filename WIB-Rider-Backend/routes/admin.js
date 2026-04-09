@@ -2102,7 +2102,7 @@ router.get('/tasks/:id/timeline-updates', async (req, res) => {
       }
       photo_events = (photoRows || []).map((row) => ({
         ...row,
-        proof_type: normalizeStoredProofType(row.proof_type),
+        proof_type: normalizeStoredProofType(row.proof_type, row.photo_name),
         proof_url: buildTaskProofImageUrl(row.photo_name),
       }));
       for (const r of photo_events) {
