@@ -1746,6 +1746,28 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
   background: var(--color-primary-tint-strong);
   color: var(--color-primary);
 }
+.rider-notif-card--new-order {
+  border-left-color: #f59e0b;
+  background:
+    linear-gradient(90deg, rgba(245, 158, 11, 0.09), rgba(245, 158, 11, 0.01) 28%),
+    var(--bg-card);
+}
+.rider-notif-card--new-order .rider-notif-card__badge {
+  background: rgba(245, 158, 11, 0.18);
+  color: #a16207;
+}
+.rider-notif-card--new-order .rider-notif-card__dot {
+  background: #f59e0b;
+}
+[data-theme="dark"] .rider-notif-card--new-order {
+  background:
+    linear-gradient(90deg, rgba(245, 158, 11, 0.18), rgba(245, 158, 11, 0.04) 30%),
+    var(--bg-card);
+}
+[data-theme="dark"] .rider-notif-card--new-order .rider-notif-card__badge {
+  background: rgba(245, 158, 11, 0.22);
+  color: #fbbf24;
+}
 .rider-notif-card--accepted .rider-notif-card__badge {
   background: var(--color-info-bg);
   color: var(--color-info);

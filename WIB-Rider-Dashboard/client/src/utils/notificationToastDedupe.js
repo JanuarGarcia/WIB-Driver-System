@@ -85,6 +85,7 @@ export function classifyHistoryRowForNotifyMilestone(row) {
   }
   if (keys.some((k) => k === 'inprogress' || normalizedBlobImpliesInProgress(k))) return 'inprogress';
   if (keys.some((k) => k === 'started')) return 'started';
+  if (keys.some((k) => k === 'new' || k === 'created' || k === 'unassigned' || k === 'queued')) return 'created';
   if (historyRowIsRiderAcceptance(row)) return 'accepted';
   if (keys.some((k) => k === 'acknowledged' || k === 'accepted' || k === 'accept')) return 'accepted';
   if (keys.some((k) => normalizedBlobImpliesTaskAccepted(k))) return 'accepted';
@@ -97,6 +98,7 @@ export function classifyHistoryRowForNotifyMilestone(row) {
  */
 function milestoneCategoryToNotificationType(category, row, isMangan) {
   if (!category) return null;
+  if (category === 'created') return 'new_task';
   if (category === 'ready_for_pickup') return null;
   if (category === 'accepted') {
     if (isMangan && normalizeTimelineStatusKey(row?.status) === 'assigned') return 'task_assigned';

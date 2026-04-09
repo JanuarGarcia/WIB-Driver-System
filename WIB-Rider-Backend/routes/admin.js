@@ -1881,8 +1881,17 @@ function timelineNotifyPayloadFromCategory(taskId, taskDescription, orderId, cat
   let payload = null;
   if (category === 'accepted') payload = { title: 'Task accepted', message: messageBase, type: 'task_accepted' };
   else if (category === 'successful') payload = { title: 'Successful delivery', message: messageBase, type: 'task_done' };
-  /* Ready-for-pickup is visible on task cards / timeline; no dashboard bell notification. */
-  else if (category === 'ready_for_pickup') payload = null;
+  else if (category === 'ready_for_pickup') {
+    // Ensure dispatcher bell/inbox receives ready-for-pickup every time.
+    payload = { title: 'Ready for pickup', message: messageBase, type: 'ready_pickup' };
+  }
+  else if (category === 'created') {
+    payload = {
+      title: errandOpts != null ? 'New Mangan order' : 'New task order',
+      message: messageBase,
+      type: 'new_task',
+    };
+  }
   else if (category === 'started') payload = { title: 'Rider started', message: messageBase, type: 'new_task' };
   else if (category === 'inprogress') payload = { title: 'Task in progress', message: messageBase, type: 'new_task' };
   return attachActorToPayload(payload, actorLabel);
@@ -3289,7 +3298,7 @@ router.post('/tasks', async (req, res) => {
     } catch (_) {}
     await notifyAllDashboardAdmins(pool, {
       title: 'New task',
-      message: task_description || `Task #${taskId}`,
+      message: ensureTaskIdMarkerInMessage(task_description || `Task #${taskId}`, taskId),
       type: 'new_task',
     }).catch(() => {});
     return res.json({ id: taskId, ok: true });
@@ -4027,7 +4036,7 @@ router.post('/tasks/:id/assign-all', async (req, res) => {
     );
     await notifyAllDashboardAdmins(pool, {
       title: 'Task broadcast to drivers',
-      message: task.task_description || `Task #${taskId}`,
+      message: ensureTaskIdMarkerInMessage(task.task_description || `Task #${taskId}`, taskId),
       type: 'new_task',
     }).catch(() => {});
     return res.json({ ok: true });
@@ -4053,7 +4062,7 @@ router.post('/tasks/:id/retry-auto-assign', async (req, res) => {
     await sendPushToAllDrivers('New task', task.task_description || `Task #${taskId}`, { task_id: String(taskId), type: 'new_task' });
     await notifyAllDashboardAdmins(pool, {
       title: 'Auto-assign retry',
-      message: task.task_description || `Task #${taskId}`,
+      message: ensureTaskIdMarkerInMessage(task.task_description || `Task #${taskId}`, taskId),
       type: 'new_task',
     }).catch(() => {});
     return res.json({ ok: true });

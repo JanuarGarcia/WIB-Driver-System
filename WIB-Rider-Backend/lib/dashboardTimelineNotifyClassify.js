@@ -79,6 +79,7 @@ function classifyTimelineHistoryForDashboardNotify(row) {
   }
   if (keys.some((k) => k === 'inprogress' || normalizedBlobImpliesInProgress(k))) return 'inprogress';
   if (keys.some((k) => k === 'started')) return 'started';
+  if (keys.some((k) => k === 'new' || k === 'created' || k === 'unassigned' || k === 'queued')) return 'created';
   if (historyRowIsRiderAcceptanceForNotify(row)) return 'accepted';
   if (keys.some((k) => k === 'acknowledged' || k === 'accepted' || k === 'accept')) return 'accepted';
   return null;

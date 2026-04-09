@@ -26,11 +26,24 @@ function formatRelative(iso) {
 /**
  * Map API `type` to display label + CSS modifier for accent color.
  */
-function typeMeta(type) {
+function typeMeta(type, title, message) {
   const t = (type || '').toString().trim().toLowerCase();
+  const titleText = String(title || '').toLowerCase();
+  const messageText = String(message || '').toLowerCase();
+  const isNewOrder =
+    t === 'new_task' &&
+    (titleText.includes('new task') ||
+      titleText.includes('new mangan') ||
+      titleText.includes('task broadcast') ||
+      titleText.includes('auto-assign retry') ||
+      messageText.includes('mangan order') ||
+      messageText.includes('order #') ||
+      messageText.includes('task #'));
   switch (t) {
     case 'new_task':
-      return { label: 'New task', mod: 'rider-notif-card--new' };
+      return isNewOrder
+        ? { label: 'New order', mod: 'rider-notif-card--new-order' }
+        : { label: 'Task update', mod: 'rider-notif-card--new' };
     case 'task_accepted':
       return { label: 'Accepted', mod: 'rider-notif-card--accepted' };
     case 'task_done':
@@ -102,7 +115,7 @@ export default function NotificationPanel({ items, pollError, onMarkAllRead, onC
         ) : (
           <ul className="rider-notif-panel__list">
             {items.map((n) => {
-              const { label, mod } = typeMeta(n.type);
+              const { label, mod } = typeMeta(n.type, n.title, n.message);
               const displayAt = n.activityAt || n.createdAt;
               const rel = formatRelative(displayAt);
               const unread = !n.localRead;

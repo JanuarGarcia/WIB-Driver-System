@@ -163,8 +163,8 @@ function foodTaskNotifyFromStatus(taskId, orderId, taskDescription, rawStatus, a
   } else if (norm === 'assigned' || norm === 'new') {
     out = { title: 'Task assigned', message: `${label}${taskBit}`, type: 'task_assigned' };
   } else if (norm === 'ready_for_pickup' || norm === 'readyforpickup' || norm === 'readypickup') {
-    /* Shown on task cards from order history; do not ring the dispatcher bell. */
-    out = null;
+    // Dispatchers must always get an inbox + popup for merchant-ready milestones.
+    out = { title: 'Ready for pickup', message: `${label}${taskBit}`, type: 'ready_pickup' };
   } else if (norm === 'started' || norm === 'inprogress' || norm === 'in_progress') {
     out = { title: 'Task in progress', message: `${label}${taskBit}`, type: 'new_task' };
   } else if (
