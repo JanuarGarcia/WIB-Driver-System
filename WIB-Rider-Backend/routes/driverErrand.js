@@ -205,7 +205,7 @@ async function buildDetailPayloadForOrder(orderId) {
     latestHistoryStatus = null;
   }
   const [orderDetails, orderHistoryRows] = await Promise.all([
-    fetchErrandOrderLineItems(errandWibPool, orderId),
+    fetchErrandOrderLineItems(errandWibPool, orderId, row),
     fetchErrandOrderHistory(errandWibPool, orderId, row),
   ]);
   const payload = buildErrandTaskDetailPayload(

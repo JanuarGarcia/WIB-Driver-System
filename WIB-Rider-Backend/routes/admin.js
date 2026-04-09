@@ -51,6 +51,7 @@ const {
   milestoneDedupeKeyForTask,
   classifyTimelineHistoryForDashboardNotify,
 } = require('../lib/dashboardTimelineNotifyClassify');
+const { notifyCustomerRiderAssignedForFoodTaskFireAndForget } = require('../lib/customerOrderPushDispatch');
 
 const ADMIN_SECRET = process.env.ADMIN_SECRET || '';
 
@@ -3112,8 +3113,12 @@ router.put('/tasks/:id/assign', express.json(), async (req, res) => {
   const teamId = teamIdRaw != null && String(teamIdRaw).trim() !== '' ? parseInt(teamIdRaw, 10) : null;
   if (!Number.isFinite(driverId)) return res.status(400).json({ error: 'driver_id required' });
   try {
-    const [[task]] = await pool.query('SELECT task_id, order_id, task_description FROM mt_driver_task WHERE task_id = ?', [taskId]);
+    const [[task]] = await pool.query(
+      'SELECT task_id, order_id, task_description, driver_id AS prev_driver_id FROM mt_driver_task WHERE task_id = ?',
+      [taskId]
+    );
     if (!task) return res.status(404).json({ error: 'Task not found' });
+    const prevDriverId = task.prev_driver_id;
     // Prefer setting team_id as well (if table has the column). Fall back gracefully.
     try {
       if (teamId && Number.isFinite(teamId)) {
@@ -3128,6 +3133,11 @@ router.put('/tasks/:id/assign', express.json(), async (req, res) => {
         throw e;
       }
     }
+    notifyCustomerRiderAssignedForFoodTaskFireAndForget(pool, {
+      taskId,
+      orderId: task.order_id,
+      prevDriverId,
+    });
     // Rider leaves the FIFO queue once they receive a task; they rejoin only from the app.
     try {
       await pool.query(
@@ -3222,7 +3232,7 @@ router.get('/errand-orders/:orderId', async (req, res) => {
       latestHistoryStatus = null;
     }
     const [orderDetails, orderHistoryRows] = await Promise.all([
-      fetchErrandOrderLineItems(errandWibPool, orderId),
+      fetchErrandOrderLineItems(errandWibPool, orderId, row),
       fetchErrandOrderHistory(errandWibPool, orderId, row),
     ]);
     const payload = buildErrandTaskDetailPayload(

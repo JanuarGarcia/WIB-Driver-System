@@ -838,10 +838,12 @@ function pickErrandLineItemDisplayName(row) {
   const catShort = tryLabel(row.catalog_short_description);
   const lineLong = tryLabel(row.item_description);
   const catLong = tryLabel(row.catalog_description);
+  const fromJsonCols = pickErrandLineNameFromJsonColumns(row);
   const orderedKeys = [
     lineItemName,
     catalogName,
     ...dbNameAliases,
+    fromJsonCols,
     lineShort,
     catShort,
     lineLong,
@@ -947,6 +949,10 @@ function extractErrandJsonDetailRows(jsonValue) {
     'cart_details',
     'cartDetails',
     'details',
+    'current_cart',
+    'currentCart',
+    'order_items',
+    'orderItems',
   ];
   for (const k of keys) {
     const rows = pickArrayOfObjects(jsonValue[k]);
@@ -972,9 +978,17 @@ function pickErrandJsonItemName(row) {
     'product_name',
     'package_name',
     'item_label',
+    'menu_item_name',
+    'food_name',
+    'dish_name',
+    'display_name',
+    'order_item_name',
+    'item_title',
     'name',
     'label',
     'title',
+    'text',
+    'description',
   ];
   for (const k of keys) {
     const t = errandPickLabel(row[k], 280);
@@ -983,38 +997,166 @@ function pickErrandJsonItemName(row) {
   return '';
 }
 
+/** Mangan / edited carts: names often live on nested `item` / `menu_item` objects inside json_details. */
+function deepPickErrandJsonItemName(row) {
+  if (!row || typeof row !== 'object') return '';
+  const direct = pickErrandJsonItemName(row);
+  if (direct && !isGenericErrandItemName(direct)) return direct;
+  const nestedKeys = ['item', 'menu_item', 'menuItem', 'product', 'line', 'dish', 'food'];
+  for (const nk of nestedKeys) {
+    const sub = row[nk];
+    if (!sub || typeof sub !== 'object') continue;
+    const t = pickErrandJsonItemName(sub);
+    if (t && !isGenericErrandItemName(t)) return t;
+  }
+  const vName = errandPickLabel(row.variant_name, 120);
+  const baseName = pickErrandJsonItemName(row);
+  if (vName && baseName && !isGenericErrandItemName(baseName)) return `${baseName} (${vName})`.trim();
+  if (vName && baseName) return `${baseName} (${vName})`.trim();
+  if (vName) return vName;
+  return direct;
+}
+
+const ERRAND_LINE_ITEM_UUID_RE =
+  /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/i;
+
+function tryParseJsonObjectForErrand(v) {
+  if (v == null) return null;
+  const s = Buffer.isBuffer(v) ? v.toString('utf8') : String(v);
+  const t = s.trim();
+  if (!t.startsWith('{') && !t.startsWith('[')) return null;
+  try {
+    return JSON.parse(t);
+  } catch (_) {
+    return null;
+  }
+}
+
+/** Some `st_ordernew_item` rows store a JSON snapshot on *json / *meta / *details columns after edits. */
+function pickErrandLineNameFromJsonColumns(row) {
+  if (!row || typeof row !== 'object') return '';
+  for (const k of Object.keys(row)) {
+    if (!/json|details|snapshot|meta|payload|options|attributes|cart|line_item|item_info|custom|addon/i.test(k)) {
+      continue;
+    }
+    const parsed = tryParseJsonObjectForErrand(row[k]);
+    if (!parsed || typeof parsed !== 'object') continue;
+    const nm = deepPickErrandJsonItemName(parsed);
+    if (nm && !isGenericErrandItemName(nm)) return nm;
+  }
+  return '';
+}
+
+/**
+ * Build lookup maps from json_details line objects → display names (handles UUID menu ids after edits).
+ * @param {Record<string, unknown>[]} jsonRows
+ */
+function buildErrandJsonDetailNameHintMaps(jsonRows) {
+  const hintsByItemId = new Map();
+  const hintsByLineKey = new Map();
+  const hintsByUuid = new Map();
+  const hintsByIndex = [];
+  for (let i = 0; i < jsonRows.length; i += 1) {
+    const jr = jsonRows[i];
+    const nm = deepPickErrandJsonItemName(jr);
+    if (!nm || isGenericErrandItemName(nm)) continue;
+    hintsByIndex[i] = nm;
+    const idCandidates = [
+      jr.item_id,
+      jr.menu_item_id,
+      jr.product_id,
+      jr.st_item_id,
+      jr.catalog_item_id,
+    ];
+    for (const c of idCandidates) {
+      const iid = c != null ? parseInt(String(c), 10) : NaN;
+      if (Number.isFinite(iid) && iid > 0) hintsByItemId.set(iid, nm);
+    }
+    const lineKeys = [
+      jr.id,
+      jr.line_id,
+      jr.order_item_id,
+      jr.st_ordernew_item_id,
+      jr.ordernew_item_id,
+      jr.line_db_id,
+    ];
+    for (const lk of lineKeys) {
+      if (lk == null) continue;
+      const s = String(lk).trim();
+      if (s) hintsByLineKey.set(s, nm);
+    }
+    const uuidFields = [jr.uuid, jr.item_uuid, jr.menu_item_uuid, jr.line_uuid, jr.product_uuid, jr.id, jr.menu_item_id];
+    for (const u of uuidFields) {
+      if (u == null) continue;
+      const s = String(u).trim();
+      if (ERRAND_LINE_ITEM_UUID_RE.test(s)) hintsByUuid.set(s.toLowerCase(), nm);
+    }
+  }
+  return { hintsByItemId, hintsByLineKey, hintsByUuid, hintsByIndex };
+}
+
 /**
  * Preserve normalized `order_details` rows, but replace generic names using order-level `json_details` hints
- * when edited/added lines are reflected there first.
+ * when edited/added lines are reflected there first. Optionally match using raw `st_ordernew_item` rows (UUID ids).
  * Never overrides already-valid non-generic names.
  * @param {Record<string, unknown>[]} orderDetails
  * @param {Record<string, unknown>} stOrderRow
+ * @param {Record<string, unknown>[]|null} [rawLineRows] - same order as `orderDetails` from SQL `oi.*`
  */
-function mergeErrandOrderDetailsWithJsonNames(orderDetails, stOrderRow) {
+function mergeErrandOrderDetailsWithJsonNames(orderDetails, stOrderRow, rawLineRows = null) {
   const list = Array.isArray(orderDetails) ? orderDetails : [];
   if (!list.length || !stOrderRow || typeof stOrderRow !== 'object') return list;
   const parsed = parseErrandJsonDetails(stOrderRow.json_details ?? stOrderRow.jsonDetails);
   const jsonRows = extractErrandJsonDetailRows(parsed);
-  if (!jsonRows.length) return list;
+  const { hintsByItemId, hintsByLineKey, hintsByUuid, hintsByIndex } = buildErrandJsonDetailNameHintMaps(jsonRows);
 
-  const hintsByItemId = new Map();
-  const hintsByIndex = [];
-  for (let i = 0; i < jsonRows.length; i += 1) {
-    const jr = jsonRows[i];
-    const nm = pickErrandJsonItemName(jr);
-    if (!nm || isGenericErrandItemName(nm)) continue;
-    hintsByIndex[i] = nm;
-    const iid = jr.item_id != null ? parseInt(String(jr.item_id), 10) : NaN;
-    if (Number.isFinite(iid) && iid > 0) hintsByItemId.set(iid, nm);
-  }
-  if (!hintsByItemId.size && !hintsByIndex.some(Boolean)) return list;
+  const raw = Array.isArray(rawLineRows) ? rawLineRows : [];
 
   return list.map((line, idx) => {
     const current = line?.item_name;
     if (!isGenericErrandItemName(current)) return line;
+
     const itemId = line?.item_id != null ? parseInt(String(line.item_id), 10) : NaN;
-    const better =
-      (Number.isFinite(itemId) && itemId > 0 ? hintsByItemId.get(itemId) : null) || hintsByIndex[idx] || null;
+    const lineIdStr = line?.id != null ? String(line.id).trim() : '';
+
+    let better =
+      (Number.isFinite(itemId) && itemId > 0 ? hintsByItemId.get(itemId) : null) ||
+      (lineIdStr ? hintsByLineKey.get(lineIdStr) : null) ||
+      hintsByIndex[idx] ||
+      null;
+
+    const oi = raw[idx];
+    if (!better && oi && typeof oi === 'object') {
+      better = deepPickErrandJsonItemName(oi);
+      if (better && isGenericErrandItemName(better)) better = null;
+      if (!better) {
+        for (const k of Object.keys(oi)) {
+          const v = oi[k];
+          if (v == null || typeof v === 'object') continue;
+          const s = String(v).trim();
+          if (ERRAND_LINE_ITEM_UUID_RE.test(s) && hintsByUuid.has(s.toLowerCase())) {
+            better = hintsByUuid.get(s.toLowerCase());
+            break;
+          }
+        }
+      }
+      if (!better) {
+        const snap = pickErrandLineNameFromJsonColumns(oi);
+        if (snap) better = snap;
+      }
+    }
+
+    if (!better && oi && typeof oi === 'object') {
+      for (const v of Object.values(oi)) {
+        if (v == null || typeof v === 'object') continue;
+        const s = String(v).trim();
+        if (ERRAND_LINE_ITEM_UUID_RE.test(s) && hintsByUuid.has(s.toLowerCase())) {
+          better = hintsByUuid.get(s.toLowerCase());
+          break;
+        }
+      }
+    }
+
     if (!better) return line;
     return {
       ...line,
@@ -1028,12 +1170,6 @@ function mergeErrandOrderDetailsWithJsonNames(orderDetails, stOrderRow) {
   });
 }
 
-/**
- * Load line items for an errand order (`st_ordernew_item` JOIN `st_item`).
- * @param {import('mysql2/promise').Pool} errandPool
- * @param {number} orderId
- * @returns {Promise<Record<string, unknown>[]>}
- */
 function filterNonVoidedErrandLines(rows) {
   return (rows || []).filter((r) => {
     const v = r.voided_at;
@@ -1044,8 +1180,14 @@ function filterNonVoidedErrandLines(rows) {
   });
 }
 
-async function fetchErrandOrderLineItems(errandPool, orderId) {
-  const mapRows = (rows) => filterNonVoidedErrandLines(rows).map(mapErrandOrderLineToOrderDetail);
+/**
+ * Load line items (`st_ordernew_item` JOIN `st_item`), then merge human names from `st_ordernew.json_details` when `stOrderRow` is passed.
+ * @param {import('mysql2/promise').Pool} errandPool
+ * @param {number} orderId
+ * @param {Record<string, unknown>|null} [stOrderRow]
+ * @returns {Promise<Record<string, unknown>[]>}
+ */
+async function fetchErrandOrderLineItems(errandPool, orderId, stOrderRow = null) {
   const sqlFull = `SELECT oi.*,
               i.item_name AS catalog_item_name,
               i.item_short_description AS catalog_short_description,
@@ -1056,9 +1198,17 @@ async function fetchErrandOrderLineItems(errandPool, orderId) {
        LEFT JOIN st_item i ON i.item_id = oi.item_id
        WHERE oi.order_id = ?
        ORDER BY oi.id ASC`;
+  const finish = (rows) => {
+    const filtered = filterNonVoidedErrandLines(rows);
+    const mapped = filtered.map(mapErrandOrderLineToOrderDetail);
+    if (stOrderRow && typeof stOrderRow === 'object') {
+      return mergeErrandOrderDetailsWithJsonNames(mapped, stOrderRow, filtered);
+    }
+    return mapped;
+  };
   try {
     const [rows] = await errandPool.query(sqlFull, [orderId]);
-    return mapRows(rows);
+    return finish(rows);
   } catch (e) {
     if (e.code === 'ER_NO_SUCH_TABLE') return [];
     if (e.code === 'ER_BAD_FIELD_ERROR') {
@@ -1074,7 +1224,7 @@ async function fetchErrandOrderLineItems(errandPool, orderId) {
            ORDER BY oi.id ASC`,
           [orderId]
         );
-        return mapRows(rows2);
+        return finish(rows2);
       } catch (e2) {
         if (e2.code === 'ER_NO_SUCH_TABLE') return [];
         throw e2;
@@ -1107,6 +1257,22 @@ function resolveErrandHistoryRemarks(remarks, transRaw) {
     }
   }
   return t.trim();
+}
+
+/**
+ * After placeholder substitution, replace bare UUIDs in remarks (e.g. "Removed … 8f3e…") using `st_ordernew.json_details` line items.
+ * @param {string} text
+ * @param {Record<string, unknown>|null|undefined} stOrderRow
+ */
+function replaceBareUuidsInErrandRemarks(text, stOrderRow) {
+  const t = text != null ? String(text) : '';
+  if (!t.trim() || !stOrderRow || typeof stOrderRow !== 'object') return t;
+  if (!ERRAND_LINE_ITEM_UUID_RE.test(t)) return t;
+  const parsed = parseErrandJsonDetails(stOrderRow.json_details ?? stOrderRow.jsonDetails);
+  const jsonRows = extractErrandJsonDetailRows(parsed);
+  const { hintsByUuid } = buildErrandJsonDetailNameHintMaps(jsonRows);
+  if (!hintsByUuid.size) return t;
+  return t.replace(ERRAND_LINE_ITEM_UUID_RE, (m) => hintsByUuid.get(m.toLowerCase()) || m);
 }
 
 /**
@@ -1182,7 +1348,8 @@ function pickStOrdernewFallbackTimeForHistory(orderRow, statusRaw) {
  */
 function mapErrandHistoryRowForTimeline(row, stOrderRow = null) {
   const trans = row.ramarks_trans ?? row.remarks_trans;
-  const resolved = resolveErrandHistoryRemarks(row.remarks, trans);
+  let resolved = resolveErrandHistoryRemarks(row.remarks, trans);
+  resolved = replaceBareUuidsInErrandRemarks(resolved, stOrderRow);
   const lat = row.latitude != null ? parseFloat(String(row.latitude)) : NaN;
   const lng = row.longitude != null ? parseFloat(String(row.longitude)) : NaN;
   let dateCreated = pickErrandHistoryDateCreated(row);

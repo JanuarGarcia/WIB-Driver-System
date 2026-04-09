@@ -62,6 +62,24 @@ function displaySanitizedOrDash(raw) {
   return v || '—';
 }
 
+/**
+ * Per-line unit price for receipts. Prefer a positive discounted_price; when discounted_price is 0
+ * (common when the DB means “no discount”), use normal_price so lines do not show ₱0 incorrectly.
+ */
+function orderLineUnitPrice(item) {
+  if (!item || typeof item !== 'object') return null;
+  const normRaw = item.normal_price != null ? Number(item.normal_price) : NaN;
+  const discRaw = item.discounted_price != null ? Number(item.discounted_price) : NaN;
+  const norm = Number.isFinite(normRaw) ? normRaw : NaN;
+  const disc = Number.isFinite(discRaw) ? discRaw : NaN;
+  if (disc > 0) return disc;
+  if (norm > 0) return norm;
+  if (disc === 0 && Number.isFinite(norm)) return norm;
+  if (Number.isFinite(disc)) return disc;
+  if (Number.isFinite(norm)) return norm;
+  return null;
+}
+
 /** Single-line drop-off address from mt_order_delivery_address row (matches classic receipt “Deliver to”). */
 function formatDeliveryAddressFromOrderRow(row) {
   if (!row || typeof row !== 'object') return '';
@@ -1752,7 +1770,7 @@ export default function TaskDetailsModal({
                                 <ul className="order-ref-items-list">
                                   {items.map((item) => {
                                     const qty = Number(item.qty) || 0;
-                                    const unitPrice = item.discounted_price != null ? Number(item.discounted_price) : item.normal_price != null ? Number(item.normal_price) : null;
+                                    const unitPrice = orderLineUnitPrice(item);
                                     const subtotal = unitPrice != null && !Number.isNaN(unitPrice) ? qty * unitPrice : null;
                                     const unitStr = unitPrice != null && !Number.isNaN(unitPrice) ? `₱${unitPrice.toFixed(2)}` : '—';
                                     const subtotalStr = subtotal != null ? `₱${subtotal.toFixed(2)}` : '—';
