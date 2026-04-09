@@ -62,6 +62,9 @@ function latLngFromClientAddress(ca) {
     ['google_lat', 'google_lng'],
     ['lat', 'lng'],
     ['map_lat', 'map_lng'],
+    ['delivery_latitude', 'delivery_longitude'],
+    ['location_lat', 'location_lng'],
+    ['geo_lat', 'geo_lng'],
   ];
   for (const [la, ln] of pairs) {
     if (ca[la] == null || ca[ln] == null) continue;

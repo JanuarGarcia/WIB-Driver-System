@@ -1,0 +1,314 @@
+const { sendPushToFcmToken } = require('../services/fcm');
+const { fetchClientFcmTokenAndDeviceRef } = require('./customerFcmToken');
+const { deriveErrandDriverTaskStatus, isTerminal } = require('./errandDriverStatus');
+const { fetchErrandLatestHistoryStatusByOrderIds } = require('./errandOrders');
+
+/** @type {Map<string, number>} */
+const rateLastSent = new Map();
+const RATE_MS = 10_000;
+const NOTIFY_BODY_MAX = 230;
+const MESSAGE_MAX = 500;
+
+function pruneRateMap() {
+  if (rateLastSent.size < 5000) return;
+  const now = Date.now();
+  for (const [k, t] of rateLastSent) {
+    if (now - t > RATE_MS * 3) rateLastSent.delete(k);
+  }
+}
+
+/**
+ * @param {number} driverId
+ * @param {string} scopeKey
+ * @returns {boolean} true if allowed
+ */
+function allowRateLimit(driverId, scopeKey) {
+  pruneRateMap();
+  const k = `${driverId}:${scopeKey}`;
+  const now = Date.now();
+  const last = rateLastSent.get(k) || 0;
+  if (now - last < RATE_MS) return false;
+  rateLastSent.set(k, now);
+  return true;
+}
+
+/**
+ * Driver task status is "active delivery" for customer messaging (matches in-progress / en-route ladder).
+ * @param {unknown} statusRaw
+ */
+function isStandardTaskInProgress(statusRaw) {
+  const key = String(statusRaw || '')
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, '_')
+    .replace(/_/g, '');
+  return (
+    key === 'started' ||
+    key === 'inprogress' ||
+    key === 'verification' ||
+    key === 'pendingverification'
+  );
+}
+
+function errandOrderDriverId(row) {
+  if (row.driver_id == null || String(row.driver_id).trim() === '') return null;
+  const n = parseInt(String(row.driver_id), 10);
+  return Number.isFinite(n) ? n : null;
+}
+
+function truncNotifyBody(s) {
+  const t = String(s || '');
+  if (t.length <= NOTIFY_BODY_MAX) return t;
+  return `${t.slice(0, NOTIFY_BODY_MAX - 1)}…`;
+}
+
+/**
+ * @param {import('mysql2/promise').Pool} pool
+ * @param {object} row
+ */
+async function tryLogMtMobile2Push(pool, row) {
+  const { clientId, deviceId, deviceUiid, title, body, pushType, status, jsonResponse } = row;
+  const attempts = [
+    {
+      sql: `INSERT INTO mt_mobile2_push_logs (client_id, device_id, device_uiid, push_title, push_message, push_type, status, json_response, date_created)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+      args: [clientId, deviceId, deviceUiid, title, body, pushType, status, jsonResponse],
+    },
+    {
+      sql: `INSERT INTO mt_mobile2_push_logs (client_id, device_id, push_title, push_message, push_type, status, json_response, date_created)
+            VALUES (?, ?, ?, ?, ?, ?, ?, NOW())`,
+      args: [clientId, deviceId, title, body, pushType, status, jsonResponse],
+    },
+  ];
+  for (const p of attempts) {
+    try {
+      await pool.query(p.sql, p.args);
+      return;
+    } catch (e) {
+      if (e.code === 'ER_NO_SUCH_TABLE' || e.code === 'ER_BAD_FIELD_ERROR') {
+        /* try narrower insert */
+      } else {
+        /* optional log — do not fail API */
+        console.warn('[SendCustomerTaskMessage] mt_mobile2_push_logs insert:', e.message);
+      }
+    }
+  }
+}
+
+/**
+ * @param {import('mysql2/promise').Pool} pool
+ * @param {import('mysql2/promise').Pool} errandWibPool
+ * @param {{ id: number }} driver
+ * @param {Record<string, unknown>} body
+ * @returns {Promise<{ err: string | null, details: Record<string, unknown> | null }>}
+ */
+async function sendCustomerTaskMessage(pool, errandWibPool, driver, body) {
+  const b = body || {};
+  const appVersion = b.app_version ?? b.appVersion;
+  if (appVersion == null || String(appVersion).trim() === '') {
+    return { err: 'app_version required', details: null };
+  }
+
+  const taskIdRaw = parseInt(String(b.task_id ?? b.taskId ?? ''), 10);
+  if (!Number.isFinite(taskIdRaw) || taskIdRaw === 0) {
+    return { err: 'task_id required', details: null };
+  }
+
+  const message = String(b.message ?? '').trim();
+  if (!message) return { err: 'message required', details: null };
+  if (message.length > MESSAGE_MAX) return { err: `message must be at most ${MESSAGE_MAX} characters`, details: null };
+
+  const pushTitle = String(b.push_title ?? b.pushTitle ?? '').trim();
+  const pushMessage = String(b.push_message ?? b.pushMessage ?? '').trim();
+  const pushType = String(b.push_type ?? b.pushType ?? '').trim();
+  if (!pushTitle) return { err: 'push_title required', details: null };
+  if (!pushMessage) return { err: 'push_message required', details: null };
+  if (!pushType) return { err: 'push_type required', details: null };
+
+  const orderIdBody = parseInt(String(b.order_id ?? b.orderId ?? ''), 10);
+  const driverId = driver.id;
+
+  /** @type {number|null} */
+  let clientId = null;
+  /** @type {number|null} */
+  let standardOrderId = null;
+  /** @type {number|null} */
+  let errandOrderId = null;
+  /** @type {number} app task_id including negative errand synthetic */
+  let storedTaskId = taskIdRaw;
+  /** @type {'mt_client' | 'st_client'} */
+  let clientTable = 'mt_client';
+  /** @type {import('mysql2/promise').Pool} */
+  let clientPool = pool;
+
+  if (taskIdRaw < 0) {
+    const absSynthetic = Math.abs(taskIdRaw);
+    const oid =
+      Number.isFinite(orderIdBody) && orderIdBody > 0 ? orderIdBody : absSynthetic;
+    if (!oid) return { err: 'order_id required for errand task', details: null };
+    if (Number.isFinite(orderIdBody) && orderIdBody > 0 && orderIdBody !== absSynthetic) {
+      return { err: 'order_id does not match errand task_id', details: null };
+    }
+
+    let row;
+    try {
+      const [[r]] = await errandWibPool.query('SELECT * FROM st_ordernew WHERE order_id = ? LIMIT 1', [oid]);
+      row = r;
+    } catch (e) {
+      if (e.code === 'ER_NO_SUCH_TABLE') return { err: 'Errand orders unavailable', details: null };
+      throw e;
+    }
+    if (!row) return { err: 'Task not found', details: null };
+    const assigned = errandOrderDriverId(row);
+    if (assigned !== driverId) {
+      return { err: 'Task not found or not assigned to you', details: null };
+    }
+
+    const histMap = await fetchErrandLatestHistoryStatusByOrderIds(errandWibPool, [oid]);
+    const latestHist = histMap.get(String(oid)) || null;
+    const canonical = deriveErrandDriverTaskStatus(
+      row.delivery_status,
+      row.status ?? row.order_status,
+      latestHist,
+      assigned
+    );
+    if (isTerminal(canonical) || !isStandardTaskInProgress(canonical)) {
+      return { err: 'Task is not in progress', details: null };
+    }
+
+    const cid = row.client_id != null ? parseInt(String(row.client_id), 10) : NaN;
+    if (!Number.isFinite(cid) || cid <= 0) {
+      return { err: 'Customer not found for this order', details: null };
+    }
+    clientId = cid;
+    errandOrderId = oid;
+    clientTable = 'st_client';
+    clientPool = errandWibPool;
+
+    if (!allowRateLimit(driverId, `e:${oid}`)) {
+      return { err: 'Please wait before sending another message for this task', details: null };
+    }
+  } else {
+    const tid = taskIdRaw;
+    const [[task]] = await pool.query(
+      'SELECT task_id, order_id, driver_id, status FROM mt_driver_task WHERE task_id = ? LIMIT 1',
+      [tid]
+    );
+    if (!task || task.driver_id !== driverId) {
+      return { err: 'Task not found or not assigned to you', details: null };
+    }
+
+    if (Number.isFinite(orderIdBody) && orderIdBody > 0) {
+      const tOid = task.order_id != null ? parseInt(String(task.order_id), 10) : NaN;
+      if (Number.isFinite(tOid) && tOid > 0 && tOid !== orderIdBody) {
+        return { err: 'order_id does not match task', details: null };
+      }
+    }
+
+    if (!isStandardTaskInProgress(task.status)) {
+      return { err: 'Task is not in progress', details: null };
+    }
+
+    const oid = task.order_id != null ? parseInt(String(task.order_id), 10) : 0;
+    if (!Number.isFinite(oid) || oid <= 0) {
+      return { err: 'Order not linked to this task', details: null };
+    }
+    standardOrderId = oid;
+
+    let orderRow;
+    try {
+      const [[or]] = await pool.query('SELECT client_id FROM mt_order WHERE order_id = ? LIMIT 1', [oid]);
+      orderRow = or;
+    } catch (e) {
+      if (e.code === 'ER_BAD_FIELD_ERROR') {
+        return { err: 'Order customer lookup unavailable', details: null };
+      }
+      throw e;
+    }
+    const cid = orderRow?.client_id != null ? parseInt(String(orderRow.client_id), 10) : NaN;
+    if (!Number.isFinite(cid) || cid <= 0) {
+      return { err: 'Customer not found for this order', details: null };
+    }
+    clientId = cid;
+
+    if (!allowRateLimit(driverId, `m:${tid}`)) {
+      return { err: 'Please wait before sending another message for this task', details: null };
+    }
+  }
+
+  const { token: fcmToken, deviceRef } = await fetchClientFcmTokenAndDeviceRef(clientPool, clientTable, clientId);
+  const notifyBody = truncNotifyBody(pushMessage);
+
+  let messageId;
+  try {
+    const [ins] = await pool.query(
+      `INSERT INTO mt_driver_customer_message
+       (driver_id, client_id, task_id, order_id, errand_order_id, message_text, push_title, push_type)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [driverId, clientId, storedTaskId, standardOrderId, errandOrderId, message, pushTitle, pushType]
+    );
+    messageId = ins.insertId;
+  } catch (e) {
+    if (e.code === 'ER_NO_SUCH_TABLE') {
+      return {
+        err: 'Message storage is not configured — run sql/mt_driver_customer_message.sql on the primary database',
+        details: null,
+      };
+    }
+    throw e;
+  }
+
+  const dataPayload = {
+    push_type: pushType,
+    task_id: String(storedTaskId),
+    message_id: String(messageId),
+  };
+  if (standardOrderId != null && standardOrderId > 0) {
+    dataPayload.order_id = String(standardOrderId);
+  }
+  if (errandOrderId != null && errandOrderId > 0) {
+    dataPayload.order_id = String(errandOrderId);
+    dataPayload.errand_order_id = String(errandOrderId);
+  }
+
+  const pushResult = await sendPushToFcmToken(fcmToken, pushTitle, notifyBody, dataPayload);
+
+  const logJson = JSON.stringify({
+    ok: pushResult.success,
+    messageId: pushResult.messageId || null,
+    error: pushResult.error || null,
+  });
+
+  await tryLogMtMobile2Push(pool, {
+    clientId,
+    deviceId: fcmToken ? fcmToken.slice(0, 512) : null,
+    deviceUiid: deviceRef ? deviceRef.slice(0, 255) : null,
+    title: pushTitle,
+    body: notifyBody,
+    pushType,
+    status: pushResult.success ? 'sent' : 'failed',
+    jsonResponse: logJson.slice(0, 65000),
+  });
+
+  if (!fcmToken) {
+    return {
+      err: null,
+      details: {
+        message_id: messageId,
+        push_sent: false,
+        push_error: 'Customer has no push token registered',
+      },
+    };
+  }
+
+  return {
+    err: null,
+    details: {
+      message_id: messageId,
+      push_sent: !!pushResult.success,
+      ...(pushResult.success ? {} : { push_error: pushResult.error || 'Push failed' }),
+    },
+  };
+}
+
+module.exports = { sendCustomerTaskMessage };

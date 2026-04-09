@@ -235,6 +235,8 @@ export default function Dashboard() {
     if (!selectedMapMerchantIds.length) return mapTasksWithCoords;
     const allowed = new Set(selectedMapMerchantIds.map(String));
     return mapTasksWithCoords.filter((t) => {
+      /* Mangan (ErrandWib) uses st_merchant ids; map filter options come from mt_merchant only — never hide errand pins by that mismatch. */
+      if (t.task_source === 'errand') return true;
       if (t.merchant_id == null || t.merchant_id === '') return true;
       return allowed.has(String(t.merchant_id));
     });

@@ -28,6 +28,7 @@ const { attachOrderDetailCategories } = require('../lib/orderDetailCategories');
 const { formatActorFromDriver } = require('../lib/dashboardRiderNotify');
 const { insertMtOrderHistoryRow } = require('../lib/mtOrderHistoryInsert');
 const { notifyDashboardAfterMtTaskHistoryRow } = require('../lib/mtTaskStatusDashboardNotify');
+const { sendCustomerTaskMessage } = require('../lib/sendCustomerTaskMessage');
 
 const uploadDir = path.join(__dirname, '..', 'uploads', 'profiles');
 if (!fs.existsSync(uploadDir)) {
@@ -1239,6 +1240,19 @@ router.post('/GetTaskDetails', validateApiKey, resolveDriver, async (req, res) =
     return error(res, e.message || 'Failed to load task details');
   }
 });
+
+async function handleSendCustomerTaskMessage(req, res) {
+  try {
+    const r = await sendCustomerTaskMessage(pool, errandWibPool, req.driver, req.body);
+    if (r.err) return error(res, r.err);
+    return success(res, r.details, 'ok');
+  } catch (e) {
+    return error(res, e.message || 'Failed to send message');
+  }
+}
+
+router.post('/SendCustomerTaskMessage', validateApiKey, resolveDriver, handleSendCustomerTaskMessage);
+router.post('/sendCustomerTaskMessage', validateApiKey, resolveDriver, handleSendCustomerTaskMessage);
 
 router.post('/ChangeTaskStatus', validateApiKey, resolveDriver, async (req, res) => {
   const body = req.body || {};

@@ -87,4 +87,23 @@ async function sendPushToAllDrivers(title, body, data = {}) {
   }
 }
 
-module.exports = { initFirebase, resetFirebase, sendPushToDriver, sendPushToAllDrivers };
+async function sendPushToFcmToken(fcmToken, title, body, data = {}) {
+  const app = await initFirebase();
+  if (!app) return { success: false, error: 'FCM not configured' };
+  const tok = fcmToken != null ? String(fcmToken).trim() : '';
+  if (!tok) return { success: false, error: 'No device token' };
+  try {
+    const result = await app.messaging().send({
+      token: tok,
+      notification: { title, body },
+      data: stringifyDataPayload(data),
+      android: { priority: 'high' },
+      apns: { payload: { aps: { sound: 'default' } } },
+    });
+    return { success: true, messageId: result };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+}
+
+module.exports = { initFirebase, resetFirebase, sendPushToDriver, sendPushToAllDrivers, sendPushToFcmToken };
