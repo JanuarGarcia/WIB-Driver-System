@@ -3242,6 +3242,7 @@ router.put('/tasks/:id/assign', express.json(), async (req, res) => {
       taskId,
       orderId: task.order_id,
       prevDriverId,
+      newDriverId: driverId,
     });
     // Rider leaves the FIFO queue once they receive a task; they rejoin only from the app.
     try {

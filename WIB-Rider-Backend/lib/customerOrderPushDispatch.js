@@ -18,6 +18,11 @@ const COPY_IN_PROGRESS = {
   message: 'Your rider is en route with your order. You can follow updates anytime in the app.',
 };
 
+const COPY_ACKNOWLEDGED = {
+  title: 'Order acknowledged',
+  message: 'Your order has been acknowledged and is now being prepared for delivery.',
+};
+
 const COPY_COMPLETE = {
   title: 'Order complete',
   message: 'Your delivery has been completed. Thank you for choosing us—we hope you enjoy your meal.',
@@ -40,6 +45,11 @@ function compactStatusKey(raw) {
 function statusImpliesInProgress(raw) {
   const c = compactStatusKey(raw);
   return c === 'started' || c === 'inprogress';
+}
+
+function statusImpliesAcknowledged(raw) {
+  const c = compactStatusKey(raw);
+  return c === 'acknowledged' || c === 'accepted' || c === 'accept' || c === 'assigned' || c === 'new';
 }
 
 function statusImpliesComplete(raw) {
@@ -190,7 +200,13 @@ async function recordDispatchOrderPushLog(pool, meta) {
  */
 function notifyCustomerRiderAssignedForFoodTaskFireAndForget(pool, ctx) {
   const taskId = ctx.taskId;
-  if (!isEffectivelyUnassignedDriverId(ctx.prevDriverId)) return;
+  const prevRaw = ctx.prevDriverId;
+  const nextRaw = ctx.newDriverId;
+  const prevId = prevRaw != null && String(prevRaw).trim() !== '' ? parseInt(String(prevRaw), 10) : 0;
+  const nextId = nextRaw != null && String(nextRaw).trim() !== '' ? parseInt(String(nextRaw), 10) : 0;
+  // Send when assignment truly changes (unassigned->assigned OR reassigned to another driver).
+  if (Number.isFinite(prevId) && Number.isFinite(nextId) && prevId > 0 && nextId > 0 && prevId === nextId) return;
+  if (!Number.isFinite(nextId) || nextId <= 0) return;
 
   const oid = ctx.orderId != null ? parseInt(String(ctx.orderId), 10) : NaN;
   if (!Number.isFinite(oid) || oid <= 0) return;
@@ -198,7 +214,7 @@ function notifyCustomerRiderAssignedForFoodTaskFireAndForget(pool, ctx) {
   if (!getCustomerDispatchConfig().ok) return;
 
   (async () => {
-    const logBase = { task_id: taskId, order_id: oid, push: 'rider_assigned' };
+    const logBase = { task_id: taskId, order_id: oid, push: 'rider_assigned', prev_driver_id: prevId, new_driver_id: nextId };
     try {
       const clientId = await fetchFoodOrderClientId(pool, oid);
       if (!clientId) return;
@@ -238,7 +254,9 @@ function notifyCustomerFoodTaskStatusPushFireAndForget(pool, ctx) {
   const next = ctx.newStatusRaw;
 
   let pushKind = null;
-  if (statusImpliesInProgress(next) && !statusImpliesInProgress(prev)) {
+  if (statusImpliesAcknowledged(next) && !statusImpliesAcknowledged(prev)) {
+    pushKind = 'acknowledged';
+  } else if (statusImpliesInProgress(next) && !statusImpliesInProgress(prev)) {
     pushKind = 'in_progress';
   } else if (statusImpliesComplete(next) && !statusImpliesComplete(prev)) {
     pushKind = 'complete';
@@ -250,7 +268,12 @@ function notifyCustomerFoodTaskStatusPushFireAndForget(pool, ctx) {
 
   if (!getCustomerDispatchConfig().ok) return;
 
-  const copy = pushKind === 'in_progress' ? COPY_IN_PROGRESS : COPY_COMPLETE;
+  const copy =
+    pushKind === 'acknowledged'
+      ? COPY_ACKNOWLEDGED
+      : pushKind === 'in_progress'
+        ? COPY_IN_PROGRESS
+        : COPY_COMPLETE;
 
   (async () => {
     const logBase = { task_id: taskId, order_id: oid, push: pushKind };
@@ -287,6 +310,7 @@ module.exports = {
   postCustomerDispatchOrder,
   notifyCustomerRiderAssignedForFoodTaskFireAndForget,
   notifyCustomerFoodTaskStatusPushFireAndForget,
+  statusImpliesAcknowledged,
   statusImpliesInProgress,
   statusImpliesComplete,
 };
