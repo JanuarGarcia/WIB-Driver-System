@@ -16,11 +16,19 @@ async function ensureDashboardRiderNotificationTables(pool) {
       message TEXT NULL,
       type VARCHAR(64) NOT NULL DEFAULT 'info',
       viewed TINYINT(1) NOT NULL DEFAULT 0,
+      activity_at DATETIME NULL DEFAULT NULL,
       date_created DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       PRIMARY KEY (id),
       KEY idx_admin_unread (admin_id, viewed, date_created)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `);
+  try {
+    await pool.query(
+      'ALTER TABLE mt_dashboard_rider_notification ADD COLUMN activity_at DATETIME NULL DEFAULT NULL'
+    );
+  } catch (e) {
+    if (e.errno !== 1060 && e.code !== 'ER_DUP_FIELDNAME') throw e;
+  }
   await pool.query(`
     CREATE TABLE IF NOT EXISTS mt_dashboard_notification_dedupe (
       dedupe_key VARCHAR(190) NOT NULL,

@@ -7,6 +7,7 @@ import {
   formatNotificationMessageForDisplay,
   buildNotificationDedupeKey,
 } from '../utils/riderNotificationNavigate';
+import { shouldSuppressRiderNotificationToast } from '../utils/notificationToastDedupe';
 
 /** `public/fb-alert.mp3` — Vite serves `public/` at `import.meta.env.BASE_URL`. */
 const alertSoundUrl = `${import.meta.env.BASE_URL}fb-alert.mp3`;
@@ -32,6 +33,12 @@ function hasActorName(notification) {
   return Boolean(parseActorFromNotificationMessage(msg));
 }
 
+function notificationEventMs(n) {
+  const iso = n?.activityAt || n?.createdAt;
+  const t = iso ? new Date(iso).getTime() : 0;
+  return Number.isFinite(t) ? t : 0;
+}
+
 function dedupeNotificationsPreferActor(list) {
   if (!Array.isArray(list) || list.length === 0) return [];
   const kept = new Map();
@@ -44,8 +51,7 @@ function dedupeNotificationsPreferActor(list) {
       continue;
     }
     const pickCurrent =
-      (hasActorName(n) && !hasActorName(prev)) ||
-      (Number(new Date(n.createdAt).getTime()) || 0) > (Number(new Date(prev.createdAt).getTime()) || 0);
+      (hasActorName(n) && !hasActorName(prev)) || notificationEventMs(n) > notificationEventMs(prev);
     if (pickCurrent) kept.set(key, n);
   }
   return Array.from(kept.values());
@@ -299,9 +305,11 @@ export function useNotifications() {
         return;
       }
 
-      // Option 3: batch multiple new items into a single toast.
-      if (fresh.length === 1) {
-        const n = fresh[0];
+      const toastFresh = fresh.filter((n) => !shouldSuppressRiderNotificationToast(n));
+
+      // Option 3: batch multiple new items into a single toast (skip items already surfaced as timeline teal toasts).
+      if (toastFresh.length === 1) {
+        const n = toastFresh[0];
         const title = (n.title || 'Notification').toString();
         const message = (n.message || '').toString().trim();
         const actor = message ? parseActorFromNotificationMessage(message) : '';
@@ -321,9 +329,9 @@ export function useNotifications() {
           progressClassName: 'rider-notif-toast-progress',
           pauseOnHover: true,
         });
-      } else {
-        const count = fresh.length;
-        const first = fresh[0];
+      } else if (toastFresh.length > 1) {
+        const count = toastFresh.length;
+        const first = toastFresh[0];
         const t1 = (first?.title || 'Notification').toString();
         const m1 = (first?.message || '').toString().trim();
         const actor1 = m1 ? parseActorFromNotificationMessage(m1) : '';
@@ -336,7 +344,7 @@ export function useNotifications() {
           createElement('div', { className: 'rider-notif-toast-line2' }, `${t1}${msg1 ? ` — ${msg1}` : ''}`)
         );
         toast.info(body, {
-          toastId: `rider-notif-batch-${String(fresh[0]?.id ?? 'x')}`,
+          toastId: `rider-notif-batch-${String(toastFresh[0]?.id ?? 'x')}`,
           autoClose: 12500,
           className: 'rider-notif-toast',
           bodyClassName: 'rider-notif-toast-body',
@@ -346,9 +354,11 @@ export function useNotifications() {
       }
 
       // OS notifications: prefer summary to avoid spamming the OS.
-      showDesktopNotificationSummary(fresh);
+      if (toastFresh.length > 0) {
+        showDesktopNotificationSummary(toastFresh);
+      }
 
-      if (isSoundOn()) {
+      if (toastFresh.length > 0 && isSoundOn()) {
         const tabHidden = typeof document !== 'undefined' && document.visibilityState === 'hidden';
         const playOne = async () => {
           if (!tabHidden && audioRef.current) {
@@ -374,9 +384,7 @@ export function useNotifications() {
       setItems((prev) => {
         const byId = new Map(prev.map((p) => [String(p.id), { ...p }]));
         for (const n of fresh) byId.set(String(n.id), { ...n, localRead: false });
-        const merged = Array.from(byId.values()).sort(
-          (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-        );
+        const merged = Array.from(byId.values()).sort((a, b) => notificationEventMs(b) - notificationEventMs(a));
         return dedupeNotificationsPreferActor(merged);
       });
     } catch (err) {

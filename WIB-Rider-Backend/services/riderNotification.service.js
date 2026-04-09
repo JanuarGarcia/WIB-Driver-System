@@ -3,8 +3,14 @@
  */
 
 /**
- * @typedef {{ id: string, riderId: string, title: string, message: string, type: string, viewed: boolean, createdAt: Date }} RiderNotification
+ * @typedef {{ id: string, riderId: string, title: string, message: string, type: string, viewed: boolean, createdAt: Date, activityAt: Date|null }} RiderNotification
  */
+
+function coerceActivityAt(value) {
+  if (value == null) return null;
+  const d = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
 
 /**
  * Timeline / photo fan-out dedupe across workers (INSERT IGNORE).
@@ -37,22 +43,35 @@ async function listUnreadForRider(pool, riderId) {
   if (!Number.isFinite(aid)) return [];
   try {
     const [rows] = await pool.query(
-      `SELECT id, admin_id, title, message, type, viewed, date_created
+      `SELECT id, admin_id, title, message, type, viewed, date_created, activity_at
        FROM mt_dashboard_rider_notification
        WHERE admin_id = ? AND viewed = 0
-       ORDER BY date_created DESC, id DESC
+       ORDER BY COALESCE(activity_at, date_created) DESC, id DESC
        LIMIT 100`,
       [aid]
     );
-    return (rows || []).map((row) => ({
-      id: String(row.id),
-      riderId: String(row.admin_id),
-      title: row.title,
-      message: row.message != null ? String(row.message) : '',
-      type: row.type || 'info',
-      viewed: Boolean(row.viewed),
-      createdAt: row.date_created instanceof Date ? row.date_created : new Date(row.date_created),
-    }));
+    return (rows || []).map((row) => {
+      const createdAt =
+        row.date_created instanceof Date ? row.date_created : new Date(row.date_created);
+      const rawAct = row.activity_at;
+      const activityAt =
+        rawAct == null
+          ? null
+          : rawAct instanceof Date
+            ? rawAct
+            : new Date(rawAct);
+      const activityOk = activityAt && !Number.isNaN(activityAt.getTime());
+      return {
+        id: String(row.id),
+        riderId: String(row.admin_id),
+        title: row.title,
+        message: row.message != null ? String(row.message) : '',
+        type: row.type || 'info',
+        viewed: Boolean(row.viewed),
+        createdAt,
+        activityAt: activityOk ? activityAt : null,
+      };
+    });
   } catch (e) {
     if (e.code === 'ER_NO_SUCH_TABLE') return [];
     throw e;
@@ -97,9 +116,10 @@ async function createForRider(pool, riderId, payload) {
   const title = (payload?.title || 'Notification').toString().trim() || 'Notification';
   const message = payload?.message != null ? String(payload.message) : '';
   const type = (payload?.type || 'info').toString().trim() || 'info';
+  const activityAt = coerceActivityAt(payload?.activityAt);
   const [r] = await pool.query(
-    `INSERT INTO mt_dashboard_rider_notification (admin_id, title, message, type) VALUES (?, ?, ?, ?)`,
-    [aid, title, message, type]
+    `INSERT INTO mt_dashboard_rider_notification (admin_id, title, message, type, activity_at) VALUES (?, ?, ?, ?, ?)`,
+    [aid, title, message, type, activityAt]
   );
   const id = r.insertId;
   const row = {
@@ -110,6 +130,7 @@ async function createForRider(pool, riderId, payload) {
     type,
     viewed: false,
     createdAt: new Date(),
+    activityAt,
   };
   return row;
 }
@@ -127,5 +148,6 @@ module.exports = {
   markViewedForRider,
   createForRider,
   tryConsumeTimelineNotifyKey,
+  coerceActivityAt,
   _clearAll,
 };

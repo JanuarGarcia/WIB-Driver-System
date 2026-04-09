@@ -7,7 +7,10 @@
     "start": "node server.js",
     "dev": "node -r dotenv/config server.js",
     "init-db": "node -r dotenv/config scripts/init-db.js",
-    "migrate-driver-photos": "node -r dotenv/config scripts/migrate-driver-task-photos.js"
+    "migrate-driver-photos": "node -r dotenv/config scripts/migrate-driver-task-photos.js",
+    "migrate-driver-client-id": "node -r dotenv/config scripts/add-mt-driver-client-id.js",
+    "migrate-client-password-bcrypt": "node -r dotenv/config scripts/add-client-password-bcrypt-column.js",
+    "migrate-mt-driver-password-bcrypt": "node -r dotenv/config scripts/add-mt-driver-password-bcrypt-column.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

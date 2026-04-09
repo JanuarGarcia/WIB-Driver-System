@@ -15,6 +15,7 @@ import LocationPreviewModal from './LocationPreviewModal';
 import DirectionsModal from './DirectionsModal';
 import { CountryCodeDropdown, COUNTRY_CODES } from './NewTaskModal';
 import { taskDropoffLatLng } from '../utils/mapTasks';
+import { markNotificationToastSuppressedFromModalHistoryRow } from '../utils/notificationToastDedupe';
 
 /** Split stored contact (e.g. +63917…) into dial code + national number for edit UI. */
 function splitContactCountry(full) {
@@ -827,6 +828,9 @@ export default function TaskDetailsModal({
           if (!cat) continue;
           timelineToastedRef.current.add(key);
           notifyBell = true;
+          if (typeof window !== 'undefined' && window.location.pathname === '/') {
+            markNotificationToastSuppressedFromModalHistoryRow(row, taskId);
+          }
         }
 
         for (const ph of photos) {

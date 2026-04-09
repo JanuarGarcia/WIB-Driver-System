@@ -190,9 +190,13 @@ function directionDisplayLabel(dir) {
 }
 
 /** Shown when API sets timeline_ready_for_pickup from Activity Timeline (mt_order_history / errand history). */
-function TaskCardReadyForPickupBanner() {
+function TaskCardReadyForPickupBanner({ className = '' }) {
   return (
-    <div className="task-card-v2-rfp-banner" role="status" aria-label="Merchant marked this order ready for pickup">
+    <div
+      className={['task-card-v2-rfp-banner', className].filter(Boolean).join(' ')}
+      role="status"
+      aria-label="Merchant marked this order ready for pickup"
+    >
       <span className="task-card-v2-rfp-banner-icon" aria-hidden="true">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
           <path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.6 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z" />
@@ -885,6 +889,9 @@ export default function TaskPanel({ onOpenTaskDetails, onFocusTaskOnMap, listRev
                       </button>
                     )}
                   </div>
+                  {!advanceLines && showRfpBanner ? (
+                    <TaskCardReadyForPickupBanner className="task-card-v2-rfp-banner--below-pickup" />
+                  ) : null}
                   <div className="task-card-v2-row task-card-v2-customer-row">
                     <span className="task-card-v2-icon task-card-v2-icon-user" aria-hidden="true">
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>
@@ -903,7 +910,6 @@ export default function TaskPanel({ onOpenTaskDetails, onFocusTaskOnMap, listRev
                       })()}
                     </div>
                   </div>
-                  {!advanceLines && showRfpBanner ? <TaskCardReadyForPickupBanner /> : null}
                   {advanceLines && (
                     <div className="task-card-v2-advance" role="status" aria-label="Advance order schedule">
                       <span className="task-card-v2-advance-line">{advanceLines.deliveryLine}</span>
@@ -915,7 +921,9 @@ export default function TaskPanel({ onOpenTaskDetails, onFocusTaskOnMap, listRev
                       ) : null}
                     </div>
                   )}
-                  {advanceLines && showRfpBanner ? <TaskCardReadyForPickupBanner /> : null}
+                  {advanceLines && showRfpBanner ? (
+                    <TaskCardReadyForPickupBanner className="task-card-v2-rfp-banner--below-advance" />
+                  ) : null}
                   {isUnassigned && waitingMins && (
                     <div className="task-card-v2-waiting">
                       <span className="task-card-v2-icon" aria-hidden="true">

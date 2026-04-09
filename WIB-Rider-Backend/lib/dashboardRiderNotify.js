@@ -76,6 +76,7 @@ async function fetchActiveAdminIds(pool) {
  */
 async function notifyAllDashboardAdmins(pool, payload) {
   const ids = await fetchActiveAdminIds(pool);
+  const activityAt = riderNotificationService.coerceActivityAt(payload?.activityAt);
   const title = (payload?.title || 'Notification').toString().trim() || 'Notification';
   const message = payload?.message != null ? String(payload.message) : '';
   const type = (payload?.type || 'info').toString().trim() || 'info';
@@ -83,15 +84,15 @@ async function notifyAllDashboardAdmins(pool, payload) {
   const numericIds = ids.map((rid) => parseInt(String(rid), 10)).filter((n) => Number.isFinite(n) && n > 0);
   if (numericIds.length === 0) return;
   try {
-    const values = numericIds.map((adminId) => [adminId, title, message, type]);
+    const values = numericIds.map((adminId) => [adminId, title, message, type, activityAt]);
     await pool.query(
-      'INSERT INTO mt_dashboard_rider_notification (admin_id, title, message, type) VALUES ?',
+      'INSERT INTO mt_dashboard_rider_notification (admin_id, title, message, type, activity_at) VALUES ?',
       [values]
     );
   } catch {
     for (const rid of numericIds) {
       try {
-        await riderNotificationService.createForRider(pool, String(rid), { title, message, type });
+        await riderNotificationService.createForRider(pool, String(rid), { title, message, type, activityAt });
       } catch {
         /* ignore per-admin */
       }
@@ -162,7 +163,8 @@ function foodTaskNotifyFromStatus(taskId, orderId, taskDescription, rawStatus, a
   } else if (norm === 'assigned' || norm === 'new') {
     out = { title: 'Task assigned', message: `${label}${taskBit}`, type: 'task_assigned' };
   } else if (norm === 'ready_for_pickup' || norm === 'readyforpickup' || norm === 'readypickup') {
-    out = { title: 'Ready for pickup', message: `${label}${taskBit}`, type: 'ready_pickup' };
+    /* Shown on task cards from order history; do not ring the dispatcher bell. */
+    out = null;
   } else if (norm === 'started' || norm === 'inprogress' || norm === 'in_progress') {
     out = { title: 'Task in progress', message: `${label}${taskBit}`, type: 'new_task' };
   } else if (

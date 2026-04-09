@@ -4890,6 +4890,14 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
 }
 
 /* Ready for pickup — driven by activity timeline (merchant / history), not task assignment alone */
+.task-card-v2-rfp-banner--below-pickup {
+  margin-top: 0.28rem;
+  margin-bottom: 0.42rem;
+}
+.task-card-v2-rfp-banner--below-advance {
+  margin-top: 0.35rem;
+  margin-bottom: 0.4rem;
+}
 .task-card-v2-rfp-banner {
   display: flex;
   align-items: center;

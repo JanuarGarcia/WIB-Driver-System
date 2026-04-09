@@ -3,13 +3,19 @@ const { pool } = require('../config/db');
 
 function toDto(n) {
   const d = n.createdAt instanceof Date ? n.createdAt : new Date(n.createdAt);
+  const createdAtIso = Number.isNaN(d.getTime()) ? new Date().toISOString() : d.toISOString();
+  const rawAct = n.activityAt;
+  const a = rawAct instanceof Date ? rawAct : rawAct != null ? new Date(rawAct) : null;
+  const activityAtIso =
+    a && !Number.isNaN(a.getTime()) ? a.toISOString() : undefined;
   return {
     id: String(n.id),
     riderId: String(n.riderId),
     title: n.title,
     message: n.message,
     type: n.type || 'info',
-    createdAt: Number.isNaN(d.getTime()) ? new Date().toISOString() : d.toISOString(),
+    createdAt: createdAtIso,
+    ...(activityAtIso ? { activityAt: activityAtIso } : {}),
   };
 }
 

@@ -44,6 +44,12 @@ const {
   attachActorToPayload,
 } = require('../lib/dashboardRiderNotify');
 const { insertMtOrderHistoryRow } = require('../lib/mtOrderHistoryInsert');
+const { notifyDashboardAfterMtTaskHistoryRow } = require('../lib/mtTaskStatusDashboardNotify');
+const {
+  normalizeTimelineNotifyKey,
+  milestoneDedupeKeyForTask,
+  classifyTimelineHistoryForDashboardNotify,
+} = require('../lib/dashboardTimelineNotifyClassify');
 
 const ADMIN_SECRET = process.env.ADMIN_SECRET || '';
 
@@ -1507,26 +1513,20 @@ function historyRowEffectiveStatusKey(row) {
   return '';
 }
 
-function isReadyForPickupStatusKey(k) {
-  return k === 'readyforpickup' || k === 'readypickup';
-}
-
 /**
- * Oldest-first history: RFP is "active" if the last Ready-for-pickup row has no later row with a different status.
- * Matches task list need: hide badge once timeline moves past RFP (e.g. acknowledged / started).
+ * Oldest-first history: RFP is "active" if the last Ready-for-pickup milestone has no later milestone
+ * (same rules as dashboard notifications / timeline classifier: status, remarks, notes, etc.).
  */
 function isTimelineReadyForPickupActiveFromSortedHistory(sortedOldestFirst) {
   if (!Array.isArray(sortedOldestFirst) || sortedOldestFirst.length === 0) return false;
   let lastRfpIndex = -1;
   for (let i = 0; i < sortedOldestFirst.length; i++) {
-    const k = historyRowEffectiveStatusKey(sortedOldestFirst[i]);
-    if (isReadyForPickupStatusKey(k)) lastRfpIndex = i;
+    if (classifyTimelineHistoryForDashboardNotify(sortedOldestFirst[i]) === 'ready_for_pickup') lastRfpIndex = i;
   }
   if (lastRfpIndex < 0) return false;
   for (let j = lastRfpIndex + 1; j < sortedOldestFirst.length; j++) {
-    const k = historyRowEffectiveStatusKey(sortedOldestFirst[j]);
-    if (!k) continue;
-    if (!isReadyForPickupStatusKey(k)) return false;
+    const cat = classifyTimelineHistoryForDashboardNotify(sortedOldestFirst[j]);
+    if (cat && cat !== 'ready_for_pickup') return false;
   }
   return true;
 }
@@ -1686,91 +1686,6 @@ async function fetchLatestAdvanceOrderNoteForTask(pool, taskId, orderId) {
   }
 }
 
-function normalizeTimelineNotifyKey(s) {
-  return String(s || '')
-    .toLowerCase()
-    .replace(/\s+/g, '')
-    .replace(/_/g, '');
-}
-
-function milestoneDedupeKeyForTask(taskId, category) {
-  const tid = Number(taskId);
-  if (!Number.isFinite(tid) || tid <= 0) return '';
-  const c = normalizeTimelineNotifyKey(category);
-  if (!c) return '';
-  return `mt-task-${tid}-${c}`;
-}
-
-/** True if normalized status/remarks blob clearly means rider accepted (legacy free-text rows). */
-function normalizedBlobImpliesTaskAccepted(blob) {
-  if (!blob) return false;
-  if (blob.includes('unaccepted') || blob.includes('notaccepted') || blob.includes('unacknowledged')) return false;
-  if (blob.includes('unacknowledge')) return false;
-  if (blob.includes('acknowledged')) return true;
-  if (blob.includes('acknowledge') && !blob.includes('unacknowledge')) return true;
-  if (blob.includes('accepted')) return true;
-  return false;
-}
-
-/** Merchant / order timeline: Ready For Pickup (matches task list RFP badge logic). */
-function normalizedBlobImpliesReadyForPickup(blob) {
-  if (!blob) return false;
-  if (blob.includes('notready') && blob.includes('pickup')) return false;
-  if (blob === 'readyforpickup' || blob === 'readypickup') return true;
-  if (blob.includes('readyforpickup') || blob.includes('readypickup')) return true;
-  if (blob.includes('ready') && blob.includes('pickup')) return true;
-  return false;
-}
-
-/** Timeline rows often use free text (e.g. "reached the destination") while UI maps them to in progress. */
-function normalizedBlobImpliesInProgress(blob) {
-  if (!blob) return false;
-  if (blob.includes('notinprogress')) return false;
-  if (blob === 'inprogress' || blob.includes('inprogress')) return true;
-  if (blob.includes('reachedthedestination') || blob.includes('reacheddestination')) return true;
-  if (blob.includes('reached') && blob.includes('destination')) return true;
-  if (blob.includes('arrivedatdestination') || (blob.includes('arrived') && blob.includes('destination'))) return true;
-  if (blob.includes('arrivedat') && (blob.includes('dropoff') || blob.includes('location'))) return true;
-  if (blob.includes('enroute') || blob.includes('ontheway') || blob.includes('onitsway')) return true;
-  return false;
-}
-
-function historyRowIsRiderAcceptanceForNotify(row) {
-  if (!row || typeof row !== 'object') return false;
-  const parts = [row.status, row.remarks, row.reason, row.notes];
-  const by = String(row.update_by_type || '').toLowerCase();
-  const assignedByDispatcher = by === 'admin' || by === 'merchant';
-  for (const p of parts) {
-    const key = normalizeTimelineNotifyKey(p);
-    if (!key) continue;
-    if (normalizedBlobImpliesTaskAccepted(key)) return true;
-    if (key.includes('taskaccepted') || key.includes('orderaccepted')) return true;
-    if (key === 'acknowledged' || key === 'accepted' || key === 'accept') return true;
-    if (key === 'assigned' && !assignedByDispatcher) return true;
-    if (key === 'orderassigned' || key === 'driverassigned') return true;
-  }
-  return false;
-}
-
-function classifyTimelineHistoryForDashboardNotify(row) {
-  if (!row || typeof row !== 'object') return null;
-  const keys = [
-    normalizeTimelineNotifyKey(row.status),
-    normalizeTimelineNotifyKey(row.remarks),
-    normalizeTimelineNotifyKey(row.reason),
-    normalizeTimelineNotifyKey(row.notes),
-  ].filter(Boolean);
-  if (keys.some((k) => k === 'successful' || k === 'completed' || k === 'delivered')) return 'successful';
-  if (keys.some((k) => k === 'readyforpickup' || k === 'readypickup' || normalizedBlobImpliesReadyForPickup(k))) {
-    return 'ready_for_pickup';
-  }
-  if (keys.some((k) => k === 'inprogress' || normalizedBlobImpliesInProgress(k))) return 'inprogress';
-  if (keys.some((k) => k === 'started')) return 'started';
-  if (historyRowIsRiderAcceptanceForNotify(row)) return 'accepted';
-  if (keys.some((k) => k === 'acknowledged' || k === 'accepted' || k === 'accept')) return 'accepted';
-  return null;
-}
-
 /** Prefer timeline / feed `update_by_name`; else parse "Name accepted the task" from remarks. */
 function timelineNotifyActorFromHistoryRow(row) {
   if (!row || typeof row !== 'object') return '';
@@ -1830,7 +1745,8 @@ function timelineNotifyPayloadFromCategory(taskId, taskDescription, orderId, cat
   let payload = null;
   if (category === 'accepted') payload = { title: 'Task accepted', message: messageBase, type: 'task_accepted' };
   else if (category === 'successful') payload = { title: 'Successful delivery', message: messageBase, type: 'task_done' };
-  else if (category === 'ready_for_pickup') payload = { title: 'Ready for pickup', message: messageBase, type: 'ready_pickup' };
+  /* Ready-for-pickup is visible on task cards / timeline; no dashboard bell notification. */
+  else if (category === 'ready_for_pickup') payload = null;
   else if (category === 'started') payload = { title: 'Rider started', message: messageBase, type: 'new_task' };
   else if (category === 'inprogress') payload = { title: 'Task in progress', message: messageBase, type: 'new_task' };
   return attachActorToPayload(payload, actorLabel);
@@ -1852,7 +1768,7 @@ function driverActorFromTaskDriverJoinRow(row) {
 /**
  * One notification per mt_driver_task_photo row; dedupe `mt-p-<id>` (timeline modal + global poller share keys).
  */
-async function notifyAdminsForSingleTaskPhoto(pool, photoId, taskId, orderId, taskDescription, actorLabel) {
+async function notifyAdminsForSingleTaskPhoto(pool, photoId, taskId, orderId, taskDescription, actorLabel, activityAt) {
   const pid = photoId != null ? Number(photoId) : NaN;
   const tid = taskId != null ? Number(taskId) : NaN;
   if (!Number.isFinite(pid) || !Number.isFinite(tid) || tid <= 0) return;
@@ -1867,6 +1783,7 @@ async function notifyAdminsForSingleTaskPhoto(pool, photoId, taskId, orderId, ta
         title: 'Photo added',
         message: ensureTaskIdMarkerInMessage(`${label} · Rider added a photo`, tid),
         type: 'task_photo',
+        activityAt,
       },
       actorLabel
     )
@@ -1876,7 +1793,15 @@ async function notifyAdminsForSingleTaskPhoto(pool, photoId, taskId, orderId, ta
 async function fanOutGlobalTaskPhotoNotifySinceRows(pool, rows) {
   for (const r of rows || []) {
     const actor = driverActorFromTaskDriverJoinRow(r);
-    await notifyAdminsForSingleTaskPhoto(pool, r.id, r.task_id, r.order_id ?? null, r.task_description, actor);
+    await notifyAdminsForSingleTaskPhoto(
+      pool,
+      r.id,
+      r.task_id,
+      r.order_id ?? null,
+      r.task_description,
+      actor,
+      r.date_created
+    );
   }
 }
 
@@ -1892,7 +1817,7 @@ async function fanOutTimelineMilestonesToRiderNotifications(pool, taskId, taskDe
     if (milestoneKey && !(await riderNotificationService.tryConsumeTimelineNotifyKey(pool, milestoneKey))) continue;
     const actor = timelineNotifyActorFromHistoryRow(row);
     const payload = timelineNotifyPayloadFromCategory(taskId, taskDescription, row.order_id ?? null, cat, actor);
-    if (payload) notifyAllDashboardAdminsFireAndForget(pool, payload);
+    if (payload) notifyAllDashboardAdminsFireAndForget(pool, { ...payload, activityAt: row.date_created });
   }
   let photoActor = '';
   let photoOrderId = null;
@@ -1912,7 +1837,15 @@ async function fanOutTimelineMilestonesToRiderNotifications(pool, taskId, taskDe
     }
   }
   for (const ph of photoRows || []) {
-    await notifyAdminsForSingleTaskPhoto(pool, ph && ph.id, taskId, photoOrderId, taskDescription, photoActor);
+    await notifyAdminsForSingleTaskPhoto(
+      pool,
+      ph && ph.id,
+      taskId,
+      photoOrderId,
+      taskDescription,
+      photoActor,
+      ph?.date_created
+    );
   }
 }
 
@@ -1977,7 +1910,7 @@ async function fanOutOrderHistoryFeedEventsToRiderNotifications(pool, events) {
     const td = descByTask.get(tid);
     const actor = timelineNotifyActorFromFeedEvent(ev) || driverByTask.get(tid) || '';
     const payload = timelineNotifyPayloadFromCategory(tid, td, ev.order_id ?? null, cat, actor);
-    if (payload) notifyAllDashboardAdminsFireAndForget(pool, payload);
+    if (payload) notifyAllDashboardAdminsFireAndForget(pool, { ...payload, activityAt: ev.date_created });
   }
 }
 
@@ -2022,7 +1955,7 @@ async function fanOutErrandHistoryFeedEventsToRiderNotifications(pool, errandPoo
     const label = ref ? `Mangan ${ref}` : `Mangan order #${oid}`;
     const actor = timelineNotifyActorFromFeedEvent(ev);
     const payload = timelineNotifyPayloadFromCategory(null, label, null, cat, actor, { errandOrderId: oid });
-    if (payload) notifyAllDashboardAdminsFireAndForget(pool, payload);
+    if (payload) notifyAllDashboardAdminsFireAndForget(pool, { ...payload, activityAt: ev.date_created });
   }
 }
 
@@ -3082,6 +3015,7 @@ router.get('/tasks', async (req, res) => {
       }
     }
 
+    await attachTimelineReadyForPickupFlags(pool, errandWibPool, rows);
     return res.json(rows);
   } catch (e) {
     if (e.code === 'ER_NO_SUCH_TABLE' || e.code === 'ER_BAD_FIELD_ERROR') {
@@ -3692,9 +3626,10 @@ router.put('/tasks/:id/status', express.json(), async (req, res) => {
     }
     if (result.affectedRows === 0) return res.status(404).json({ error: 'Task not found' });
 
+    let historyInsertId = null;
     try {
       const [[task]] = await pool.query('SELECT order_id FROM mt_driver_task WHERE task_id = ?', [taskId]);
-      await insertMtOrderHistoryRow(pool, {
+      historyInsertId = await insertMtOrderHistoryRow(pool, {
         orderId: task?.order_id || null,
         taskId,
         status: newStatus,
@@ -3713,8 +3648,21 @@ router.put('/tasks/:id/status', express.json(), async (req, res) => {
         [taskId]
       );
       const actor = formatActorFromAdminUser(req.adminUser);
-      const payload = foodTaskNotifyFromStatus(taskId, trow?.order_id, trow?.task_description, newStatus, actor);
-      if (payload) await notifyAllDashboardAdmins(pool, payload).catch(() => {});
+      await notifyDashboardAfterMtTaskHistoryRow(pool, {
+        taskId,
+        orderId: trow?.order_id,
+        taskDescription: trow?.task_description,
+        statusRaw: newStatus,
+        actorLabel: actor,
+        historyInsertId,
+        historyRowForClassify: {
+          status: newStatus,
+          remarks,
+          reason: null,
+          notes: null,
+          update_by_type: 'admin',
+        },
+      });
     } catch (_) {}
 
     return res.json({ ok: true, status: newStatus });
@@ -4047,6 +3995,104 @@ router.post('/drivers', express.json(), async (req, res) => {
     if (e.code === 'ER_DUP_ENTRY') return res.status(400).json({ error: 'Username already exists' });
     if (e.code === 'ER_NO_SUCH_TABLE' || e.code === 'ER_BAD_FIELD_ERROR') {
       return res.status(503).json({ error: 'Drivers table unavailable.' });
+    }
+    throw e;
+  }
+});
+
+/**
+ * Link a rider (mt_client) to a driver row: same credentials as rider app once client_id is set (Option A2).
+ * Body JSON: { client_id, username?, password? } — password required only if the client row has no stored password.
+ */
+router.post('/drivers/promote-from-client', express.json(), async (req, res) => {
+  const clientId = parseInt(String(req.body?.client_id ?? ''), 10);
+  if (!Number.isFinite(clientId) || clientId <= 0) {
+    return res.status(400).json({ error: 'client_id required (mt_client.client_id in the primary DB)' });
+  }
+  const bodyUsername = (req.body?.username || '').toString().trim();
+  const bodyPassword = (req.body?.password || '').toString();
+
+  try {
+    const [[existing]] = await pool.query('SELECT driver_id FROM mt_driver WHERE client_id = ? LIMIT 1', [clientId]);
+    if (existing) {
+      return res.status(400).json({ error: 'A driver is already linked to this client_id' });
+    }
+  } catch (e) {
+    if (e.code === 'ER_BAD_FIELD_ERROR') {
+      return res.status(503).json({ error: 'mt_driver.client_id missing. Run: node -r dotenv/config scripts/add-mt-driver-client-id.js' });
+    }
+    throw e;
+  }
+
+  let client = null;
+  const selectAttempts = [
+    'SELECT client_id, email_address, username, password, first_name, last_name FROM mt_client WHERE client_id = ? LIMIT 1',
+    'SELECT client_id, email_address, password, first_name, last_name FROM mt_client WHERE client_id = ? LIMIT 1',
+  ];
+  try {
+    for (const sql of selectAttempts) {
+      try {
+        const [rows] = await pool.query(sql, [clientId]);
+        if (rows && rows[0]) {
+          client = rows[0];
+          break;
+        }
+      } catch (inner) {
+        if (inner.code !== 'ER_BAD_FIELD_ERROR') throw inner;
+      }
+    }
+  } catch (e) {
+    if (e.code === 'ER_NO_SUCH_TABLE') {
+      return res.status(404).json({ error: 'mt_client not found in this database' });
+    }
+    throw e;
+  }
+
+  if (!client) return res.status(404).json({ error: 'Client not found' });
+
+  let storedFromClient = ((client.password || '') + '').trim();
+  if (!storedFromClient) {
+    try {
+      const [[ph]] = await pool.query(
+        'SELECT password_hash AS p FROM mt_client WHERE client_id = ? LIMIT 1',
+        [clientId]
+      );
+      if (ph && ph.p) storedFromClient = String(ph.p).trim();
+    } catch (_) {
+      /* column may not exist */
+    }
+  }
+
+  const email = (client.email_address || '').toString().trim();
+  const unameFromClient = (client.username || '').toString().trim();
+  const user = bodyUsername || email || unameFromClient;
+  if (!user) return res.status(400).json({ error: 'username required (set username or ensure client has email_address)' });
+  let passwordToStore = storedFromClient;
+  if (bodyPassword.trim()) {
+    passwordToStore = await bcrypt.hash(bodyPassword, 10);
+  } else if (!storedFromClient) {
+    return res.status(400).json({ error: 'Client has no password; provide password in body' });
+  }
+
+  const fn = (client.first_name || '').toString().trim() || null;
+  const ln = (client.last_name || '').toString().trim() || null;
+
+  try {
+    const [result] = await pool.query(
+      `INSERT INTO mt_driver (username, password, first_name, last_name, email, client_id, transport_description, status, on_duty)
+       VALUES (?, ?, ?, ?, ?, ?, NULL, 'active', 0)`,
+      [user, passwordToStore, fn, ln, email || null, clientId]
+    );
+    return res.json({ ok: true, id: result.insertId, client_id: clientId });
+  } catch (e) {
+    if (e.code === 'ER_DUP_ENTRY') {
+      return res.status(400).json({ error: 'Username already exists on mt_driver' });
+    }
+    if (e.code === 'ER_BAD_FIELD_ERROR') {
+      return res.status(503).json({
+        error:
+          'INSERT failed (missing client_id/email/status on mt_driver?). Run scripts/add-mt-driver-client-id.js and align schema with POST /drivers.',
+      });
     }
     throw e;
   }

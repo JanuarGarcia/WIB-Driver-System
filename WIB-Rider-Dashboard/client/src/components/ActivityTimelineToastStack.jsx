@@ -3,6 +3,10 @@ import { createPortal } from 'react-dom';
 import { useLocation } from 'react-router-dom';
 import { api, statusLabel, statusDisplayClass } from '../api';
 import { RIDER_NOTIFICATIONS_POLL_EVENT } from '../hooks/useNotifications';
+import {
+  markNotificationToastSuppressedFromErrandFeedEvent,
+  markNotificationToastSuppressedFromMtFeedEvent,
+} from '../utils/notificationToastDedupe';
 
 const SOUND_MUTED_KEY = 'wib_dashboard_sound_muted';
 
@@ -135,7 +139,10 @@ export default function ActivityTimelineToastStack({ dateStr, onOpenTaskTimeline
             const hid = ev && ev.id != null ? Number(ev.id) : NaN;
             if (!Number.isFinite(hid) || seenIdsRef.current.has(hid)) continue;
             seenIdsRef.current.add(hid);
-            if (document.visibilityState === 'visible') pushToast(ev);
+            if (document.visibilityState === 'visible') {
+              pushToast(ev);
+              markNotificationToastSuppressedFromMtFeedEvent(ev);
+            }
             newTaskActivity = true;
           }
         }
@@ -177,7 +184,10 @@ export default function ActivityTimelineToastStack({ dateStr, onOpenTaskTimeline
             const hid = ev && ev.id != null ? Number(ev.id) : NaN;
             if (!Number.isFinite(hid) || errandSeenIdsRef.current.has(hid)) continue;
             errandSeenIdsRef.current.add(hid);
-            if (document.visibilityState === 'visible') pushToast(ev);
+            if (document.visibilityState === 'visible') {
+              pushToast(ev);
+              markNotificationToastSuppressedFromErrandFeedEvent(ev);
+            }
             newErrandActivity = true;
           }
         }

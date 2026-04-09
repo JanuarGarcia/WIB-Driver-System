@@ -6,7 +6,15 @@ const { v4: uuidv4 } = require('uuid');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
-const { pool } = require('../config/db');
+const { pool, errandWibPool } = require('../config/db');
+const { verifyStoredPassword, verifyRiderPasswordResult } = require('../lib/passwordVerify');
+const {
+  persistPasswordBcryptSidecar,
+  persistPasswordBcryptSidecarMtDriver,
+  persistDualPasswordOnPasswordChangeMtDriver,
+} = require('../lib/riderPasswordCompat');
+const { findRiderClientAcrossDatabases, MSG_NOT_DRIVER } = require('../lib/riderClientForDriverLogin');
+const { checkDriverLoginRateLimit, clientIp } = require('../lib/driverLoginRateLimit');
 const { success, error } = require('../lib/response');
 const { validateApiKey, resolveDriver, optionalDriver } = require('../middleware/auth');
 const {
@@ -17,12 +25,9 @@ const {
 const { fetchDriverMergedOrderHistory } = require('../lib/driverOrderHistory');
 const { enrichOrderDetailsWithSubcategoryAddons } = require('../lib/orderDetailAddons');
 const { attachOrderDetailCategories } = require('../lib/orderDetailCategories');
-const {
-  notifyAllDashboardAdmins,
-  foodTaskNotifyFromStatus,
-  formatActorFromDriver,
-} = require('../lib/dashboardRiderNotify');
+const { formatActorFromDriver } = require('../lib/dashboardRiderNotify');
 const { insertMtOrderHistoryRow } = require('../lib/mtOrderHistoryInsert');
+const { notifyDashboardAfterMtTaskHistoryRow } = require('../lib/mtTaskStatusDashboardNotify');
 
 const uploadDir = path.join(__dirname, '..', 'uploads', 'profiles');
 if (!fs.existsSync(uploadDir)) {
@@ -82,6 +87,59 @@ function cleanupUploadOnAuthError(req, res, next) {
 }
 
 const BASE_URL = process.env.BASE_URL || 'http://localhost:3000';
+
+function shouldAutoFillRiderPasswordBcrypt() {
+  const v = process.env.AUTO_FILL_RIDER_PASSWORD_BCRYPT ?? process.env.AUTO_FILL_CLIENT_PASSWORD_BCRYPT;
+  if (v == null || v === '') return true;
+  return v !== '0' && !/^false$/i.test(String(v));
+}
+
+/** Optional: login by mt_client email when no mt_driver.username match (ordering customer → driver link). */
+function allowMtClientFallback() {
+  const v = process.env.DRIVER_LOGIN_MT_CLIENT_FALLBACK;
+  if (v == null || v === '') return false;
+  return v === '1' || /^true$/i.test(String(v));
+}
+
+/** @param {{ password?: string, password_bcrypt?: string }} authRow @param {'bcrypt'|'legacy'} matched */
+function driverMirrorSecretFromClientRow(authRow, matched) {
+  if (matched === 'bcrypt') return String(authRow.password_bcrypt || '').trim();
+  return String(authRow.password || '').trim();
+}
+
+async function reloadDriverLoginRow(driverId) {
+  try {
+    const [fr] = await pool.query(
+      'SELECT driver_id AS id, username, password AS password_hash, password_bcrypt, on_duty, client_id FROM mt_driver WHERE driver_id = ?',
+      [driverId]
+    );
+    return fr && fr[0] ? fr[0] : null;
+  } catch (e) {
+    if (e.code !== 'ER_BAD_FIELD_ERROR') throw e;
+    const [fr] = await pool.query(
+      'SELECT driver_id AS id, username, password AS password_hash, on_duty, client_id FROM mt_driver WHERE driver_id = ?',
+      [driverId]
+    );
+    return fr && fr[0] ? fr[0] : null;
+  }
+}
+
+async function fetchDriverRowForLoginByUsername(username) {
+  try {
+    const [rows] = await pool.query(
+      'SELECT driver_id AS id, username, password AS password_hash, password_bcrypt, on_duty, client_id FROM mt_driver WHERE username = ?',
+      [username]
+    );
+    return rows && rows[0] ? rows[0] : null;
+  } catch (e) {
+    if (e.code !== 'ER_BAD_FIELD_ERROR') throw e;
+    const [rows] = await pool.query(
+      'SELECT driver_id AS id, username, password AS password_hash, on_duty, client_id FROM mt_driver WHERE username = ?',
+      [username]
+    );
+    return rows && rows[0] ? rows[0] : null;
+  }
+}
 
 function todayStr() {
   const d = new Date();
@@ -745,32 +803,125 @@ async function enrichRiderTaskDetails(pool, taskRow) {
 }
 
 // ---- Public (api_key only) ----
+/**
+ * Rider accounts are **`mt_driver`** rows (`username` + `password` + optional `password_bcrypt`).
+ * Optional: `DRIVER_LOGIN_MT_CLIENT_FALLBACK=1` enables login via `mt_client` email + `mt_driver.client_id` (see docs).
+ */
 router.post('/Login', validateApiKey, async (req, res) => {
   const { username, password, device_id, device_platform } = req.body;
   if (!username || !password) {
     return error(res, 'Username and password required');
   }
-  const [[driver]] = await pool.query(
-    'SELECT driver_id AS id, username, password AS password_hash, on_duty FROM mt_driver WHERE username = ?',
-    [username]
-  );
+  const loginKey = String(username).trim();
+  if (!checkDriverLoginRateLimit(req, loginKey)) {
+    console.warn('[driver/api/Login] rate limited', { ip: clientIp(req) });
+    return error(res, 'Too many login attempts. Try again later.');
+  }
+
+  const checkErrand =
+    process.env.DRIVER_LOGIN_CHECK_ERRAND_ST_CLIENT === '1' ||
+    /^true$/i.test(String(process.env.DRIVER_LOGIN_CHECK_ERRAND_ST_CLIENT || ''));
+
+  let driver = await fetchDriverRowForLoginByUsername(loginKey);
+  let stored = driver ? String(driver.password_hash || '').trim() : '';
+  let passwordOk = false;
+
+  if (driver) {
+    const riderAuth = {
+      password: stored,
+      password_bcrypt: String(driver.password_bcrypt || '').trim(),
+    };
+    const vr = await verifyRiderPasswordResult(password, riderAuth);
+    passwordOk = vr.ok;
+    if (passwordOk && vr.matched === 'legacy' && shouldAutoFillRiderPasswordBcrypt()) {
+      await persistPasswordBcryptSidecarMtDriver(pool, driver.id, password);
+      const refreshed = await reloadDriverLoginRow(driver.id);
+      if (refreshed) {
+        driver = refreshed;
+        stored = String(driver.password_hash || '').trim();
+      }
+    }
+    if (!passwordOk) {
+      console.warn('[driver/api/Login] failed', { reason: 'bad_password', path: 'mt_driver' });
+      return error(res, 'Invalid credentials');
+    }
+  } else if (allowMtClientFallback()) {
+    const riderClient = await findRiderClientAcrossDatabases(loginKey, pool, errandWibPool, {
+      checkErrandStClient: checkErrand,
+    });
+    if (!riderClient) {
+      console.warn('[driver/api/Login] failed', { reason: 'unknown_user' });
+      return error(res, 'Invalid credentials');
+    }
+    const riderVr = await verifyRiderPasswordResult(password, riderClient);
+    passwordOk = riderVr.ok;
+    if (!passwordOk) {
+      console.warn('[driver/api/Login] failed', { reason: 'bad_password', path: 'rider_client' });
+      return error(res, 'Invalid credentials');
+    }
+
+    let linked = null;
+    try {
+      const [linkedRows] = await pool.query(
+        `SELECT driver_id AS id, username, password AS password_hash, password_bcrypt, on_duty, client_id
+         FROM mt_driver
+         WHERE client_id = ?
+           AND (status IS NULL OR TRIM(status) = '' OR LOWER(TRIM(status)) NOT IN ('suspended', 'blocked', 'expired'))
+         ORDER BY driver_id ASC
+         LIMIT 1`,
+        [riderClient.client_id]
+      );
+      linked = linkedRows && linkedRows[0] ? linkedRows[0] : null;
+    } catch (e) {
+      if (e.code === 'ER_BAD_FIELD_ERROR') {
+        try {
+          const [linkedRows] = await pool.query(
+            `SELECT driver_id AS id, username, password AS password_hash, on_duty, client_id
+             FROM mt_driver WHERE client_id = ? ORDER BY driver_id ASC LIMIT 1`,
+            [riderClient.client_id]
+          );
+          linked = linkedRows && linkedRows[0] ? linkedRows[0] : null;
+        } catch (e2) {
+          if (e2.code === 'ER_BAD_FIELD_ERROR') {
+            console.error(
+              '[driver/api/Login] mt_driver.client_id missing. Run: node -r dotenv/config scripts/add-mt-driver-client-id.js'
+            );
+            return error(res, 'Invalid credentials');
+          }
+          throw e2;
+        }
+      } else throw e;
+    }
+
+    if (!linked) {
+      console.warn('[driver/api/Login] failed', { reason: 'rider_not_driver', source: riderClient.source });
+      return error(res, MSG_NOT_DRIVER);
+    }
+
+    if (riderVr.matched === 'legacy' && shouldAutoFillRiderPasswordBcrypt()) {
+      const tblPool = riderClient.source === 'st_client' ? errandWibPool : pool;
+      const tbl = riderClient.source === 'st_client' ? 'st_client' : 'mt_client';
+      await persistPasswordBcryptSidecar(tblPool, tbl, riderClient.client_id, password);
+    }
+    const mirror = driverMirrorSecretFromClientRow(riderClient, riderVr.matched);
+    await pool.query('UPDATE mt_driver SET password = ? WHERE driver_id = ?', [mirror || null, linked.id]);
+    const fresh = await reloadDriverLoginRow(linked.id);
+    if (!fresh) {
+      console.error('[driver/api/Login] driver row missing after client link', linked.id);
+      return error(res, 'Invalid credentials');
+    }
+    driver = fresh;
+    stored = String(driver.password_hash || '').trim();
+  } else {
+    console.warn('[driver/api/Login] failed', { reason: 'unknown_user' });
+    return error(res, 'Invalid credentials');
+  }
+
   if (!driver) {
     return error(res, 'Invalid credentials');
   }
-  const stored = (driver.password_hash || '').trim();
+
   const isBcrypt = stored.startsWith('$2a$') || stored.startsWith('$2b$') || stored.startsWith('$2y$');
-  const isMd5 = /^[a-f0-9]{32}$/i.test(stored);
-  let passwordOk = false;
-  if (isBcrypt) {
-    passwordOk = await bcrypt.compare(password, stored);
-  } else if (isMd5) {
-    passwordOk = crypto.createHash('md5').update(password).digest('hex').toLowerCase() === stored.toLowerCase();
-  } else {
-    passwordOk = password === stored;
-  }
-  if (!passwordOk) {
-    return error(res, 'Invalid credentials');
-  }
   const token = uuidv4();
   const nowUnix = Math.floor(Date.now() / 1000);
   const updates = [token, device_id || null, (device_platform || '').toLowerCase() || null, driver.id];
@@ -787,7 +938,7 @@ router.post('/Login', validateApiKey, async (req, res) => {
       );
     } else throw e;
   }
-  if (!isBcrypt && stored) {
+  if (process.env.MT_DRIVER_LOGIN_UPGRADE_PASSWORD_COLUMN === '1' && !isBcrypt && stored) {
     const hash = await bcrypt.hash(password, 10);
     await pool.query('UPDATE mt_driver SET password = ? WHERE driver_id = ?', [hash, driver.id]);
   }
@@ -1163,6 +1314,7 @@ router.post('/ChangeTaskStatus', validateApiKey, resolveDriver, async (req, res)
     }
   }
 
+  let historyInsertId = null;
   try {
     const remarks = reason != null && String(reason).trim() ? String(reason).trim() : '';
     const latRaw = latitude ?? lat;
@@ -1170,7 +1322,7 @@ router.post('/ChangeTaskStatus', validateApiKey, resolveDriver, async (req, res)
     const geoLat = latRaw != null && String(latRaw).trim() !== '' ? parseFloat(latRaw) : NaN;
     const geoLng = lngRaw != null && String(lngRaw).trim() !== '' ? parseFloat(lngRaw) : NaN;
     const hasGeo = Number.isFinite(geoLat) && Number.isFinite(geoLng);
-    await insertMtOrderHistoryRow(pool, {
+    historyInsertId = await insertMtOrderHistoryRow(pool, {
       orderId: task?.order_id || null,
       taskId: tid,
       status,
@@ -1187,8 +1339,22 @@ router.post('/ChangeTaskStatus', validateApiKey, resolveDriver, async (req, res)
 
   try {
     const actor = formatActorFromDriver(req.driver);
-    const payload = foodTaskNotifyFromStatus(tid, task.order_id, task.task_description, status, actor);
-    if (payload) await notifyAllDashboardAdmins(pool, payload).catch(() => {});
+    const remarksForClassify = reason != null && String(reason).trim() ? String(reason).trim() : '';
+    await notifyDashboardAfterMtTaskHistoryRow(pool, {
+      taskId: tid,
+      orderId: task.order_id,
+      taskDescription: task.task_description,
+      statusRaw: status,
+      actorLabel: actor,
+      historyInsertId,
+      historyRowForClassify: {
+        status,
+        remarks: remarksForClassify,
+        reason: null,
+        notes: null,
+        update_by_type: 'driver',
+      },
+    });
   } catch (_) {}
 
   return success(res, null);
@@ -1219,12 +1385,35 @@ router.post('/ForgotPassword', validateApiKey, async (req, res) => {
 
 router.post('/ChangePassword', validateApiKey, resolveDriver, async (req, res) => {
   const { current_password, new_password } = req.body;
-  const [[d]] = await pool.query('SELECT password AS password_hash FROM mt_driver WHERE driver_id = ?', [req.driver.id]);
-  if (!d || !(await bcrypt.compare(current_password, d.password_hash))) {
+  let row = null;
+  try {
+    const [rows] = await pool.query(
+      'SELECT password AS password_hash, password_bcrypt FROM mt_driver WHERE driver_id = ?',
+      [req.driver.id]
+    );
+    row = rows && rows[0];
+  } catch (e) {
+    if (e.code !== 'ER_BAD_FIELD_ERROR') throw e;
+    const [rows] = await pool.query('SELECT password AS password_hash FROM mt_driver WHERE driver_id = ?', [
+      req.driver.id,
+    ]);
+    row = rows && rows[0];
+  }
+  const auth = {
+    password: String(row?.password_hash || '').trim(),
+    password_bcrypt: String(row?.password_bcrypt || '').trim(),
+  };
+  if (!row || !(await verifyRiderPasswordResult(current_password, auth)).ok) {
     return error(res, 'Current password is wrong');
   }
-  const hash = await bcrypt.hash(new_password, 10);
-  await pool.query('UPDATE mt_driver SET password = ? WHERE driver_id = ?', [hash, req.driver.id]);
+  try {
+    await persistDualPasswordOnPasswordChangeMtDriver(pool, req.driver.id, new_password);
+  } catch (e) {
+    if (e.code === 'ER_BAD_FIELD_ERROR') {
+      const hash = await bcrypt.hash(new_password, 10);
+      await pool.query('UPDATE mt_driver SET password = ? WHERE driver_id = ?', [hash, req.driver.id]);
+    } else throw e;
+  }
   return success(res, null);
 });
 

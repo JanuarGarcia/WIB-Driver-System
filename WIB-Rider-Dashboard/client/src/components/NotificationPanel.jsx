@@ -99,7 +99,8 @@ export default function NotificationPanel({ items, pollError, onMarkAllRead, onC
           <ul className="rider-notif-panel__list">
             {items.map((n) => {
               const { label, mod } = typeMeta(n.type);
-              const rel = formatRelative(n.createdAt);
+              const displayAt = n.activityAt || n.createdAt;
+              const rel = formatRelative(displayAt);
               const unread = !n.localRead;
               const actor = n.message ? parseActorFromNotificationMessage(n.message) : '';
               const messageMain = n.message ? formatNotificationMessageForDisplay(n.message) : '';
@@ -156,11 +157,11 @@ export default function NotificationPanel({ items, pollError, onMarkAllRead, onC
                       </div>
                     )}
                     <footer className="rider-notif-card__footer">
-                      <time className="rider-notif-card__time" dateTime={n.createdAt} title={rel.full || formatWhen(n.createdAt)}>
+                      <time className="rider-notif-card__time" dateTime={displayAt} title={rel.full || formatWhen(displayAt)}>
                         {rel.short}
                       </time>
                       <span className="rider-notif-card__time-full" aria-hidden="true">
-                        {formatWhen(n.createdAt)}
+                        {formatWhen(displayAt)}
                       </span>
                     </footer>
                   </article>
