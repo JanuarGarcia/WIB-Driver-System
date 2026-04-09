@@ -13,6 +13,23 @@ const {
   mapDeliveryToCanonicalTaskStatus,
 } = require('./errandDriverStatus');
 
+/** Non-enumerable on the `order_details` array: filtered `st_ordernew_item` rows (SQL order) for name merge. */
+const ERRAND_ORDER_LINES_RAW = Symbol.for('wib.errandOrderLinesRaw');
+
+function attachErrandOrderLinesRaw(mergedLines, rawFilteredRows) {
+  if (!Array.isArray(mergedLines) || !Array.isArray(rawFilteredRows)) return mergedLines;
+  try {
+    Object.defineProperty(mergedLines, ERRAND_ORDER_LINES_RAW, {
+      value: rawFilteredRows,
+      enumerable: false,
+      configurable: true,
+    });
+  } catch (_) {
+    /* ignore */
+  }
+  return mergedLines;
+}
+
 function mapDeliveryToTaskStatus(deliveryStatus, orderStatus) {
   return mapDeliveryToCanonicalTaskStatus(deliveryStatus, orderStatus);
 }
@@ -933,6 +950,61 @@ function pickArrayOfObjects(v) {
   return v.filter((x) => x && typeof x === 'object');
 }
 
+/**
+ * Heuristic: object looks like one cart line (Mangan / ErrandWib JSON varies by app version).
+ * Declared before `deepPickErrandJsonItemName` in file order; both are hoisted at runtime.
+ */
+function looksLikeErrandCartLine(o) {
+  if (!o || typeof o !== 'object') return false;
+  const hasQty = o.qty != null || o.quantity != null || o.count != null;
+  const hasPrice =
+    o.price != null ||
+    o.unit_price != null ||
+    o.amount != null ||
+    o.sub_total != null ||
+    o.subtotal != null;
+  const itemIdStr = o.item_id != null ? String(o.item_id).trim() : '';
+  const hasMenuRef =
+    o.menu_item_id != null ||
+    o.item_uuid != null ||
+    o.line_uuid != null ||
+    o.product_uuid != null ||
+    (itemIdStr !== '' && itemIdStr !== '0');
+  const nm = deepPickErrandJsonItemName(o);
+  const hasName = !!(nm && !isGenericErrandItemName(nm));
+  let score = 0;
+  if (hasQty) score += 1;
+  if (hasPrice) score += 1;
+  if (hasMenuRef) score += 1;
+  if (hasName) score += 1;
+  return score >= 2 || (hasName && (hasPrice || hasQty));
+}
+
+/** When known keys miss, find the largest array of cart-like objects anywhere under `json_details`. */
+function discoverErrandJsonLineObjectArrays(node) {
+  const candidates = [];
+  function visit(n, depth) {
+    if (!n || depth > 7) return;
+    if (Array.isArray(n)) {
+      const objs = pickArrayOfObjects(n);
+      if (objs.length > 0) {
+        const hits = objs.filter(looksLikeErrandCartLine);
+        if (hits.length > 0 && hits.length >= Math.max(1, Math.ceil(objs.length * 0.45))) {
+          candidates.push(objs);
+        }
+      }
+      for (const el of n) visit(el, depth + 1);
+      return;
+    }
+    if (typeof n === 'object') {
+      for (const v of Object.values(n)) visit(v, depth + 1);
+    }
+  }
+  visit(node, 0);
+  candidates.sort((a, b) => b.length - a.length);
+  return candidates[0] || [];
+}
+
 function extractErrandJsonDetailRows(jsonValue) {
   if (!jsonValue) return [];
   if (Array.isArray(jsonValue)) return pickArrayOfObjects(jsonValue);
@@ -946,6 +1018,17 @@ function extractErrandJsonDetailRows(jsonValue) {
     'items',
     'line_items',
     'lineItems',
+    'lines',
+    'order_lines',
+    'orderLines',
+    'cart_lines',
+    'cartLines',
+    'cart_items',
+    'cartItems',
+    'products',
+    'dishes',
+    'rows',
+    'entries',
     'cart_details',
     'cartDetails',
     'details',
@@ -959,13 +1042,14 @@ function extractErrandJsonDetailRows(jsonValue) {
     if (rows.length) return rows;
   }
   // Common nested wrappers.
-  for (const k of ['data', 'payload', 'order', 'cart']) {
+  for (const k of ['data', 'payload', 'order', 'cart', 'shopping_cart', 'shoppingCart', 'checkout', 'order_summary', 'orderSummary']) {
     const nested = jsonValue[k];
     if (!nested || typeof nested !== 'object') continue;
     const rows = extractErrandJsonDetailRows(nested);
     if (rows.length) return rows;
   }
-  return [];
+  const discovered = discoverErrandJsonLineObjectArrays(jsonValue);
+  return discovered.length ? discovered : [];
 }
 
 function pickErrandJsonItemName(row) {
@@ -984,11 +1068,16 @@ function pickErrandJsonItemName(row) {
     'display_name',
     'order_item_name',
     'item_title',
+    'product_title',
+    'menu_name',
     'name',
     'label',
     'title',
     'text',
     'description',
+    'item_description',
+    'short_description',
+    'long_description',
   ];
   for (const k of keys) {
     const t = errandPickLabel(row[k], 280);
@@ -1002,7 +1091,21 @@ function deepPickErrandJsonItemName(row) {
   if (!row || typeof row !== 'object') return '';
   const direct = pickErrandJsonItemName(row);
   if (direct && !isGenericErrandItemName(direct)) return direct;
-  const nestedKeys = ['item', 'menu_item', 'menuItem', 'product', 'line', 'dish', 'food'];
+  const nestedKeys = [
+    'item',
+    'menu_item',
+    'menuItem',
+    'product',
+    'line',
+    'dish',
+    'food',
+    'catalog_item',
+    'catalogItem',
+    'selected_item',
+    'selectedItem',
+    'st_item',
+    'stItem',
+  ];
   for (const nk of nestedKeys) {
     const sub = row[nk];
     if (!sub || typeof sub !== 'object') continue;
@@ -1032,19 +1135,54 @@ function tryParseJsonObjectForErrand(v) {
   }
 }
 
-/** Some `st_ordernew_item` rows store a JSON snapshot on *json / *meta / *details columns after edits. */
+/**
+ * `st_ordernew_item` rows may store a JSON snapshot on any column after Mangan edits — not only `*json*`-named fields.
+ */
 function pickErrandLineNameFromJsonColumns(row) {
   if (!row || typeof row !== 'object') return '';
   for (const k of Object.keys(row)) {
-    if (!/json|details|snapshot|meta|payload|options|attributes|cart|line_item|item_info|custom|addon/i.test(k)) {
-      continue;
-    }
     const parsed = tryParseJsonObjectForErrand(row[k]);
     if (!parsed || typeof parsed !== 'object') continue;
     const nm = deepPickErrandJsonItemName(parsed);
     if (nm && !isGenericErrandItemName(nm)) return nm;
   }
   return '';
+}
+
+function collectErrandJsonUuidStringsDeep(v, acc) {
+  if (v == null) return;
+  if (typeof v === 'string') {
+    const t = v.trim();
+    if (ERRAND_LINE_ITEM_UUID_RE.test(t)) acc.add(t.toLowerCase());
+    return;
+  }
+  if (Buffer.isBuffer(v)) {
+    collectErrandJsonUuidStringsDeep(v.toString('utf8'), acc);
+    return;
+  }
+  if (Array.isArray(v)) {
+    v.forEach((x) => collectErrandJsonUuidStringsDeep(x, acc));
+    return;
+  }
+  if (typeof v === 'object') {
+    Object.values(v).forEach((x) => collectErrandJsonUuidStringsDeep(x, acc));
+  }
+}
+
+/** When index / id matching fails, map JSON line → name by unit price (last resort for edited Mangan lines). */
+function buildErrandJsonDetailPriceHintMap(jsonRows) {
+  const map = new Map();
+  if (!Array.isArray(jsonRows)) return map;
+  for (const jr of jsonRows) {
+    const raw = jr?.unit_price ?? jr?.price ?? jr?.amount ?? jr?.sub_total ?? jr?.subtotal;
+    const n = raw != null ? Number(raw) : NaN;
+    if (!Number.isFinite(n)) continue;
+    const nm = deepPickErrandJsonItemName(jr);
+    if (!nm || isGenericErrandItemName(nm)) continue;
+    const k = n.toFixed(2);
+    if (!map.has(k)) map.set(k, nm);
+  }
+  return map;
 }
 
 /**
@@ -1091,6 +1229,11 @@ function buildErrandJsonDetailNameHintMaps(jsonRows) {
       const s = String(u).trim();
       if (ERRAND_LINE_ITEM_UUID_RE.test(s)) hintsByUuid.set(s.toLowerCase(), nm);
     }
+    const deepUuids = new Set();
+    collectErrandJsonUuidStringsDeep(jr, deepUuids);
+    for (const u of deepUuids) {
+      if (!hintsByUuid.has(u)) hintsByUuid.set(u, nm);
+    }
   }
   return { hintsByItemId, hintsByLineKey, hintsByUuid, hintsByIndex };
 }
@@ -1109,6 +1252,7 @@ function mergeErrandOrderDetailsWithJsonNames(orderDetails, stOrderRow, rawLineR
   const parsed = parseErrandJsonDetails(stOrderRow.json_details ?? stOrderRow.jsonDetails);
   const jsonRows = extractErrandJsonDetailRows(parsed);
   const { hintsByItemId, hintsByLineKey, hintsByUuid, hintsByIndex } = buildErrandJsonDetailNameHintMaps(jsonRows);
+  const priceHints = buildErrandJsonDetailPriceHintMap(jsonRows);
 
   const raw = Array.isArray(rawLineRows) ? rawLineRows : [];
 
@@ -1130,12 +1274,11 @@ function mergeErrandOrderDetailsWithJsonNames(orderDetails, stOrderRow, rawLineR
       better = deepPickErrandJsonItemName(oi);
       if (better && isGenericErrandItemName(better)) better = null;
       if (!better) {
-        for (const k of Object.keys(oi)) {
-          const v = oi[k];
-          if (v == null || typeof v === 'object') continue;
-          const s = String(v).trim();
-          if (ERRAND_LINE_ITEM_UUID_RE.test(s) && hintsByUuid.has(s.toLowerCase())) {
-            better = hintsByUuid.get(s.toLowerCase());
+        const fromRowUuids = new Set();
+        collectErrandJsonUuidStringsDeep(oi, fromRowUuids);
+        for (const u of fromRowUuids) {
+          if (hintsByUuid.has(u)) {
+            better = hintsByUuid.get(u);
             break;
           }
         }
@@ -1146,14 +1289,12 @@ function mergeErrandOrderDetailsWithJsonNames(orderDetails, stOrderRow, rawLineR
       }
     }
 
-    if (!better && oi && typeof oi === 'object') {
-      for (const v of Object.values(oi)) {
-        if (v == null || typeof v === 'object') continue;
-        const s = String(v).trim();
-        if (ERRAND_LINE_ITEM_UUID_RE.test(s) && hintsByUuid.has(s.toLowerCase())) {
-          better = hintsByUuid.get(s.toLowerCase());
-          break;
-        }
+    if (!better) {
+      const unit = line?.normal_price != null ? Number(line.normal_price) : NaN;
+      if (Number.isFinite(unit)) {
+        const pk = unit.toFixed(2);
+        const byPrice = priceHints.get(pk);
+        if (byPrice && !isGenericErrandItemName(byPrice)) better = byPrice;
       }
     }
 
@@ -1201,10 +1342,11 @@ async function fetchErrandOrderLineItems(errandPool, orderId, stOrderRow = null)
   const finish = (rows) => {
     const filtered = filterNonVoidedErrandLines(rows);
     const mapped = filtered.map(mapErrandOrderLineToOrderDetail);
-    if (stOrderRow && typeof stOrderRow === 'object') {
-      return mergeErrandOrderDetailsWithJsonNames(mapped, stOrderRow, filtered);
-    }
-    return mapped;
+    const merged =
+      stOrderRow && typeof stOrderRow === 'object'
+        ? mergeErrandOrderDetailsWithJsonNames(mapped, stOrderRow, filtered)
+        : mapped;
+    return attachErrandOrderLinesRaw(merged, filtered);
   };
   try {
     const [rows] = await errandPool.query(sqlFull, [orderId]);
@@ -1726,7 +1868,9 @@ function buildErrandTaskDetailPayload(
       }
     : null;
 
-  const lines = mergeErrandOrderDetailsWithJsonNames(orderDetails, row);
+  const rawLines =
+    Array.isArray(orderDetails) && ERRAND_ORDER_LINES_RAW in orderDetails ? orderDetails[ERRAND_ORDER_LINES_RAW] : null;
+  const lines = mergeErrandOrderDetailsWithJsonNames(orderDetails, row, Array.isArray(rawLines) ? rawLines : null);
 
   const historyList = Array.isArray(orderHistoryRows) ? orderHistoryRows : [];
 

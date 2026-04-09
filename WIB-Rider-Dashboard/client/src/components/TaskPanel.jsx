@@ -247,6 +247,8 @@ export default function TaskPanel({ onOpenTaskDetails, onFocusTaskOnMap, listRev
   const [panelTimeTick, setPanelTimeTick] = useState(0);
   const calendarRef = useRef(null);
   const sortRef = useRef(null);
+  /** Latest `taskCacheKey`; used so slow `tasks` responses never overwrite UI after date/mode changed. */
+  const taskCacheKeyRef = useRef('');
   const selectedDateYmd = useMemo(() => {
     const y = selectedDateTime.getFullYear();
     const m = String(selectedDateTime.getMonth() + 1).padStart(2, '0');
@@ -257,6 +259,7 @@ export default function TaskPanel({ onOpenTaskDetails, onFocusTaskOnMap, listRev
     () => `${TASK_PANEL_CACHE_PREFIX}:${selectedDateYmd}:${taskMode}`,
     [selectedDateYmd, taskMode]
   );
+  taskCacheKeyRef.current = taskCacheKey;
 
   useEffect(() => {
     api('settings')
@@ -400,12 +403,14 @@ export default function TaskPanel({ onOpenTaskDetails, onFocusTaskOnMap, listRev
     const quiet = opts.quiet === true;
     if (!quiet) setLoading(true);
     const dateStr = toDateString(selectedDateTime);
+    const cacheKeyAtRequest = taskCacheKey;
     let url = `tasks?date=${encodeURIComponent(dateStr)}`;
     if (taskMode === 'problem') {
       url += `&status_in=${encodeURIComponent(PROBLEM_STATUS_IN)}`;
     }
     api(url)
       .then((list) => {
+        if (taskCacheKeyRef.current !== cacheKeyAtRequest) return;
         const raw = list || [];
         setTasks(raw);
         const norm = (status) => (status || '').toLowerCase().replace(/\s+/g, '').replace(/_/g, '');
@@ -420,7 +425,7 @@ export default function TaskPanel({ onOpenTaskDetails, onFocusTaskOnMap, listRev
             else if (COMPLETED_TASK_STATUSES.has(s)) c += 1;
           }
           setCounts({ unassigned: u, assigned: a, completed: c });
-          writeJsonSessionStorage(taskCacheKey, {
+          writeJsonSessionStorage(cacheKeyAtRequest, {
             at: Date.now(),
             tasks: raw,
             counts: { unassigned: u, assigned: a, completed: c },
@@ -440,7 +445,7 @@ export default function TaskPanel({ onOpenTaskDetails, onFocusTaskOnMap, listRev
             declined,
             failed,
           });
-          writeJsonSessionStorage(taskCacheKey, {
+          writeJsonSessionStorage(cacheKeyAtRequest, {
             at: Date.now(),
             tasks: raw,
             problemCounts: { cancelled, declined, failed },
@@ -448,6 +453,7 @@ export default function TaskPanel({ onOpenTaskDetails, onFocusTaskOnMap, listRev
         }
       })
       .catch(() => {
+        if (taskCacheKeyRef.current !== cacheKeyAtRequest) return;
         setTasks([]);
         if (taskMode === 'active') {
           setCounts({ unassigned: 0, assigned: 0, completed: 0 });
@@ -456,31 +462,39 @@ export default function TaskPanel({ onOpenTaskDetails, onFocusTaskOnMap, listRev
         }
       })
       .finally(() => {
+        if (taskCacheKeyRef.current !== cacheKeyAtRequest) return;
         if (!quiet) setLoading(false);
       });
   }, [selectedDateTime, taskMode, taskCacheKey]);
 
   useEffect(() => {
     const cached = readJsonSessionStorage(taskCacheKey, null);
-    if (!cached || typeof cached !== 'object') return;
-    if (Array.isArray(cached.tasks)) {
+    if (cached && typeof cached === 'object' && Array.isArray(cached.tasks)) {
       setTasks(cached.tasks);
       setLoading(false);
+      if (taskMode === 'active' && cached.counts && typeof cached.counts === 'object') {
+        setCounts({
+          unassigned: Number(cached.counts.unassigned) || 0,
+          assigned: Number(cached.counts.assigned) || 0,
+          completed: Number(cached.counts.completed) || 0,
+        });
+      }
+      if (taskMode === 'problem' && cached.problemCounts && typeof cached.problemCounts === 'object') {
+        setProblemCounts({
+          cancelled: Number(cached.problemCounts.cancelled) || 0,
+          declined: Number(cached.problemCounts.declined) || 0,
+          failed: Number(cached.problemCounts.failed) || 0,
+        });
+      }
+      return;
     }
-    if (taskMode === 'active' && cached.counts && typeof cached.counts === 'object') {
-      setCounts({
-        unassigned: Number(cached.counts.unassigned) || 0,
-        assigned: Number(cached.counts.assigned) || 0,
-        completed: Number(cached.counts.completed) || 0,
-      });
+    setTasks([]);
+    if (taskMode === 'active') {
+      setCounts({ unassigned: 0, assigned: 0, completed: 0 });
+    } else {
+      setProblemCounts({ cancelled: 0, declined: 0, failed: 0 });
     }
-    if (taskMode === 'problem' && cached.problemCounts && typeof cached.problemCounts === 'object') {
-      setProblemCounts({
-        cancelled: Number(cached.problemCounts.cancelled) || 0,
-        declined: Number(cached.problemCounts.declined) || 0,
-        failed: Number(cached.problemCounts.failed) || 0,
-      });
-    }
+    setLoading(true);
   }, [taskCacheKey, taskMode]);
 
   useEffect(() => {
