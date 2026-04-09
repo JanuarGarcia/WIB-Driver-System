@@ -226,6 +226,55 @@ function dashboardMapFocusZoom(focusRequest) {
   return DASHBOARD_TASK_CARD_FOCUS_ZOOM;
 }
 const FIT_BOUNDS_PADDING_PX = 64;
+/** Tighter padding when many pins — reduces “empty margin” so the cluster fills the map. */
+const FIT_BOUNDS_PADDING_MANY_PX = 40;
+/** If there is a very far outlier pin, reduce extra padding so all markers still fit without excessive zoom-out. */
+const FIT_BOUNDS_PADDING_OUTLIER_PX = 20;
+const FIT_BOUNDS_MANY_MARKERS_THRESHOLD = 24;
+/** Upper zoom when fitting multiple pins (tight urban cluster); single-pin uses DASHBOARD_SINGLE_MARKER_ZOOM. */
+const DASHBOARD_FIT_MULTIPLE_MAX_ZOOM = 17;
+
+function latLngSpanFromArrayPoints(points) {
+  if (!points || points.length === 0) return { latSpan: 0, lngSpan: 0 };
+  let minLat = Number.POSITIVE_INFINITY;
+  let maxLat = Number.NEGATIVE_INFINITY;
+  let minLng = Number.POSITIVE_INFINITY;
+  let maxLng = Number.NEGATIVE_INFINITY;
+  for (const [latRaw, lngRaw] of points) {
+    const lat = Number(latRaw);
+    const lng = Number(lngRaw);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue;
+    if (lat < minLat) minLat = lat;
+    if (lat > maxLat) maxLat = lat;
+    if (lng < minLng) minLng = lng;
+    if (lng > maxLng) maxLng = lng;
+  }
+  if (!Number.isFinite(minLat) || !Number.isFinite(minLng)) return { latSpan: 0, lngSpan: 0 };
+  return { latSpan: Math.max(0, maxLat - minLat), lngSpan: Math.max(0, maxLng - minLng) };
+}
+
+function latLngSpanFromObjPoints(points) {
+  if (!points || points.length === 0) return { latSpan: 0, lngSpan: 0 };
+  return latLngSpanFromArrayPoints(points.map((p) => [p.lat, p.lng]));
+}
+
+/**
+ * Detects a "long tail" marker spread (many markers in a tight group + one/few very far pins).
+ * We still fit ALL markers, but reduce fit padding so the map does not feel overly zoomed out.
+ */
+function hasVeryFarOutlierSpan(latSpan, lngSpan) {
+  const maxSpan = Math.max(latSpan, lngSpan);
+  const minSpan = Math.min(latSpan, lngSpan);
+  if (maxSpan <= 0) return false;
+  if (minSpan <= 0) return maxSpan >= 0.08;
+  const ratio = maxSpan / minSpan;
+  return ratio >= 5.5 && maxSpan >= 0.08;
+}
+
+function fitBoundsPaddingPx(markerCount, hasFarOutlier = false) {
+  if (markerCount >= FIT_BOUNDS_MANY_MARKERS_THRESHOLD && hasFarOutlier) return FIT_BOUNDS_PADDING_OUTLIER_PX;
+  return markerCount >= FIT_BOUNDS_MANY_MARKERS_THRESHOLD ? FIT_BOUNDS_PADDING_MANY_PX : FIT_BOUNDS_PADDING_PX;
+}
 
 /**
  * Fingerprint of all pin coordinates. Any added/removed/moved marker changes the string.
@@ -542,13 +591,17 @@ function LeafletFitBounds({ locations, merchants, taskMarkers, disabled, mapResi
 
     const run = () => {
       try {
-        if (points.length === 1) {
-          map.setView(points[0], DASHBOARD_SINGLE_MARKER_ZOOM, { animate });
+        const fitPoints = points;
+        if (fitPoints.length === 0) return;
+        const { latSpan, lngSpan } = latLngSpanFromArrayPoints(fitPoints);
+        const pad = fitBoundsPaddingPx(fitPoints.length, hasVeryFarOutlierSpan(latSpan, lngSpan));
+        if (fitPoints.length === 1) {
+          map.setView(fitPoints[0], DASHBOARD_SINGLE_MARKER_ZOOM, { animate });
         } else {
-          const bounds = L.latLngBounds(points);
+          const bounds = L.latLngBounds(fitPoints);
           map.fitBounds(bounds, {
-            padding: [FIT_BOUNDS_PADDING_PX, FIT_BOUNDS_PADDING_PX],
-            maxZoom: 15,
+            padding: [pad, pad],
+            maxZoom: DASHBOARD_FIT_MULTIPLE_MAX_ZOOM,
             animate,
           });
         }
@@ -958,20 +1011,26 @@ function GoogleMapAutoFit({ points, mapResizeTrigger = 0, onViewCommitted }) {
 
     const run = () => {
       try {
-        if (points.length === 1) {
-          map.setCenter(points[0]);
+        const fitPoints = points;
+        if (fitPoints.length === 0) return;
+        const { latSpan, lngSpan } = latLngSpanFromObjPoints(fitPoints);
+        const pad = fitBoundsPaddingPx(fitPoints.length, hasVeryFarOutlierSpan(latSpan, lngSpan));
+        if (fitPoints.length === 1) {
+          map.setCenter(fitPoints[0]);
           map.setZoom(DASHBOARD_SINGLE_MARKER_ZOOM);
         } else {
           const b = new window.google.maps.LatLngBounds();
-          points.forEach((p) => b.extend(p));
+          fitPoints.forEach((p) => b.extend(p));
           map.fitBounds(b, {
-            top: FIT_BOUNDS_PADDING_PX,
-            right: FIT_BOUNDS_PADDING_PX,
-            bottom: FIT_BOUNDS_PADDING_PX,
-            left: FIT_BOUNDS_PADDING_PX,
+            top: pad,
+            right: pad,
+            bottom: pad,
+            left: pad,
           });
           const z = map.getZoom();
-          if (typeof z === 'number' && z > 15) map.setZoom(15);
+          if (typeof z === 'number' && z > DASHBOARD_FIT_MULTIPLE_MAX_ZOOM) {
+            map.setZoom(DASHBOARD_FIT_MULTIPLE_MAX_ZOOM);
+          }
         }
         lastPointsSigRef.current = pointsSig;
         const c = map.getCenter();
