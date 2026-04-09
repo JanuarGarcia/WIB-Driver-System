@@ -3199,6 +3199,45 @@ router.put('/tasks/:id/assign', express.json(), async (req, res) => {
         throw e;
       }
     }
+    try {
+      const oid = task.order_id != null ? parseInt(String(task.order_id), 10) : NaN;
+      if (Number.isFinite(oid) && oid > 0) {
+        await updateMtOrderStatusIfDeliveryComplete(pool, oid, 'acknowledged');
+      }
+    } catch (_) {
+      /* mt_order.status optional — do not fail assignment */
+    }
+    let assignHistoryInsertId = null;
+    try {
+      assignHistoryInsertId = await insertMtOrderHistoryRow(pool, {
+        orderId: task?.order_id || null,
+        taskId,
+        status: 'acknowledged',
+        remarks: 'Driver assigned',
+        updateByType: 'admin',
+        actorId: req.adminUser?.admin_id ?? null,
+        actorDisplayName: formatActorFromAdminUser(req.adminUser),
+      });
+    } catch (_) {
+      /* mt_order_history optional — do not fail assignment */
+    }
+    try {
+      await notifyDashboardAfterMtTaskHistoryRow(pool, {
+        taskId,
+        orderId: task.order_id,
+        taskDescription: task.task_description,
+        statusRaw: 'acknowledged',
+        actorLabel: formatActorFromAdminUser(req.adminUser),
+        historyInsertId: assignHistoryInsertId,
+        historyRowForClassify: {
+          status: 'acknowledged',
+          remarks: 'Driver assigned',
+          reason: null,
+          notes: null,
+          update_by_type: 'admin',
+        },
+      });
+    } catch (_) {}
     notifyCustomerRiderAssignedForFoodTaskFireAndForget(pool, {
       taskId,
       orderId: task.order_id,

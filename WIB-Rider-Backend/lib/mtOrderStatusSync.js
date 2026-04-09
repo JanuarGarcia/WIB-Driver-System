@@ -15,7 +15,7 @@ function compactTaskStatus(raw) {
 function mapTaskStatusToMtOrderStatus(raw) {
   const c = compactTaskStatus(raw);
   if (!c) return null;
-  if (c === 'acknowledged' || c === 'accept' || c === 'accepted') {
+  if (c === 'acknowledged' || c === 'accept' || c === 'accepted' || c === 'assigned' || c === 'new') {
     return String(process.env.MT_ORDER_STATUS_ACKNOWLEDGED || 'Acknowledge').trim() || 'Acknowledge';
   }
   if (c === 'started') {

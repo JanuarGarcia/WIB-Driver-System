@@ -23,6 +23,7 @@ import AgentPanel from '../components/AgentPanel';
 import { useMapMerchantFilterSelection } from '../components/MapMerchantFilter';
 import { hydrateMapMerchantFilterFromServer } from '../utils/mapMerchantFilterPrefs';
 import { api, userFacingApiError } from '../api';
+import { RIDER_NOTIFICATIONS_POLL_EVENT } from '../hooks/useNotifications';
 
 const MOBILE_DASHBOARD_MQ = '(max-width: 768px)';
 import { useTeamFilter } from '../context/TeamFilterContext';
@@ -117,6 +118,7 @@ export default function Dashboard() {
   const [googleMapStyle, setGoogleMapStyle] = useState('');
   const [tasksMapDateStr, setTasksMapDateStr] = useState(() => readEffectiveDashboardTaskDate());
   const [rawMapTasks, setRawMapTasks] = useState([]);
+  const realtimeRefreshAtRef = useRef(0);
   /** null = agent roster still loading (map shows all rider GPS pins); then filtered to Active panel roster. */
   const [activePanelDriverIdSet, setActivePanelDriverIdSet] = useState(null);
   const handleFocusRiderOnMap = useCallback(
@@ -296,7 +298,8 @@ export default function Dashboard() {
         setGoogleApiKey(s.google_api_key || '');
         setMapboxToken((s.mapbox_access_token || '').toString().trim());
         const interval = parseInt(s.activity_refresh_interval, 10);
-        setActivityRefreshIntervalSec(Number.isFinite(interval) && interval >= 5 ? interval : 60);
+        const clamped = Number.isFinite(interval) && interval >= 5 ? interval : 60;
+        setActivityRefreshIntervalSec(Math.min(clamped, 10));
         setDisableActivityTracking(s.disable_activity_tracking === '1');
         const country = (s.default_map_country || 'ph').toLowerCase();
         if (country === 'ph') {
@@ -332,12 +335,38 @@ export default function Dashboard() {
 
   useEffect(() => {
     if (location.pathname !== '/' || disableActivityTracking) return;
-    const ms = Math.max(5000, activityRefreshIntervalSec * 1000);
+    const ms = Math.min(10000, Math.max(5000, activityRefreshIntervalSec * 1000));
     const id = setInterval(() => {
       if (document.visibilityState === 'visible') refreshMapData();
     }, ms);
     return () => clearInterval(id);
   }, [location.pathname, disableActivityTracking, activityRefreshIntervalSec, driversLocationsUrl, refreshMapData]);
+
+  useEffect(() => {
+    if (location.pathname !== '/') return undefined;
+    let timer = null;
+    const onRealtime = (e) => {
+      if (document.visibilityState !== 'visible') return;
+      const now = Date.now();
+      if (now - realtimeRefreshAtRef.current < 1200) return;
+      realtimeRefreshAtRef.current = now;
+      if (timer) clearTimeout(timer);
+      const delayMs =
+        e && e.detail && typeof e.detail.delayMs === 'number' && Number.isFinite(e.detail.delayMs)
+          ? Math.max(0, e.detail.delayMs)
+          : 250;
+      timer = setTimeout(() => {
+        timer = null;
+        bumpTaskLists();
+        refreshMapData();
+      }, delayMs);
+    };
+    window.addEventListener(RIDER_NOTIFICATIONS_POLL_EVENT, onRealtime);
+    return () => {
+      if (timer) clearTimeout(timer);
+      window.removeEventListener(RIDER_NOTIFICATIONS_POLL_EVENT, onRealtime);
+    };
+  }, [location.pathname, bumpTaskLists, refreshMapData]);
 
   useEffect(() => {
     if (typeof window === 'undefined' || !window.matchMedia(MOBILE_DASHBOARD_MQ).matches) return undefined;

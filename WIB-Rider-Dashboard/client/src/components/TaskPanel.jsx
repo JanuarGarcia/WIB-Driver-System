@@ -5,6 +5,7 @@ import { api, statusClass, statusLabel } from '../api';
 import { sanitizeLocationDisplayName, sanitizeMerchantDisplayName, shortTaskOrderDigits } from '../utils/displayText';
 import { getAdvanceOrderLines, isAdvanceOrderDisplay } from '../utils/advanceOrder';
 import { useTableAutoRefresh } from '../hooks/useTableAutoRefresh';
+import { RIDER_NOTIFICATIONS_POLL_EVENT } from '../hooks/useNotifications';
 import {
   DASHBOARD_TASKS_MAP_DATE_KEY,
   DASHBOARD_TASKS_MAP_DATE_EVENT,
@@ -432,6 +433,26 @@ export default function TaskPanel({ onOpenTaskDetails, onFocusTaskOnMap, listRev
 
   const fetchTasksQuiet = useCallback(() => fetchTasks({ quiet: true }), [fetchTasks]);
   useTableAutoRefresh(fetchTasksQuiet, activityRefreshIntervalMs);
+
+  useEffect(() => {
+    let delayTimer;
+    const onRealtime = (e) => {
+      if (delayTimer) clearTimeout(delayTimer);
+      const delayMs =
+        e && e.detail && typeof e.detail.delayMs === 'number' && Number.isFinite(e.detail.delayMs)
+          ? Math.max(0, e.detail.delayMs)
+          : 250;
+      delayTimer = window.setTimeout(() => {
+        delayTimer = null;
+        fetchTasksQuiet();
+      }, delayMs);
+    };
+    window.addEventListener(RIDER_NOTIFICATIONS_POLL_EVENT, onRealtime);
+    return () => {
+      if (delayTimer) clearTimeout(delayTimer);
+      window.removeEventListener(RIDER_NOTIFICATIONS_POLL_EVENT, onRealtime);
+    };
+  }, [fetchTasksQuiet]);
 
   const normStatus = (status) => (status || '').toLowerCase().replace(/\s+/g, '').replace(/_/g, '');
 
