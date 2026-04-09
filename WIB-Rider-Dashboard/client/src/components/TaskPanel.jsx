@@ -76,9 +76,28 @@ function getCalendarGrid(viewYear, viewMonth) {
 
 const PROBLEM_FILTER_STORAGE_KEY = 'wib-tasks-problem-filter';
 const PROBLEM_STATUS_IN = 'cancelled,canceled,declined,failed';
+const TASK_PANEL_CACHE_PREFIX = 'wib-task-panel-cache-v1';
 const ASSIGNED_TASK_STATUSES = new Set(['assigned', 'acknowledged', 'started', 'inprogress']);
 const COMPLETED_TASK_STATUSES = new Set(['completed', 'delivered', 'successful']);
 const PROBLEM_TASK_STATUSES = new Set(['cancelled', 'canceled', 'declined', 'failed']);
+
+function readJsonSessionStorage(key, fallback) {
+  try {
+    const raw = sessionStorage.getItem(key);
+    if (!raw) return fallback;
+    return JSON.parse(raw);
+  } catch (_) {
+    return fallback;
+  }
+}
+
+function writeJsonSessionStorage(key, value) {
+  try {
+    sessionStorage.setItem(key, JSON.stringify(value));
+  } catch (_) {
+    // best-effort cache only
+  }
+}
 
 function readStoredProblemFilter() {
   try {
@@ -228,6 +247,16 @@ export default function TaskPanel({ onOpenTaskDetails, onFocusTaskOnMap, listRev
   const [panelTimeTick, setPanelTimeTick] = useState(0);
   const calendarRef = useRef(null);
   const sortRef = useRef(null);
+  const selectedDateYmd = useMemo(() => {
+    const y = selectedDateTime.getFullYear();
+    const m = String(selectedDateTime.getMonth() + 1).padStart(2, '0');
+    const d = String(selectedDateTime.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }, [selectedDateTime]);
+  const taskCacheKey = useMemo(
+    () => `${TASK_PANEL_CACHE_PREFIX}:${selectedDateYmd}:${taskMode}`,
+    [selectedDateYmd, taskMode]
+  );
 
   useEffect(() => {
     api('settings')
@@ -391,6 +420,11 @@ export default function TaskPanel({ onOpenTaskDetails, onFocusTaskOnMap, listRev
             else if (COMPLETED_TASK_STATUSES.has(s)) c += 1;
           }
           setCounts({ unassigned: u, assigned: a, completed: c });
+          writeJsonSessionStorage(taskCacheKey, {
+            at: Date.now(),
+            tasks: raw,
+            counts: { unassigned: u, assigned: a, completed: c },
+          });
         } else {
           let cancelled = 0;
           let declined = 0;
@@ -406,6 +440,11 @@ export default function TaskPanel({ onOpenTaskDetails, onFocusTaskOnMap, listRev
             declined,
             failed,
           });
+          writeJsonSessionStorage(taskCacheKey, {
+            at: Date.now(),
+            tasks: raw,
+            problemCounts: { cancelled, declined, failed },
+          });
         }
       })
       .catch(() => {
@@ -419,7 +458,30 @@ export default function TaskPanel({ onOpenTaskDetails, onFocusTaskOnMap, listRev
       .finally(() => {
         if (!quiet) setLoading(false);
       });
-  }, [selectedDateTime, taskMode]);
+  }, [selectedDateTime, taskMode, taskCacheKey]);
+
+  useEffect(() => {
+    const cached = readJsonSessionStorage(taskCacheKey, null);
+    if (!cached || typeof cached !== 'object') return;
+    if (Array.isArray(cached.tasks)) {
+      setTasks(cached.tasks);
+      setLoading(false);
+    }
+    if (taskMode === 'active' && cached.counts && typeof cached.counts === 'object') {
+      setCounts({
+        unassigned: Number(cached.counts.unassigned) || 0,
+        assigned: Number(cached.counts.assigned) || 0,
+        completed: Number(cached.counts.completed) || 0,
+      });
+    }
+    if (taskMode === 'problem' && cached.problemCounts && typeof cached.problemCounts === 'object') {
+      setProblemCounts({
+        cancelled: Number(cached.problemCounts.cancelled) || 0,
+        declined: Number(cached.problemCounts.declined) || 0,
+        failed: Number(cached.problemCounts.failed) || 0,
+      });
+    }
+  }, [taskCacheKey, taskMode]);
 
   useEffect(() => {
     fetchTasks();

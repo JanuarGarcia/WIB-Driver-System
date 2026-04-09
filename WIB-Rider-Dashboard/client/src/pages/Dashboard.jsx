@@ -30,6 +30,9 @@ const MOBILE_DASHBOARD_MQ = '(max-width: 768px)';
 const MAP_DATA_MIN_REFRESH_MS = 1200;
 const MERCHANTS_REFRESH_MS = 60000;
 const ACTIVE_DRIVER_IDS_REFRESH_MS = 10000;
+const MAP_AUTO_REFRESH_MIN_MS = 15000;
+const MAP_AUTO_REFRESH_MAX_MS = 45000;
+const DASHBOARD_MAP_CACHE_PREFIX = 'wib-dashboard-map-cache-v1';
 import { useTeamFilter } from '../context/TeamFilterContext';
 import {
   DASHBOARD_TASKS_MAP_DATE_KEY,
@@ -49,6 +52,24 @@ function nextDashboardMapFocus(prev, lat, lng, zoom) {
   const o = { nonce: (prev?.nonce ?? 0) + 1, lat, lng };
   if (zoom != null && Number.isFinite(Number(zoom))) o.zoom = Number(zoom);
   return o;
+}
+
+function readJsonSessionStorage(key, fallback) {
+  try {
+    const raw = sessionStorage.getItem(key);
+    if (!raw) return fallback;
+    return JSON.parse(raw);
+  } catch (_) {
+    return fallback;
+  }
+}
+
+function writeJsonSessionStorage(key, value) {
+  try {
+    sessionStorage.setItem(key, JSON.stringify(value));
+  } catch (_) {
+    // best-effort cache only
+  }
 }
 import { buildActivePanelDriverIdSet } from '../utils/agentPanelRiders';
 
@@ -130,6 +151,10 @@ export default function Dashboard() {
   const lastActiveIdsRefreshAtRef = useRef(0);
   /** null = agent roster still loading (map shows all rider GPS pins); then filtered to Active panel roster. */
   const [activePanelDriverIdSet, setActivePanelDriverIdSet] = useState(null);
+  const mapDataCacheKey = useMemo(
+    () => `${DASHBOARD_MAP_CACHE_PREFIX}:${String(selectedTeamId ?? 'all')}:${tasksMapDateStr}`,
+    [selectedTeamId, tasksMapDateStr]
+  );
   const handleFocusRiderOnMap = useCallback(
     (driver) => {
       const p = riderGpsFromLocations(driver, locations);
@@ -146,6 +171,17 @@ export default function Dashboard() {
   const driversLocationsUrl = selectedTeamId
     ? `drivers/locations?team_id=${encodeURIComponent(selectedTeamId)}`
     : 'drivers/locations';
+
+  useEffect(() => {
+    const cached = readJsonSessionStorage(mapDataCacheKey, null);
+    if (!cached || typeof cached !== 'object') return;
+    const loc = Array.isArray(cached.locations) ? cached.locations : null;
+    const mer = Array.isArray(cached.merchants) ? cached.merchants : null;
+    const tasks = Array.isArray(cached.tasks) ? cached.tasks : null;
+    if (loc) setLocations(loc);
+    if (mer) setMerchants(mer);
+    if (tasks) setRawMapTasks(tasks);
+  }, [mapDataCacheKey]);
 
   const refreshActivePanelDriverIds = useCallback(async (opts = {}) => {
     const force = opts.force === true;
@@ -215,6 +251,12 @@ export default function Dashboard() {
             setMerchants(Array.isArray(merchantsOrNull) ? merchantsOrNull : []);
             lastMerchantsRefreshAtRef.current = Date.now();
           }
+          writeJsonSessionStorage(mapDataCacheKey, {
+            at: Date.now(),
+            locations: Array.isArray(loc) ? loc : [],
+            merchants: refreshMerchants ? (Array.isArray(merchantsOrNull) ? merchantsOrNull : []) : merchants,
+            tasks: Array.isArray(taskList) ? taskList : [],
+          });
         } catch {
           setLocations([]);
           setRawMapTasks([]);
@@ -228,7 +270,7 @@ export default function Dashboard() {
         mapDataInFlightRef.current = null;
       }
     },
-    [driversLocationsUrl, tasksMapDateStr]
+    [driversLocationsUrl, tasksMapDateStr, mapDataCacheKey, merchants]
   );
 
   useEffect(() => {
@@ -316,7 +358,7 @@ export default function Dashboard() {
         setMapboxToken((s.mapbox_access_token || '').toString().trim());
         const interval = parseInt(s.activity_refresh_interval, 10);
         const clamped = Number.isFinite(interval) && interval >= 5 ? interval : 60;
-        setActivityRefreshIntervalSec(Math.min(clamped, 10));
+        setActivityRefreshIntervalSec(Math.min(clamped, 45));
         setDisableActivityTracking(s.disable_activity_tracking === '1');
         const country = (s.default_map_country || 'ph').toLowerCase();
         if (country === 'ph') {
@@ -337,6 +379,15 @@ export default function Dashboard() {
     refreshMapSettings();
   }, [location.pathname]);
 
+  useEffect(() => {
+    if (location.pathname !== '/') return;
+    const id = window.setTimeout(() => {
+      // Warm the lazy map chunk during idle time to reduce first-open wait.
+      import('../components/MapView').catch(() => {});
+    }, 250);
+    return () => window.clearTimeout(id);
+  }, [location.pathname]);
+
   const lastWindowFocusRefreshRef = useRef(0);
   useEffect(() => {
     if (location.pathname !== '/') return undefined;
@@ -353,7 +404,7 @@ export default function Dashboard() {
 
   useEffect(() => {
     if (location.pathname !== '/' || disableActivityTracking) return;
-    const ms = Math.min(10000, Math.max(5000, activityRefreshIntervalSec * 1000));
+    const ms = Math.min(MAP_AUTO_REFRESH_MAX_MS, Math.max(MAP_AUTO_REFRESH_MIN_MS, activityRefreshIntervalSec * 1000));
     const id = setInterval(() => {
       if (document.visibilityState === 'visible') {
         refreshMapData();
