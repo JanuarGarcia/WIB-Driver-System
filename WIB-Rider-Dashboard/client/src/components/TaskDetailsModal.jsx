@@ -269,10 +269,20 @@ function timelineDriverShortName(full) {
   return `${parts[0]} ${parts[1]}`;
 }
 
-function timelinePhotoEntryCaption(driverName) {
+function timelineProofKindFromRow(row) {
+  if (row && String(row.proof_type || '').toLowerCase() === 'receipt') return 'receipt';
+  return 'delivery';
+}
+
+function timelinePhotoEntryCaption(driverName, proofKind) {
   const short = timelineDriverShortName(driverName);
-  if (short) return `${short} added a photo`;
-  return 'A photo was added';
+  const kind = proofKind === 'receipt' ? 'receipt' : 'delivery';
+  if (kind === 'receipt') {
+    if (short) return `${short} added proof of receipt`;
+    return 'Proof of receipt was added';
+  }
+  if (short) return `${short} added proof of delivery`;
+  return 'Proof of delivery was added';
 }
 
 function ActivityTimelineMetaCol({ task, entry, dateCreated, onOpenLocation }) {
@@ -790,7 +800,11 @@ export default function TaskDetailsModal({
           return da - db;
         });
         const proof_images = task_photos.map((r) => r.proof_url).filter(Boolean);
-        return { ...prev, task_photos, proof_images };
+        const rec = task_photos.filter((r) => String(r.proof_type || '').toLowerCase() === 'receipt');
+        const del = task_photos.filter((r) => !r.proof_type || String(r.proof_type).toLowerCase() === 'delivery');
+        const proof_receipt_url = rec.length ? rec[rec.length - 1].proof_url || null : null;
+        const proof_delivery_url = del.length ? del[del.length - 1].proof_url || null : null;
+        return { ...prev, task_photos, proof_images, proof_receipt_url, proof_delivery_url };
       });
     };
 
@@ -1254,22 +1268,27 @@ export default function TaskDetailsModal({
       longitude: row.longitude,
       ip_address: row.ip_address,
     }));
-  /* One timeline row per mt_driver_task_photo (classic flow: photo → inprogress → verification → …). */
+  /* One timeline row per stored proof (receipt vs delivery are separate events). */
   const photoEntries = (() => {
     if (taskPhotos.length > 0) {
-      return taskPhotos.filter(Boolean).map((row) => ({
-        type: 'photo',
-        id: `photo-${row.id}`,
-        date_created: row.date_created,
-        urls: row.proof_url ? [row.proof_url] : [],
-        photo_rows: [row],
-      }));
+      return taskPhotos.filter(Boolean).map((row) => {
+        const proof_kind = timelineProofKindFromRow(row);
+        return {
+          type: 'photo',
+          id: `photo-${row.id}`,
+          proof_kind,
+          date_created: row.date_created,
+          urls: row.proof_url ? [row.proof_url] : [],
+          photo_rows: [row],
+        };
+      });
     }
     if (proofImages.length > 0) {
       return [
         {
           type: 'photo',
           id: 'proof-delivery-bundle',
+          proof_kind: 'delivery',
           date_created: null,
           urls: proofImages,
           photo_rows: [],
@@ -1558,16 +1577,16 @@ export default function TaskDetailsModal({
                                 <div className="activity-timeline-row">
                                   <div className="activity-timeline-content-col">
                                     <div className="activity-timeline-badge-col">
-                                      {entry.id === 'proof-delivery-bundle' ? (
-                                        <span className="tag status-green">Proof of delivery</span>
+                                      {entry.proof_kind === 'receipt' ? (
+                                        <span className="tag status-blue">Proof of receipt</span>
                                       ) : (
-                                        <span className={`tag ${statusDisplayClass('photo')}`}>photo</span>
+                                        <span className="tag status-green">Proof of delivery</span>
                                       )}
                                     </div>
                                     {entry.id === 'proof-delivery-bundle' ? null : (
                                       <div className="activity-timeline-body-col">
                                         <div className="activity-timeline-primary">
-                                          {timelinePhotoEntryCaption(task?.driver_name)}
+                                          {timelinePhotoEntryCaption(task?.driver_name, entry.proof_kind)}
                                         </div>
                                       </div>
                                     )}

@@ -1,4 +1,5 @@
 const path = require('path');
+const { normalizeStoredProofType } = require('./taskProof');
 
 /** Canonical ErrandWib proof table; created automatically on boot if missing (see ensureErrandProofTable). */
 const CANONICAL_ERRAND_PROOF_TABLE = 'st_driver_errand_photo';
@@ -14,8 +15,8 @@ function buildErrandProofImageUrl(photoName) {
 }
 
 /**
- * Whitelisted proof table layouts (ErrandWib). First successful INSERT wins and caches for the process.
- * @type {{ table: string, photoCol: string } | null}
+ * Whitelisted proof table layouts (ErrandWib). First successful SELECT wins and caches for the process.
+ * @type {{ table: string, photoCol: string, hasProofType: boolean } | null}
  */
 let proofSchemaCache = null;
 
@@ -32,7 +33,7 @@ function quoteIdent(name) {
 }
 
 /**
- * Ensures st_driver_errand_photo exists on ErrandWib (idempotent).
+ * Ensures st_driver_errand_photo exists on ErrandWib (idempotent). New installs: receipt + delivery per order/driver.
  * @param {import('mysql2/promise').Pool} errandPool
  */
 async function ensureErrandProofTable(errandPool) {
@@ -44,12 +45,13 @@ async function ensureErrandProofTable(errandPool) {
       order_id INT NOT NULL,
       driver_id INT NOT NULL,
       photo_name VARCHAR(512) NOT NULL,
+      proof_type VARCHAR(16) NOT NULL DEFAULT 'delivery',
       file_name VARCHAR(255) NULL,
       mime_type VARCHAR(128) NULL,
       status VARCHAR(32) NULL DEFAULT 'active',
       date_created DATETIME DEFAULT CURRENT_TIMESTAMP,
       date_modified DATETIME NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
-      UNIQUE KEY uq_errand_proof_order_driver (order_id, driver_id),
+      UNIQUE KEY uq_errand_proof_order_driver_type (order_id, driver_id, proof_type),
       KEY idx_order_id (order_id),
       KEY idx_driver_order (driver_id, order_id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
@@ -58,15 +60,22 @@ async function ensureErrandProofTable(errandPool) {
 
 /**
  * @param {import('mysql2/promise').Pool} errandPool
- * @returns {Promise<{ table: string, photoCol: string } | null>}
+ * @returns {Promise<{ table: string, photoCol: string, hasProofType: boolean } | null>}
  */
 async function detectProofSchema(errandPool) {
   if (proofSchemaCache) return proofSchemaCache;
   for (const s of PROOF_SCHEMA_CANDIDATES) {
     try {
       await errandPool.query(`SELECT 1 FROM ${quoteIdent(s.table)} LIMIT 1`);
-      proofSchemaCache = s;
-      return s;
+      let hasProofType = false;
+      try {
+        await errandPool.query(`SELECT proof_type FROM ${quoteIdent(s.table)} WHERE 1=0`);
+        hasProofType = true;
+      } catch (e) {
+        if (e.code !== 'ER_BAD_FIELD_ERROR') throw e;
+      }
+      proofSchemaCache = { ...s, hasProofType };
+      return proofSchemaCache;
     } catch (e) {
       if (e.code === 'ER_NO_SUCH_TABLE') continue;
       throw e;
@@ -85,14 +94,28 @@ async function fetchErrandProofsForOrder(errandPool, orderId) {
   const photoSel = quoteIdent(schema.photoCol);
   const tbl = quoteIdent(schema.table);
   try {
-    const [rows] = await errandPool.query(
-      `SELECT id, order_id, driver_id, ${photoSel} AS photo_name, date_created FROM ${tbl} WHERE order_id = ? ORDER BY date_created ASC`,
-      [orderId]
-    );
-    return (rows || []).map((r) => ({
-      ...r,
-      proof_url: buildErrandProofImageUrl(r.photo_name),
-    }));
+    let rows;
+    if (schema.hasProofType) {
+      const [r] = await errandPool.query(
+        `SELECT id, order_id, driver_id, proof_type, ${photoSel} AS photo_name, date_created FROM ${tbl} WHERE order_id = ? ORDER BY date_created ASC`,
+        [orderId]
+      );
+      rows = r;
+    } else {
+      const [r] = await errandPool.query(
+        `SELECT id, order_id, driver_id, ${photoSel} AS photo_name, date_created FROM ${tbl} WHERE order_id = ? ORDER BY date_created ASC`,
+        [orderId]
+      );
+      rows = r;
+    }
+    return (rows || []).map((row) => {
+      const kind = schema.hasProofType ? normalizeStoredProofType(row.proof_type) : 'delivery';
+      return {
+        ...row,
+        proof_type: kind,
+        proof_url: buildErrandProofImageUrl(row.photo_name),
+      };
+    });
   } catch (e) {
     if (e.code === 'ER_BAD_FIELD_ERROR') {
       proofSchemaCache = null;
@@ -107,7 +130,12 @@ async function countErrandProofForOrder(errandPool, orderId) {
   if (!schema) return 0;
   const tbl = quoteIdent(schema.table);
   try {
-    const [[r]] = await errandPool.query(`SELECT COUNT(*) AS c FROM ${tbl} WHERE order_id = ?`, [orderId]);
+    let sql = `SELECT COUNT(*) AS c FROM ${tbl} WHERE order_id = ?`;
+    const params = [orderId];
+    if (schema.hasProofType) {
+      sql += ` AND (proof_type = 'delivery' OR proof_type IS NULL)`;
+    }
+    const [[r]] = await errandPool.query(sql, params);
     return Number(r?.c ?? 0);
   } catch (e) {
     if (e.code === 'ER_BAD_FIELD_ERROR') {
@@ -124,12 +152,22 @@ async function countErrandProofForOrder(errandPool, orderId) {
  * @param {number} orderId
  * @param {number} driverId
  * @param {string} photoName
+ * @param {'receipt'|'delivery'} [proofKind]
  * @returns {Promise<number>} insert id
  */
-async function insertErrandProofRow(errandPool, orderId, driverId, photoName) {
+async function insertErrandProofRow(errandPool, orderId, driverId, photoName, proofKind) {
+  const pt = proofKind === 'receipt' ? 'receipt' : 'delivery';
+
   const resolveInsertId = async (s, result) => {
     if (result.insertId) return result.insertId;
     const tbl = quoteIdent(s.table);
+    if (s.hasProofType) {
+      const [[row]] = await errandPool.query(
+        `SELECT id FROM ${tbl} WHERE order_id = ? AND driver_id = ? AND proof_type = ? LIMIT 1`,
+        [orderId, driverId, pt]
+      );
+      return row?.id != null ? Number(row.id) : 0;
+    }
     const [[row]] = await errandPool.query(
       `SELECT id FROM ${tbl} WHERE order_id = ? AND driver_id = ? LIMIT 1`,
       [orderId, driverId]
@@ -137,7 +175,19 @@ async function insertErrandProofRow(errandPool, orderId, driverId, photoName) {
     return row?.id != null ? Number(row.id) : 0;
   };
 
-  const runUpsert = async (s) => {
+  const runUpsertTyped = async (s) => {
+    const tbl = quoteIdent(s.table);
+    const col = quoteIdent(s.photoCol);
+    const [result] = await errandPool.query(
+      `INSERT INTO ${tbl} (order_id, driver_id, ${col}, proof_type, date_created) VALUES (?, ?, ?, ?, NOW())
+       ON DUPLICATE KEY UPDATE ${col} = VALUES(${col})`,
+      [orderId, driverId, photoName, pt]
+    );
+    proofSchemaCache = s;
+    return resolveInsertId(s, result);
+  };
+
+  const runUpsertLegacy = async (s) => {
     const tbl = quoteIdent(s.table);
     const col = quoteIdent(s.photoCol);
     const [result] = await errandPool.query(
@@ -152,7 +202,17 @@ async function insertErrandProofRow(errandPool, orderId, driverId, photoName) {
   const tryAll = async () => {
     if (proofSchemaCache) {
       try {
-        return await runUpsert(proofSchemaCache);
+        if (proofSchemaCache.hasProofType) {
+          return await runUpsertTyped(proofSchemaCache);
+        }
+        if (pt === 'receipt') {
+          const err = new Error(
+            'proof_type=receipt requires DB migration — run WIB-Rider-Backend/sql/migrate_st_driver_errand_photo_proof_type.sql on ErrandWib'
+          );
+          err.code = 'ERR_RECEIPT_SCHEMA';
+          throw err;
+        }
+        return await runUpsertLegacy(proofSchemaCache);
       } catch (e) {
         if (e.code === 'ER_BAD_FIELD_ERROR' || e.code === 'ER_NO_SUCH_TABLE') {
           proofSchemaCache = null;
@@ -164,11 +224,51 @@ async function insertErrandProofRow(errandPool, orderId, driverId, photoName) {
 
     let lastErr = null;
     for (const s of PROOF_SCHEMA_CANDIDATES) {
+      let hasProofType = false;
       try {
-        return await runUpsert(s);
+        await errandPool.query(`SELECT 1 FROM ${quoteIdent(s.table)} LIMIT 1`);
+        try {
+          await errandPool.query(`SELECT proof_type FROM ${quoteIdent(s.table)} WHERE 1=0`);
+          hasProofType = true;
+        } catch (e) {
+          if (e.code !== 'ER_BAD_FIELD_ERROR') throw e;
+        }
+      } catch (e) {
+        if (e.code === 'ER_NO_SUCH_TABLE') continue;
+        lastErr = e;
+        continue;
+      }
+      const full = { ...s, hasProofType };
+      try {
+        if (hasProofType) {
+          const [result] = await errandPool.query(
+            `INSERT INTO ${quoteIdent(s.table)} (order_id, driver_id, ${quoteIdent(s.photoCol)}, proof_type, date_created) VALUES (?, ?, ?, ?, NOW())
+             ON DUPLICATE KEY UPDATE ${quoteIdent(s.photoCol)} = VALUES(${quoteIdent(s.photoCol)})`,
+            [orderId, driverId, photoName, pt]
+          );
+          proofSchemaCache = full;
+          return resolveInsertId(full, result);
+        }
+        if (pt === 'receipt') {
+          const err = new Error(
+            'proof_type=receipt requires DB migration — run WIB-Rider-Backend/sql/migrate_st_driver_errand_photo_proof_type.sql on ErrandWib'
+          );
+          err.code = 'ERR_RECEIPT_SCHEMA';
+          throw err;
+        }
+        const [result] = await errandPool.query(
+          `INSERT INTO ${quoteIdent(s.table)} (order_id, driver_id, ${quoteIdent(s.photoCol)}, date_created) VALUES (?, ?, ?, NOW())
+           ON DUPLICATE KEY UPDATE ${quoteIdent(s.photoCol)} = VALUES(${quoteIdent(s.photoCol)})`,
+          [orderId, driverId, photoName]
+        );
+        proofSchemaCache = full;
+        return resolveInsertId(full, result);
       } catch (e) {
         lastErr = e;
-        if (e.code === 'ER_NO_SUCH_TABLE' || e.code === 'ER_BAD_FIELD_ERROR') continue;
+        if (e.code === 'ER_NO_SUCH_TABLE' || e.code === 'ER_BAD_FIELD_ERROR') {
+          proofSchemaCache = null;
+          continue;
+        }
         throw e;
       }
     }

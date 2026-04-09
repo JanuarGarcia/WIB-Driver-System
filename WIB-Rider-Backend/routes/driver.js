@@ -21,6 +21,10 @@ const {
   fetchTaskProofPhotosWithUrls,
   buildTaskProofImageUrl,
   insertDriverTaskPhotoRow,
+  deleteDriverTaskProofSlot,
+  parseProofTypeParam,
+  defaultProofTypeWhenOmitted,
+  inferProofTypeFromFileGroups,
 } = require('../lib/taskProof');
 const { fetchDriverMergedOrderHistory } = require('../lib/driverOrderHistory');
 const { enrichOrderDetailsWithSubcategoryAddons } = require('../lib/orderDetailAddons');
@@ -63,6 +67,26 @@ const taskProofUpload = multer({
     }
   },
 });
+
+function normalizeTaskStatusKeyForProof(s) {
+  return String(s || '')
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, '')
+    .replace(/_/g, '');
+}
+
+/** Receipt / merchant proof: not once the task is finished or cancelled. */
+function taskStatusAllowsProofReceipt(statusRaw) {
+  const k = normalizeTaskStatusKeyForProof(statusRaw);
+  const blocked = ['successful', 'completed', 'delivered', 'cancelled', 'failed', 'declined'];
+  return !blocked.includes(k);
+}
+
+/** Delivery proof: same gate — must be before terminal delivery state. */
+function taskStatusAllowsProofDelivery(statusRaw) {
+  return taskStatusAllowsProofReceipt(statusRaw);
+}
 
 /** Remove multer temp file when auth middleware responds with code 2 (invalid key/token). */
 function cleanupUploadOnAuthError(req, res, next) {
@@ -773,16 +797,20 @@ async function enrichRiderTaskDetails(pool, taskRow) {
 
   const tid = details.task_id != null ? parseInt(String(details.task_id), 10) : 0;
   if (Number.isFinite(tid) && tid > 0) {
-    const { task_photos, proof_images } = await fetchTaskProofPhotosWithUrls(
+    const { task_photos, proof_images, proof_receipt_url, proof_delivery_url } = await fetchTaskProofPhotosWithUrls(
       pool,
       tid,
       orderId > 0 ? orderId : null
     );
     details.task_photos = task_photos;
     details.proof_images = proof_images;
+    details.proof_receipt_url = proof_receipt_url;
+    details.proof_delivery_url = proof_delivery_url;
   } else {
     details.task_photos = [];
     details.proof_images = [];
+    details.proof_receipt_url = null;
+    details.proof_delivery_url = null;
   }
 
   /** Activity timeline for Flutter (order_history + aliases; each row has date_created / created_at / …). */
@@ -1295,11 +1323,22 @@ router.post('/ChangeTaskStatus', validateApiKey, resolveDriver, async (req, res)
   const requiresProof = policy === 'picture_proof' && (status === 'successful' || status === 'delivered');
   if (requiresProof) {
     try {
-      const [[row]] = await pool.query(
-        'SELECT COUNT(*) AS c FROM mt_driver_task_photo WHERE task_id = ?',
-        [tid]
-      );
-      const cnt = Number(row?.c ?? 0);
+      let cnt = 0;
+      try {
+        const [[row]] = await pool.query(
+          `SELECT COUNT(*) AS c FROM mt_driver_task_photo WHERE task_id = ?
+           AND (proof_type = 'delivery' OR proof_type IS NULL)`,
+          [tid]
+        );
+        cnt = Number(row?.c ?? 0);
+      } catch (e) {
+        if (e.code === 'ER_BAD_FIELD_ERROR') {
+          const [[row2]] = await pool.query('SELECT COUNT(*) AS c FROM mt_driver_task_photo WHERE task_id = ?', [tid]);
+          cnt = Number(row2?.c ?? 0);
+        } else {
+          throw e;
+        }
+      }
       if (!cnt) {
         return error(res, 'Picture proof of delivery is required before marking this task successful');
       }
@@ -1479,9 +1518,9 @@ router.post('/UploadProfilePhoto', validateApiKey, resolveDriver, upload.single(
 });
 
 /**
- * Proof of receipt / delivery: multipart file field(s) "photo" (legacy), "receipt_photo", "proof_receipt",
- * "proof_of_receipt", "delivery_photo" — multiple files in one request are each stored as separate rows.
- * Body: task_id, optional order_id (stored when mt_driver_task_photo.order_id exists).
+ * Proof of receipt vs delivery: multipart "photo" (legacy), or receipt_* / delivery_photo fields.
+ * Body: task_id, proof_type=receipt|delivery (optional — defaults to delivery for old clients; receipt-only
+ * field groups infer receipt). Same proof_type replaces the previous file for that task.
  */
 router.post(
   '/UploadTaskProof',
@@ -1514,8 +1553,21 @@ router.post(
       }
       return error(res, 'task_id required');
     }
+
+    const rawProofType = req.body?.proof_type ?? req.body?.proofType;
+    const parsedPt = parseProofTypeParam(rawProofType);
+    if (rawProofType != null && String(rawProofType).trim() !== '' && parsedPt === null) {
+      for (const f of ordered) {
+        try {
+          if (f?.path) fs.unlinkSync(f.path);
+        } catch (_) {}
+      }
+      return error(res, 'Invalid proof_type; use receipt or delivery');
+    }
+    const proofKind = parsedPt ?? inferProofTypeFromFileGroups(groups) ?? defaultProofTypeWhenOmitted();
+
     const [[task]] = await pool.query(
-      'SELECT task_id, driver_id, order_id FROM mt_driver_task WHERE task_id = ? LIMIT 1',
+      'SELECT task_id, driver_id, order_id, status FROM mt_driver_task WHERE task_id = ? LIMIT 1',
       [tid]
     );
     if (!task || task.driver_id !== req.driver.id) {
@@ -1526,44 +1578,70 @@ router.post(
       }
       return error(res, 'Task not found or not assigned to you');
     }
+    if (proofKind === 'receipt' && !taskStatusAllowsProofReceipt(task.status)) {
+      for (const f of ordered) {
+        try {
+          if (f?.path) fs.unlinkSync(f.path);
+        } catch (_) {}
+      }
+      return error(res, 'Proof of receipt cannot be uploaded for this task status');
+    }
+    if (proofKind === 'delivery' && !taskStatusAllowsProofDelivery(task.status)) {
+      for (const f of ordered) {
+        try {
+          if (f?.path) fs.unlinkSync(f.path);
+        } catch (_) {}
+      }
+      return error(res, 'Proof of delivery cannot be uploaded for this task status');
+    }
+
+    for (let i = 0; i < ordered.length - 1; i += 1) {
+      try {
+        if (ordered[i]?.path) fs.unlinkSync(ordered[i].path);
+      } catch (_) {}
+    }
+    const file = ordered[ordered.length - 1];
+
     const bodyOid = parseInt(String(req.body.order_id ?? req.body.orderId ?? ''), 10);
     const taskOid = task.order_id != null ? parseInt(String(task.order_id), 10) : NaN;
     const orderIdForRow = Number.isFinite(bodyOid) && bodyOid > 0 ? bodyOid : Number.isFinite(taskOid) && taskOid > 0 ? taskOid : null;
     const ip = req.ip || req.connection?.remoteAddress || null;
 
     const conn = await pool.getConnection();
-    const savedDisk = [];
+    let savedPath = null;
     try {
       await conn.beginTransaction();
-      const proofs = [];
-      for (let i = 0; i < ordered.length; i += 1) {
-        const file = ordered[i];
-        const ext = path.extname(file.originalname || '') || '.jpg';
-        const newName = `task_${tid}_${Date.now()}_${i}_${Math.random().toString(36).slice(2, 8)}${ext}`;
-        const newPath = path.join(taskProofDir, newName);
-        fs.renameSync(file.path, newPath);
-        savedDisk.push(newPath);
-        const insertId = await insertDriverTaskPhotoRow(conn, tid, newName, ip, orderIdForRow);
-        const proof_url = buildTaskProofImageUrl(newName);
-        proofs.push({
-          id: insertId,
-          task_id: tid,
-          photo_name: newName,
-          proof_url: proof_url || null,
-        });
-      }
+      await deleteDriverTaskProofSlot(conn, tid, proofKind);
+      const ext = path.extname(file.originalname || '') || '.jpg';
+      const newName = `task_${tid}_${proofKind}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}${ext}`;
+      const newPath = path.join(taskProofDir, newName);
+      fs.renameSync(file.path, newPath);
+      savedPath = newPath;
+      const insertId = await insertDriverTaskPhotoRow(
+        conn,
+        tid,
+        newName,
+        ip,
+        orderIdForRow,
+        proofKind,
+        req.driver.id
+      );
+      const proof_url = buildTaskProofImageUrl(newName);
       await conn.commit();
-      if (proofs.length === 1) {
-        return success(res, proofs[0]);
-      }
-      return success(res, { proofs });
+      return success(res, {
+        id: insertId,
+        task_id: tid,
+        photo_name: newName,
+        proof_url: proof_url || null,
+        proof_type: proofKind,
+      });
     } catch (e) {
       try {
         await conn.rollback();
       } catch (_) {}
-      for (const p of savedDisk) {
+      if (savedPath) {
         try {
-          fs.unlinkSync(p);
+          fs.unlinkSync(savedPath);
         } catch (_) {}
       }
       if (e.code === 'ER_NO_SUCH_TABLE') {

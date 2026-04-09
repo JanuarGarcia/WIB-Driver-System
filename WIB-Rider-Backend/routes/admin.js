@@ -29,7 +29,8 @@ const {
 const { normalizeIncomingStatusRaw, CANONICAL: ERRAND_CANONICAL_STATUSES } = require('../lib/errandDriverStatus');
 const { success, error } = require('../lib/response');
 const { sendPushToDriver, sendPushToAllDrivers, resetFirebase, initFirebase } = require('../services/fcm');
-const { fetchTaskProofPhotosWithUrls, buildTaskProofImageUrl } = require('../lib/taskProof');
+const { fetchTaskProofPhotosWithUrls, buildTaskProofImageUrl, normalizeStoredProofType } = require('../lib/taskProof');
+const { fetchErrandProofsForOrder } = require('../lib/errandProof');
 const riderNotificationService = require('../services/riderNotification.service');
 const { insertStOrdernewHistoryRow } = require('../lib/errandHistoryInsert');
 const { enrichOrderDetailsWithSubcategoryAddons } = require('../lib/orderDetailAddons');
@@ -1768,7 +1769,7 @@ function driverActorFromTaskDriverJoinRow(row) {
 /**
  * One notification per mt_driver_task_photo row; dedupe `mt-p-<id>` (timeline modal + global poller share keys).
  */
-async function notifyAdminsForSingleTaskPhoto(pool, photoId, taskId, orderId, taskDescription, actorLabel, activityAt) {
+async function notifyAdminsForSingleTaskPhoto(pool, photoId, taskId, orderId, taskDescription, actorLabel, activityAt, proofTypeRaw) {
   const pid = photoId != null ? Number(photoId) : NaN;
   const tid = taskId != null ? Number(taskId) : NaN;
   if (!Number.isFinite(pid) || !Number.isFinite(tid) || tid <= 0) return;
@@ -1776,13 +1777,17 @@ async function notifyAdminsForSingleTaskPhoto(pool, photoId, taskId, orderId, ta
   if (!(await riderNotificationService.tryConsumeTimelineNotifyKey(pool, dedupeKey))) return;
   const ord = orderId != null && String(orderId).trim() !== '' && String(orderId).trim() !== '0' ? String(orderId).trim() : '';
   const label = ord ? `Order #${ord}` : `Task #${tid}`;
+  const kind = normalizeStoredProofType(proofTypeRaw);
+  const title = kind === 'receipt' ? 'Proof of receipt' : 'Proof of delivery';
+  const detail = kind === 'receipt' ? 'Rider added proof of receipt' : 'Rider added proof of delivery';
+  const ntype = kind === 'receipt' ? 'task_photo_receipt' : 'task_photo_delivery';
   notifyAllDashboardAdminsFireAndForget(
     pool,
     attachActorToPayload(
       {
-        title: 'Photo added',
-        message: ensureTaskIdMarkerInMessage(`${label} · Rider added a photo`, tid),
-        type: 'task_photo',
+        title,
+        message: ensureTaskIdMarkerInMessage(`${label} · ${detail}`, tid),
+        type: ntype,
         activityAt,
       },
       actorLabel
@@ -1800,7 +1805,8 @@ async function fanOutGlobalTaskPhotoNotifySinceRows(pool, rows) {
       r.order_id ?? null,
       r.task_description,
       actor,
-      r.date_created
+      r.date_created,
+      r.proof_type
     );
   }
 }
@@ -1844,7 +1850,8 @@ async function fanOutTimelineMilestonesToRiderNotifications(pool, taskId, taskDe
       photoOrderId,
       taskDescription,
       photoActor,
-      ph?.date_created
+      ph?.date_created,
+      ph?.proof_type
     );
   }
 }
@@ -2073,12 +2080,24 @@ router.get('/tasks/:id/timeline-updates', async (req, res) => {
     let photo_events = [];
     let nextP = afterP;
     try {
-      const [photoRows] = await pool.query(
-        'SELECT id, task_id, photo_name, date_created, ip_address FROM mt_driver_task_photo WHERE task_id = ? AND id > ? ORDER BY id ASC',
-        [id, afterP]
-      );
+      let photoRows;
+      try {
+        const [r] = await pool.query(
+          'SELECT id, task_id, photo_name, proof_type, date_created, ip_address FROM mt_driver_task_photo WHERE task_id = ? AND id > ? ORDER BY id ASC',
+          [id, afterP]
+        );
+        photoRows = r;
+      } catch (e) {
+        if (e.code !== 'ER_BAD_FIELD_ERROR') throw e;
+        const [r] = await pool.query(
+          'SELECT id, task_id, photo_name, date_created, ip_address FROM mt_driver_task_photo WHERE task_id = ? AND id > ? ORDER BY id ASC',
+          [id, afterP]
+        );
+        photoRows = r;
+      }
       photo_events = (photoRows || []).map((row) => ({
         ...row,
+        proof_type: normalizeStoredProofType(row.proof_type),
         proof_url: buildTaskProofImageUrl(row.photo_name),
       }));
       for (const r of photo_events) {
@@ -2478,7 +2497,19 @@ router.get('/order-history/task-photo-notify-since', async (req, res) => {
       return res.json({ cursor, processed: 0 });
     }
 
-    const listSql = `
+    const listSqlExtended = `
+      SELECT p.id, p.task_id, p.photo_name, p.proof_type, p.date_created,
+        t.order_id,
+        t.task_description,
+        t.driver_id,
+        d.first_name, d.last_name, d.username
+      FROM mt_driver_task_photo p
+      INNER JOIN mt_driver_task t ON t.task_id = p.task_id
+      LEFT JOIN mt_driver d ON d.driver_id = t.driver_id
+      WHERE p.id > ?
+      ORDER BY p.id ASC
+      LIMIT 40`;
+    const listSqlBasic = `
       SELECT p.id, p.task_id, p.photo_name, p.date_created,
         t.order_id,
         t.task_description,
@@ -2491,7 +2522,15 @@ router.get('/order-history/task-photo-notify-since', async (req, res) => {
       ORDER BY p.id ASC
       LIMIT 40`;
 
-    const [rows] = await pool.query(listSql, [afterId]);
+    let rows;
+    try {
+      const [r] = await pool.query(listSqlExtended, [afterId]);
+      rows = r;
+    } catch (e) {
+      if (e.code !== 'ER_BAD_FIELD_ERROR') throw e;
+      const [r] = await pool.query(listSqlBasic, [afterId]);
+      rows = r;
+    }
     const list = rows || [];
     let nextCursor = afterId;
     for (const r of list) {
@@ -2717,13 +2756,15 @@ router.get('/tasks/:id', async (req, res) => {
     task.order_id != null && String(task.order_id).trim() !== ''
       ? parseInt(String(task.order_id), 10)
       : null;
-  const { task_photos, proof_images } = await fetchTaskProofPhotosWithUrls(
+  const { task_photos, proof_images, proof_receipt_url, proof_delivery_url } = await fetchTaskProofPhotosWithUrls(
     pool,
     id,
     Number.isFinite(orderIdForProofs) && orderIdForProofs > 0 ? orderIdForProofs : null
   );
   result.task_photos = task_photos;
   result.proof_images = proof_images;
+  result.proof_receipt_url = proof_receipt_url;
+  result.proof_delivery_url = proof_delivery_url;
 
   return res.json(result);
 });
@@ -3184,18 +3225,37 @@ router.get('/errand-orders/:orderId', async (req, res) => {
       fetchErrandOrderLineItems(errandWibPool, orderId),
       fetchErrandOrderHistory(errandWibPool, orderId, row),
     ]);
-    return res.json(
-      buildErrandTaskDetailPayload(
-        row,
-        driverDetail,
-        merchantRow,
-        clientRow,
-        clientAddressRow,
-        latestHistoryStatus,
-        orderDetails,
-        orderHistoryRows
-      )
+    const payload = buildErrandTaskDetailPayload(
+      row,
+      driverDetail,
+      merchantRow,
+      clientRow,
+      clientAddressRow,
+      latestHistoryStatus,
+      orderDetails,
+      orderHistoryRows
     );
+    try {
+      const proofs = await fetchErrandProofsForOrder(errandWibPool, orderId);
+      const taskPhotos = proofs.map((p) => ({
+        id: p.id,
+        task_id: null,
+        errand_order_id: orderId,
+        photo_name: p.photo_name,
+        date_created: p.date_created,
+        proof_url: p.proof_url,
+        proof_type: p.proof_type,
+      }));
+      payload.task_photos = taskPhotos;
+      payload.proof_images = proofs.map((p) => p.proof_url).filter(Boolean);
+      const rec = proofs.filter((p) => p.proof_type === 'receipt');
+      const del = proofs.filter((p) => p.proof_type === 'delivery');
+      payload.proof_receipt_url = rec.length ? rec[rec.length - 1].proof_url || null : null;
+      payload.proof_delivery_url = del.length ? del[del.length - 1].proof_url || null : null;
+    } catch (_) {
+      /* optional */
+    }
+    return res.json(payload);
   } catch (e) {
     if (e.code === 'ER_NO_SUCH_TABLE') {
       return res.status(404).json({ error: 'Errand orders table not found' });

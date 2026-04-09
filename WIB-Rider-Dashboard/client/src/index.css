@@ -1776,6 +1776,22 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
   padding: 12px;
   bottom: 1rem;
   right: 1rem;
+  /* Stop the stack from growing past ~5 toasts into the map; older items scroll inside */
+  max-height: min(420px, calc(100vh - 4.5rem));
+  max-width: min(420px, calc(100vw - 2rem));
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.Toastify__toast-container.Toastify__toast-container--bottom-right::-webkit-scrollbar {
+  width: 6px;
+}
+
+.Toastify__toast-container.Toastify__toast-container--bottom-right::-webkit-scrollbar-thumb {
+  background: var(--border-soft, rgba(255, 255, 255, 0.22));
+  border-radius: 3px;
 }
 .rider-notif-toast.Toastify__toast {
   border-radius: 12px;
@@ -2447,7 +2463,20 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
   flex-direction: column;
   gap: 0.65rem;
   max-width: min(420px, calc(100vw - 2rem));
+  max-height: min(420px, calc(100vh - 4.5rem));
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   pointer-events: none;
+}
+
+.dashboard-timeline-toast-stack::-webkit-scrollbar {
+  width: 6px;
+}
+
+.dashboard-timeline-toast-stack::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.25);
+  border-radius: 3px;
 }
 .dashboard-timeline-toast {
   pointer-events: auto;

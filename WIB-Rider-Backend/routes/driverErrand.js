@@ -45,9 +45,25 @@ const {
   countErrandProofForOrder,
   insertErrandProofRow,
 } = require('../lib/errandProof');
+const { parseProofTypeParam, defaultProofTypeWhenOmitted } = require('../lib/taskProof');
 const { insertStOrdernewHistoryRow } = require('../lib/errandHistoryInsert');
 
 const router = express.Router();
+
+function normalizeErrandOrderStatusKey(row) {
+  const raw = row?.delivery_status ?? row?.status ?? row?.DeliveryStatus ?? '';
+  return String(raw || '')
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, '')
+    .replace(/_/g, '');
+}
+
+function errandOrderAllowsProofUpload(row) {
+  const k = normalizeErrandOrderStatusKey(row);
+  const blocked = ['successful', 'completed', 'delivered', 'cancelled', 'failed', 'declined'];
+  return !blocked.includes(k);
+}
 
 const errandProofDir = path.join(__dirname, '..', 'uploads', 'errand');
 if (!fs.existsSync(errandProofDir)) {
@@ -211,6 +227,7 @@ async function buildDetailPayloadForOrder(orderId) {
     photo_name: p.photo_name,
     date_created: p.date_created,
     proof_url: p.proof_url,
+    proof_type: p.proof_type,
   }));
   payload.task_photos = taskPhotos;
   payload.proof_images = proofs.map((p) => p.proof_url).filter(Boolean);
@@ -563,6 +580,15 @@ router.post(
       } catch (_) {}
       return error(res, 'order_id required (or negative errand task_id)');
     }
+    const rawProofType = req.body?.proof_type ?? req.body?.proofType;
+    const parsedPt = parseProofTypeParam(rawProofType);
+    if (rawProofType != null && String(rawProofType).trim() !== '' && parsedPt === null) {
+      try {
+        fs.unlinkSync(req.file.path);
+      } catch (_) {}
+      return error(res, 'Invalid proof_type; use receipt or delivery');
+    }
+    const proofKind = parsedPt ?? defaultProofTypeWhenOmitted();
     const driverId = req.driver.id;
     try {
       const row = await loadErrandOrderRow(orderId);
@@ -578,13 +604,19 @@ router.post(
         } catch (_) {}
         return error(res, 'Order not assigned to you');
       }
+      if (!errandOrderAllowsProofUpload(row)) {
+        try {
+          fs.unlinkSync(req.file.path);
+        } catch (_) {}
+        return error(res, 'Proof upload is not allowed for this order status');
+      }
       const ext = path.extname(req.file.originalname || '') || '.jpg';
-      const newName = `errand_${orderId}_${Date.now()}${ext}`;
+      const newName = `errand_${orderId}_${proofKind}_${Date.now()}${ext}`;
       const newPath = path.join(errandProofDir, newName);
       fs.renameSync(req.file.path, newPath);
       let insertId;
       try {
-        insertId = await insertErrandProofRow(errandWibPool, orderId, driverId, newName);
+        insertId = await insertErrandProofRow(errandWibPool, orderId, driverId, newName, proofKind);
       } catch (e) {
         try {
           fs.unlinkSync(newPath);
@@ -604,6 +636,7 @@ router.post(
         errand_order_id: orderId,
         photo_name: newName,
         proof_url: proof_url || null,
+        proof_type: proofKind,
       });
     } catch (e) {
       if (req.file?.path) {

@@ -37,6 +37,10 @@ function typeMeta(type) {
       return { label: 'Completed', mod: 'rider-notif-card--done' };
     case 'task_photo':
       return { label: 'Photo', mod: 'rider-notif-card--done' };
+    case 'task_photo_receipt':
+      return { label: 'Receipt', mod: 'rider-notif-card--rfp' };
+    case 'task_photo_delivery':
+      return { label: 'Delivery proof', mod: 'rider-notif-card--done' };
     case 'task_assigned':
     case 'assign':
       return { label: 'Assign', mod: 'rider-notif-card--assign' };
