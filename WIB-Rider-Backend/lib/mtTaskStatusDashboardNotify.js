@@ -5,7 +5,11 @@
 
 const riderNotificationService = require('../services/riderNotification.service');
 const { foodTaskNotifyFromStatus, notifyAllDashboardAdmins } = require('./dashboardRiderNotify');
-const { classifyTimelineHistoryForDashboardNotify, milestoneDedupeKeyForTask } = require('./dashboardTimelineNotifyClassify');
+const {
+  classifyTimelineHistoryForDashboardNotify,
+  milestoneDedupeKeyForTask,
+  milestoneDedupeKeyForErrand,
+} = require('./dashboardTimelineNotifyClassify');
 
 /**
  * @param {import('mysql2/promise').Pool} pool
@@ -33,6 +37,13 @@ async function notifyDashboardAfterMtTaskHistoryRow(pool, p) {
       const mk = milestoneDedupeKeyForTask(p.taskId, cat);
       if (mk && !(await riderNotificationService.tryConsumeTimelineNotifyKey(pool, mk))) {
         return;
+      }
+      const oid = p.orderId != null ? Number(p.orderId) : NaN;
+      if (Number.isFinite(oid) && oid > 0) {
+        const eMk = milestoneDedupeKeyForErrand(oid, cat);
+        if (eMk && !(await riderNotificationService.tryConsumeTimelineNotifyKey(pool, eMk))) {
+          return;
+        }
       }
     }
   }

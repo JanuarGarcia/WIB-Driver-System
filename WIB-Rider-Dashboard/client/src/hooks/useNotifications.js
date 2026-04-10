@@ -6,6 +6,7 @@ import {
   parseActorFromNotificationMessage,
   formatNotificationMessageForDisplay,
   buildNotificationDedupeKey,
+  notificationIdsSharingDedupeKeysWith,
 } from '../utils/riderNotificationNavigate';
 import { shouldSuppressRiderNotificationToast } from '../utils/notificationToastDedupe';
 
@@ -336,9 +337,8 @@ export function useNotifications() {
       setPollError(null);
       pollErrorLoggedRef.current = false;
       const list = Array.isArray(data.notifications) ? data.notifications : [];
-      const freshAll = dedupeNotificationsPreferActor(
-        list.filter((n) => n && n.id != null && !processedIdsGlobal.has(String(n.id)))
-      );
+      const rawNew = list.filter((n) => n && n.id != null && !processedIdsGlobal.has(String(n.id)));
+      const freshAll = dedupeNotificationsPreferActor(rawNew);
 
       // Option 1: baseline on first load so reopening the site doesn't flood toasts/OS notifications.
       if (!firstPollDoneRef.current) {
@@ -397,15 +397,15 @@ export function useNotifications() {
         return ms >= baselineMs;
       });
       if (fresh.length === 0) {
-        for (const n of freshAll) processedIdsGlobal.add(String(n.id));
+        for (const n of rawNew) processedIdsGlobal.add(String(n.id));
         return;
       }
 
       emitToastSoundAndDesktop(fresh);
 
-      await markRiderNotificationsViewed(fresh.map((n) => String(n.id)));
-      for (const n of fresh) processedIdsGlobal.add(String(n.id));
-      for (const n of freshAll) processedIdsGlobal.add(String(n.id));
+      const markViewedIds = notificationIdsSharingDedupeKeysWith(fresh, rawNew);
+      await markRiderNotificationsViewed(markViewedIds);
+      for (const n of rawNew) processedIdsGlobal.add(String(n.id));
 
       setItems((prev) => {
         const byId = new Map(prev.map((p) => [String(p.id), { ...p }]));

@@ -187,19 +187,21 @@ function foodTaskNotifyFromStatus(taskId, orderId, taskDescription, rawStatus, a
  */
 function errandNotifyFromCanonical(orderId, label, canonical, actorLabel) {
   const c = (canonical || '').toString().trim().toLowerCase();
-  const line = (label && String(label).trim()) || `Errand order #${orderId}`;
+  const oid = Number(orderId);
+  const orderLine = Number.isFinite(oid) && oid > 0 ? `Mangan order #${oid}` : String(label || '').trim() || 'Mangan order';
 
   let out = null;
   if (c === 'acknowledged') {
-    out = { title: 'Errand accepted', message: line, type: 'task_accepted' };
+    out = { title: 'Mangan accepted', message: orderLine, type: 'task_accepted' };
   } else if (c === 'successful' || c === 'delivered' || c === 'completed') {
-    out = { title: 'Errand completed', message: line, type: 'task_done' };
+    out = { title: 'Mangan completed', message: orderLine, type: 'task_done' };
   } else if (c === 'assigned') {
-    out = { title: 'Errand assigned', message: line, type: 'task_assigned' };
+    out = { title: 'Mangan assigned', message: orderLine, type: 'task_assigned' };
   } else if (c === 'started' || c === 'inprogress' || c === 'verification' || c === 'pending_verification') {
     out = null;
   } else if (c === 'unassigned' || c === 'cancelled' || c === 'declined' || c === 'failed') {
-    out = { title: `Errand ${c.replace(/_/g, ' ')}`, message: line, type: 'default' };
+    const pretty = c.replace(/_/g, ' ');
+    out = { title: `Mangan ${pretty}`, message: orderLine, type: 'default' };
   }
   return attachActorToPayload(out, actorLabel);
 }

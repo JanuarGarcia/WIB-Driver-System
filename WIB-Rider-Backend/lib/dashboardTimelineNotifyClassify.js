@@ -17,6 +17,23 @@ function milestoneDedupeKeyForTask(taskId, category) {
   return `mt-task-${tid}-${c}`;
 }
 
+/** Mangan (st_ordernew) — same milestone from driver API + errand history feed must not double-insert inbox rows. */
+function milestoneDedupeKeyForErrand(orderId, category) {
+  const oid = Number(orderId);
+  if (!Number.isFinite(oid) || oid <= 0) return '';
+  const c = normalizeTimelineNotifyKey(category);
+  if (!c) return '';
+  return `so-task-${oid}-${c}`;
+}
+
+/** Maps ErrandWib canonical delivery_status → timeline notify category (subset). */
+function errandCanonicalToMilestoneCategory(canonical) {
+  const c = String(canonical || '').trim().toLowerCase();
+  if (c === 'acknowledged') return 'accepted';
+  if (c === 'successful' || c === 'delivered' || c === 'completed') return 'successful';
+  return null;
+}
+
 function normalizedBlobImpliesTaskAccepted(blob) {
   if (!blob) return false;
   if (blob.includes('unaccepted') || blob.includes('notaccepted') || blob.includes('unacknowledged')) return false;
@@ -88,5 +105,7 @@ function classifyTimelineHistoryForDashboardNotify(row) {
 module.exports = {
   normalizeTimelineNotifyKey,
   milestoneDedupeKeyForTask,
+  milestoneDedupeKeyForErrand,
+  errandCanonicalToMilestoneCategory,
   classifyTimelineHistoryForDashboardNotify,
 };

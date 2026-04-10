@@ -49,6 +49,8 @@ const { notifyDashboardAfterMtTaskHistoryRow } = require('../lib/mtTaskStatusDas
 const {
   normalizeTimelineNotifyKey,
   milestoneDedupeKeyForTask,
+  milestoneDedupeKeyForErrand,
+  errandCanonicalToMilestoneCategory,
   classifyTimelineHistoryForDashboardNotify,
 } = require('../lib/dashboardTimelineNotifyClassify');
 const {
@@ -1901,9 +1903,19 @@ function timelineNotifyPayloadFromCategory(taskId, taskDescription, orderId, cat
   }
 
   let payload = null;
-  if (category === 'accepted') payload = { title: 'Task accepted', message: messageBase, type: 'task_accepted' };
-  else if (category === 'successful') payload = { title: 'Successful delivery', message: messageBase, type: 'task_done' };
-  else if (category === 'ready_for_pickup') {
+  if (category === 'accepted') {
+    payload = {
+      title: errandOpts != null ? 'Mangan accepted' : 'Task accepted',
+      message: messageBase,
+      type: 'task_accepted',
+    };
+  } else if (category === 'successful') {
+    payload = {
+      title: errandOpts != null ? 'Mangan completed' : 'Successful delivery',
+      message: messageBase,
+      type: 'task_done',
+    };
+  } else if (category === 'ready_for_pickup') {
     // Ensure dispatcher bell/inbox receives ready-for-pickup every time.
     payload = { title: 'Ready for pickup', message: messageBase, type: 'ready_pickup' };
   }
@@ -1987,6 +1999,11 @@ async function fanOutTimelineMilestonesToRiderNotifications(pool, taskId, taskDe
     if (!(await riderNotificationService.tryConsumeTimelineNotifyKey(pool, dedupeKey))) continue;
     const milestoneKey = milestoneDedupeKeyForTask(taskId, cat);
     if (milestoneKey && !(await riderNotificationService.tryConsumeTimelineNotifyKey(pool, milestoneKey))) continue;
+    const ordCross = row.order_id != null ? Number(row.order_id) : NaN;
+    if (Number.isFinite(ordCross) && ordCross > 0) {
+      const eMk = milestoneDedupeKeyForErrand(ordCross, cat);
+      if (eMk && !(await riderNotificationService.tryConsumeTimelineNotifyKey(pool, eMk))) continue;
+    }
     const actor = timelineNotifyActorFromHistoryRow(row);
     const payload = timelineNotifyPayloadFromCategory(taskId, taskDescription, row.order_id ?? null, cat, actor);
     if (payload) notifyAllDashboardAdminsFireAndForget(pool, { ...payload, activityAt: row.date_created });
@@ -2080,6 +2097,11 @@ async function fanOutOrderHistoryFeedEventsToRiderNotifications(pool, events) {
     if (!(await riderNotificationService.tryConsumeTimelineNotifyKey(pool, dedupeKey))) continue;
     const milestoneKey = milestoneDedupeKeyForTask(tid, cat);
     if (milestoneKey && !(await riderNotificationService.tryConsumeTimelineNotifyKey(pool, milestoneKey))) continue;
+    const ordCross = ev.order_id != null ? Number(ev.order_id) : NaN;
+    if (Number.isFinite(ordCross) && ordCross > 0) {
+      const eMk = milestoneDedupeKeyForErrand(ordCross, cat);
+      if (eMk && !(await riderNotificationService.tryConsumeTimelineNotifyKey(pool, eMk))) continue;
+    }
     const td = descByTask.get(tid);
     const actor = timelineNotifyActorFromFeedEvent(ev) || driverByTask.get(tid) || '';
     const payload = timelineNotifyPayloadFromCategory(tid, td, ev.order_id ?? null, cat, actor);
@@ -2124,6 +2146,8 @@ async function fanOutErrandHistoryFeedEventsToRiderNotifications(pool, errandPoo
     if (!cat) continue;
     const dedupeKey = `soh-${hid}`;
     if (!(await riderNotificationService.tryConsumeTimelineNotifyKey(pool, dedupeKey))) continue;
+    const milestoneKey = milestoneDedupeKeyForErrand(oid, cat);
+    if (milestoneKey && !(await riderNotificationService.tryConsumeTimelineNotifyKey(pool, milestoneKey))) continue;
     const ref = (ev.order_reference || '').trim();
     const label = ref ? `Mangan ${ref}` : `Mangan order #${oid}`;
     const actor = timelineNotifyActorFromFeedEvent(ev);
@@ -3801,11 +3825,23 @@ router.put('/errand-orders/:orderId/status', express.json(), async (req, res) =>
       );
       const lbl =
         erSt?.order_reference != null && String(erSt.order_reference).trim()
-          ? `Errand ${String(erSt.order_reference).trim()}`
-          : `Errand order #${orderId}`;
+          ? `Mangan ${String(erSt.order_reference).trim()}`
+          : `Mangan order #${orderId}`;
       const actor = formatActorFromAdminUser(req.adminUser);
       const payload = errandNotifyFromCanonical(orderId, lbl, canon, actor);
-      if (payload) await notifyAllDashboardAdmins(pool, payload).catch(() => {});
+      if (payload) {
+        const mCat = errandCanonicalToMilestoneCategory(canon);
+        if (mCat) {
+          const mk = milestoneDedupeKeyForErrand(orderId, mCat);
+          if (mk && !(await riderNotificationService.tryConsumeTimelineNotifyKey(pool, mk))) {
+            /* feed or driver path already notified this milestone */
+          } else {
+            await notifyAllDashboardAdmins(pool, payload).catch(() => {});
+          }
+        } else {
+          await notifyAllDashboardAdmins(pool, payload).catch(() => {});
+        }
+      }
     } catch (_) {}
     return res.json({ ok: true, status: canon });
   } catch (e) {

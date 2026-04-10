@@ -22,6 +22,18 @@ const {
   errandNotifyFromCanonical,
   formatActorFromDriver,
 } = require('../lib/dashboardRiderNotify');
+const riderNotificationService = require('../services/riderNotification.service');
+const { milestoneDedupeKeyForErrand, errandCanonicalToMilestoneCategory } = require('../lib/dashboardTimelineNotifyClassify');
+
+async function notifyErrandAdminsIfFreshMilestone(pool, orderId, canonical, payload) {
+  if (!payload) return;
+  const mCat = errandCanonicalToMilestoneCategory(canonical);
+  if (mCat) {
+    const mk = milestoneDedupeKeyForErrand(orderId, mCat);
+    if (mk && !(await riderNotificationService.tryConsumeTimelineNotifyKey(pool, mk))) return;
+  }
+  await notifyAllDashboardAdmins(pool, payload).catch(() => {});
+}
 
 async function errandOrderNotifyLabel(errandPool, orderId) {
   try {
@@ -461,7 +473,7 @@ router.post('/ChangeErrandOrderStatus', validateApiKey, resolveDriver, async (re
         const lbl = await errandOrderNotifyLabel(errandWibPool, orderId);
         const actor = formatActorFromDriver(req.driver);
         const p = errandNotifyFromCanonical(orderId, lbl, canonical, actor);
-        if (p) await notifyAllDashboardAdmins(pool, p).catch(() => {});
+        await notifyErrandAdminsIfFreshMilestone(pool, orderId, canonical, p);
       } catch (_) {}
       return success(res, null);
     }
@@ -505,7 +517,7 @@ router.post('/ChangeErrandOrderStatus', validateApiKey, resolveDriver, async (re
       const lbl = await errandOrderNotifyLabel(errandWibPool, orderId);
       const actor = formatActorFromDriver(req.driver);
       const p = errandNotifyFromCanonical(orderId, lbl, canonical, actor);
-      if (p) await notifyAllDashboardAdmins(pool, p).catch(() => {});
+      await notifyErrandAdminsIfFreshMilestone(pool, orderId, canonical, p);
     } catch (_) {}
     return success(res, null);
   } catch (e) {
