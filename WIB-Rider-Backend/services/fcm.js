@@ -87,18 +87,56 @@ async function sendPushToAllDrivers(title, body, data = {}) {
   }
 }
 
+/**
+ * Customer-app FCM: must include both `notification` (system tray when background/quit) and
+ * string `title`/`body` in `data` so Flutter/React Native can show a local notification in foreground.
+ * Optional FCM_CUSTOMER_ANDROID_CHANNEL_ID must match a channel created in the customer app (Android 8+).
+ */
 async function sendPushToFcmToken(fcmToken, title, body, data = {}) {
   const app = await initFirebase();
   if (!app) return { success: false, error: 'FCM not configured' };
   const tok = fcmToken != null ? String(fcmToken).trim() : '';
   if (!tok) return { success: false, error: 'No device token' };
+
+  const titleStr = String(title != null ? title : '').trim() || 'Notification';
+  const bodyStr = String(body != null ? body : '').trim() || titleStr;
+
+  const payloadData = stringifyDataPayload(data);
+  const mergedData = {
+    ...payloadData,
+    title: titleStr,
+    body: bodyStr,
+  };
+
+  const channelId = String(process.env.FCM_CUSTOMER_ANDROID_CHANNEL_ID || '').trim();
+  const androidNotification = {
+    title: titleStr,
+    body: bodyStr,
+    sound: 'default',
+  };
+  if (channelId) {
+    androidNotification.channelId = channelId;
+  }
+
   try {
     const result = await app.messaging().send({
       token: tok,
-      notification: { title, body },
-      data: stringifyDataPayload(data),
-      android: { priority: 'high' },
-      apns: { payload: { aps: { sound: 'default' } } },
+      notification: { title: titleStr, body: bodyStr },
+      data: mergedData,
+      android: {
+        priority: 'high',
+        notification: androidNotification,
+      },
+      apns: {
+        headers: {
+          'apns-priority': '10',
+        },
+        payload: {
+          aps: {
+            sound: 'default',
+          },
+        },
+      },
     });
     return { success: true, messageId: result };
   } catch (e) {
