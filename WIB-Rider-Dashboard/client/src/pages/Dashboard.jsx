@@ -5,7 +5,7 @@ import TaskPanel from '../components/TaskPanel';
 import MapErrorBoundary from '../components/MapErrorBoundary';
 
 const MapView = lazy(() => import('../components/MapView'));
-const TaskDetailsModal = lazy(() => import('../components/TaskDetailsModal'));
+import TaskDetailsModal from '../components/TaskDetailsModal';
 const ActivityTimelineToastStack = lazy(() => import('../components/ActivityTimelineToastStack'));
 
 /** Matches MapView MAP_STYLE so layout does not jump while the map chunk loads. */
@@ -22,7 +22,7 @@ const MAP_CHUNK_FALLBACK_STYLE = {
 import AgentPanel from '../components/AgentPanel';
 import { useMapMerchantFilterSelection } from '../components/MapMerchantFilter';
 import { hydrateMapMerchantFilterFromServer } from '../utils/mapMerchantFilterPrefs';
-import { api, userFacingApiError } from '../api';
+import { api, userFacingApiError, apiEventSourceUrl } from '../api';
 import { RIDER_NOTIFICATIONS_POLL_EVENT } from '../hooks/useNotifications';
 import { getToken } from '../auth';
 
@@ -78,6 +78,8 @@ export default function Dashboard() {
   const navigate = useNavigate();
   const { selectedTeamId } = useTeamFilter();
   const [taskDetailsId, setTaskDetailsId] = useState(null);
+  /** Same shape as a `tasks` list row — paints the modal instantly while full details fetch. */
+  const [taskDetailsListSnapshot, setTaskDetailsListSnapshot] = useState(null);
   const [taskDetailsInitialTab, setTaskDetailsInitialTab] = useState('details');
   /** Bumped when task details modal mutates tasks so TaskPanel + AgentPanel refetch immediately. */
   const [taskListRevision, setTaskListRevision] = useState(0);
@@ -97,6 +99,12 @@ export default function Dashboard() {
     const tab =
       opts && (opts.initialTab === 'timeline' || opts.initialTab === 'order') ? opts.initialTab : 'details';
     setTaskDetailsInitialTab(tab);
+    const snap = opts?.listTaskSnapshot;
+    if (snap != null && typeof snap === 'object' && String(snap.task_id) === String(id)) {
+      setTaskDetailsListSnapshot(snap);
+    } else {
+      setTaskDetailsListSnapshot(null);
+    }
     setTaskDetailsId(id);
   }, []);
 
@@ -108,7 +116,8 @@ export default function Dashboard() {
   }, [location.state, location.pathname, location.search, navigate, openTaskDetails]);
 
   const handleOpenTaskDetailsFromPanel = useCallback(
-    (id) => openTaskDetails(id, { initialTab: 'details' }),
+    (id, listRow) =>
+      openTaskDetails(id, { initialTab: 'details', listTaskSnapshot: listRow }),
     [openTaskDetails]
   );
 
@@ -428,8 +437,8 @@ export default function Dashboard() {
     if (location.pathname !== '/') return undefined;
     const token = getToken();
     if (!token) return undefined;
-    const date = encodeURIComponent(tasksMapDateStr || '');
-    const es = new EventSource(`/api/realtime/stream?token=${encodeURIComponent(token)}&date=${date}`);
+    const query = `token=${encodeURIComponent(token)}&date=${encodeURIComponent(tasksMapDateStr || '')}`;
+    const es = new EventSource(apiEventSourceUrl('realtime/stream', query));
     let closed = false;
 
     const onRealtime = () => {
@@ -540,39 +549,33 @@ export default function Dashboard() {
       </div>
       {taskDetailsId != null &&
         createPortal(
-          <Suspense
-            fallback={
-              <div className="modal-backdrop task-details-backdrop" role="dialog" aria-busy="true" aria-label="Loading task">
-                <div className="modal-box modal-box-lg task-details-modal" onClick={(e) => e.stopPropagation()}>
-                  <div className="modal-header">
-                    <h3>Task</h3>
-                  </div>
-                  <div className="modal-body">
-                    <div className="loading">Loading…</div>
-                  </div>
-                </div>
-              </div>
-            }
-          >
-            <TaskDetailsModal
-              taskId={taskDetailsId}
-              initialTab={taskDetailsInitialTab}
-              onClose={() => {
-                setTaskDetailsId(null);
-                setTaskDetailsInitialTab('details');
-              }}
-              onAssignDriver={(id) => { setTaskDetailsId(null); navigate(`/tasks?highlight=${id}`); }}
-              onTaskListInvalidate={bumpTaskLists}
-              onTaskDeleted={() => setTaskDetailsId(null)}
-              onFocusTaskOnMap={handleFocusTaskOnMap}
-              directionsMapSettings={{
-                mapProvider,
-                mapboxToken,
-                googleApiKey,
-                googleMapStyle,
-              }}
-            />
-          </Suspense>,
+          <TaskDetailsModal
+            taskId={taskDetailsId}
+            listTaskSnapshot={taskDetailsListSnapshot}
+            initialTab={taskDetailsInitialTab}
+            onClose={() => {
+              setTaskDetailsId(null);
+              setTaskDetailsListSnapshot(null);
+              setTaskDetailsInitialTab('details');
+            }}
+            onAssignDriver={(id) => {
+              setTaskDetailsId(null);
+              setTaskDetailsListSnapshot(null);
+              navigate(`/tasks?highlight=${id}`);
+            }}
+            onTaskListInvalidate={bumpTaskLists}
+            onTaskDeleted={() => {
+              setTaskDetailsId(null);
+              setTaskDetailsListSnapshot(null);
+            }}
+            onFocusTaskOnMap={handleFocusTaskOnMap}
+            directionsMapSettings={{
+              mapProvider,
+              mapboxToken,
+              googleApiKey,
+              googleMapStyle,
+            }}
+          />,
           document.body
         )}
       <div className="dashboard-layout-panel dashboard-layout-map">

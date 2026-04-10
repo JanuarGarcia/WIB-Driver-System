@@ -320,8 +320,12 @@ router.get('/realtime/stream', requireDashboardTokenForSse, async (req, res) => 
   };
 
   const beatId = setInterval(() => {
-    if (!closed) safeWrite(`event: heartbeat\ndata: ${Date.now()}\n\n`);
-  }, 20000);
+    if (!closed) {
+      // Comment line keeps some mobile proxies from treating the stream as idle (EventSource ignores it).
+      safeWrite(': ping\n\n');
+      safeWrite(`event: heartbeat\ndata: ${Date.now()}\n\n`);
+    }
+  }, 12000);
   const pollId = setInterval(() => {
     poll().catch((e) => {
       safeWrite(`event: error\ndata: ${JSON.stringify({ error: e.message || 'stream error' })}\n\n`);
@@ -335,6 +339,11 @@ router.get('/realtime/stream', requireDashboardTokenForSse, async (req, res) => 
     clearInterval(beatId);
     clearInterval(pollId);
   });
+});
+
+/** Same as app GET /health — under /admin/api for load balancers that only probe the API prefix. */
+router.get('/health', (req, res) => {
+  res.json({ ok: true });
 });
 
 router.use(adminAuth);

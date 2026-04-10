@@ -325,16 +325,16 @@ function getMerchantPickupCoords(merchant) {
 }
 
 function timelineHistoryBadgeLabel(entry) {
-  return (entry.status || entry.description || '').trim() || '—';
+  return String(entry?.status ?? entry?.description ?? '').trim() || '—';
 }
 
 function timelineHistoryPrimaryText(entry) {
-  const rem = (entry.remarks || entry.reason || '').trim();
+  const rem = String(entry?.remarks ?? entry?.reason ?? '').trim();
   if (rem) return displaySanitized(rem) || rem;
   const notes = entry.notes != null ? String(entry.notes).trim() : '';
   if (notes) return displaySanitized(notes) || notes;
-  const by = (entry.update_by_name || entry.update_by_type || '').trim();
-  const st = (entry.status || entry.description || '').trim();
+  const by = String(entry?.update_by_name ?? entry?.update_by_type ?? '').trim();
+  const st = String(entry?.status ?? entry?.description ?? '').trim();
   if (by && st) return `${by} — ${st}`;
   if (entry.type === 'legacy' && !by) return '';
   return st ? displaySanitized(st) || st : '';
@@ -396,7 +396,7 @@ function ActivityTimelineMetaCol({ task, entry, dateCreated, onOpenLocation }) {
 
 /** Title-case category heading for order line groups (e.g. mt_category.category_name). */
 function formatCategoryTitle(str) {
-  const t = (str || '').trim();
+  const t = String(str ?? '').trim();
   if (!t) return '';
   const cleaned = displaySanitized(t) || t;
   if (!cleaned.trim()) return '';
@@ -649,6 +649,8 @@ export default function TaskDetailsModal({
   /** When set, enables in-app Get directions (Mapbox and/or Google per Settings). */
   directionsMapSettings = null,
   initialTab = 'details',
+  /** Dashboard/tasks list row — same `task_id` as `taskId`; shows modal content immediately while the full record loads. */
+  listTaskSnapshot = null,
   /** Dashboard: fly map to task pin when errand details load (orange task marker). */
   onFocusTaskOnMap = null,
 }) {
@@ -693,6 +695,8 @@ export default function TaskDetailsModal({
   const timelineCursorHRef = useRef(0);
   const timelineCursorPRef = useRef(0);
   const timelineToastedRef = useRef(new Set());
+  const listTaskSnapshotRef = useRef(null);
+  listTaskSnapshotRef.current = listTaskSnapshot;
 
   useEffect(() => {
     errandMapFocusedForTaskIdRef.current = null;
@@ -734,9 +738,6 @@ export default function TaskDetailsModal({
     timelineCursorHRef.current = 0;
     timelineCursorPRef.current = 0;
     timelineToastedRef.current = new Set();
-    setData(null);
-    setOrderHistory([]);
-    setOrderHistoryProofImages([]);
     setError(null);
     setLocationPreview(null);
     setDirectionsContext(null);
@@ -749,6 +750,20 @@ export default function TaskDetailsModal({
     setChangeStatusOpen(false);
     setChangeStatusValue('');
     setChangeStatusReason('');
+    const snap = listTaskSnapshotRef.current;
+    const snapshotMatches =
+      snap != null &&
+      typeof snap === 'object' &&
+      String(snap.task_id) === String(taskId);
+    if (snapshotMatches) {
+      setData({ task: snap, task_source: snap.task_source });
+      setOrderHistory(Array.isArray(snap.order_history) ? snap.order_history : []);
+      setOrderHistoryProofImages([]);
+    } else {
+      setData(null);
+      setOrderHistory([]);
+      setOrderHistoryProofImages([]);
+    }
     setLoading(true);
     const errandOid = Number(taskId) < 0 ? Math.abs(Number(taskId)) : null;
     const loadUrl = errandOid != null ? `errand-orders/${errandOid}` : `tasks/${taskId}`;
@@ -1039,8 +1054,8 @@ export default function TaskDetailsModal({
       return;
     }
 
-    const pickup = (t.pickup_address || t.drop_address || t.merchant_address || '').trim();
-    const dest = (t.delivery_address || '').trim();
+    const pickup = String(t.pickup_address ?? t.drop_address ?? t.merchant_address ?? '').trim();
+    const dest = String(t.delivery_address ?? '').trim();
     let externalMapsUrl = null;
     if (dest) {
       const params = new URLSearchParams({ api: '1', destination: dest });
@@ -1307,8 +1322,8 @@ export default function TaskDetailsModal({
   const directionsUrl = (() => {
     const t = data?.task ?? data;
     if (!t) return null;
-    const pickup = (t.pickup_address || t.drop_address || t.merchant_address || '').trim();
-    const dest = (t.delivery_address || '').trim();
+    const pickup = String(t.pickup_address ?? t.drop_address ?? t.merchant_address ?? '').trim();
+    const dest = String(t.delivery_address ?? '').trim();
     if (!dest) return null;
     const params = new URLSearchParams({ api: '1', destination: dest });
     if (pickup) params.set('origin', pickup);
@@ -1316,6 +1331,8 @@ export default function TaskDetailsModal({
   })();
 
   const task = data && (data.task ?? data);
+  /** Full-screen loader only when we have no row to show yet (avoids flash when list snapshot is provided). */
+  const blockingLoad = loading && !task;
   const isErrandTask = data?.task_source === 'errand' || Number(taskId) < 0;
   const orderDetails = useMemo(() => {
     const raw = Array.isArray(data?.order_details) ? data.order_details : [];
@@ -1426,7 +1443,7 @@ export default function TaskDetailsModal({
           });
   const customerName = displaySanitizedOrDash(task?.customer_name);
   const merchantName = (() => {
-    const fromMerchant = merchant && (merchant.restaurant_name || '').trim();
+    const fromMerchant = merchant && String(merchant.restaurant_name ?? '').trim();
     if (fromMerchant) return displaySanitizedOrDash(fromMerchant);
     const fromTaskJoin = task && String(task.restaurant_name || '').trim();
     if (fromTaskJoin) return displaySanitizedOrDash(fromTaskJoin);
@@ -1527,14 +1544,14 @@ export default function TaskDetailsModal({
   return (
     <div
       className={`modal-backdrop task-details-backdrop ${editOpen ? 'task-details-backdrop-edit-open' : ''}`}
-      onClick={() => !loading && !editOpen && !changeStatusOpen && !assignOpen && !deleteConfirmOpen && handleClose()}
+      onClick={() => !blockingLoad && !editOpen && !changeStatusOpen && !assignOpen && !deleteConfirmOpen && handleClose()}
     >
       <div
         className="modal-box modal-box-lg task-details-modal"
         onClick={(e) => e.stopPropagation()}
         aria-hidden={editOpen ? true : undefined}
       >
-        <div className="modal-header">
+        <div className="modal-header task-details-modal-header">
           <h3>
             {isErrandTask ? 'Mangan Order' : 'Task ID'} :{' '}
             {isErrandTask && task?.st_order_id != null
@@ -1543,11 +1560,12 @@ export default function TaskDetailsModal({
                 ? Math.abs(Number(taskId))
                 : task?.task_id ?? taskId ?? '…'}
           </h3>
+          {loading && task ? <span className="task-details-updating muted">Updating…</span> : null}
         </div>
-        {loading && (
+        {blockingLoad && (
           <div className="modal-body"><div className="loading">Loading…</div></div>
         )}
-        {!loading && error && (
+        {!blockingLoad && error && (
           <div className="modal-body">
             <p className="muted">{error}</p>
             <div className="modal-footer-actions">
@@ -1555,7 +1573,7 @@ export default function TaskDetailsModal({
             </div>
           </div>
         )}
-        {!loading && !error && data && task && (
+        {!blockingLoad && !error && data && task && (
             <>
               <div className="modal-tabs">
                 <button type="button" className={tab === 'details' ? 'active' : ''} onClick={() => setTab('details')}>Task Details</button>
@@ -1741,7 +1759,7 @@ export default function TaskDetailsModal({
                                         if (primary) {
                                           return <div className="activity-timeline-primary">{primary}</div>;
                                         }
-                                        const by = (entry.update_by_name || entry.update_by_type || '').trim();
+                                        const by = String(entry?.update_by_name ?? entry?.update_by_type ?? '').trim();
                                         if (by) {
                                           return <span className="activity-timeline-by">by {by}</span>;
                                         }

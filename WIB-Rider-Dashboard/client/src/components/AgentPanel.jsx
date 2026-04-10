@@ -164,7 +164,7 @@ function formatHumanDateLabel(yyyyMmDd) {
 
 const ASSIGNED_STATUSES = ['assigned', 'acknowledged', 'started', 'inprogress'];
 function normStatus(status) {
-  return (status || '').toLowerCase().replace(/\s+/g, '').replace(/_/g, '');
+  return String(status ?? '').toLowerCase().replace(/\s+/g, '').replace(/_/g, '');
 }
 
 const QUEUE_POLL_MS = 8000;

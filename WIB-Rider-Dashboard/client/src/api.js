@@ -94,6 +94,28 @@ export function userFacingApiError(err) {
 // Do not use /admin/api in the browser on static hosting without that proxy.
 const API = import.meta.env.VITE_API_URL || '/api';
 
+/**
+ * Absolute URL for EventSource under the same base as {@link api} (SSE cannot use fetch headers).
+ * When VITE_API_URL points at the Node rider API, a relative `/api/...` URL would hit static hosting only.
+ */
+export function apiEventSourceUrl(path, queryString = '') {
+  const base = API.replace(/\/$/, '');
+  const pathStr = String(path || '').trim();
+  const url = API.startsWith('http')
+    ? pathStr.startsWith('/')
+      ? base + pathStr
+      : `${base}/${pathStr}`
+    : pathStr.startsWith('/')
+      ? pathStr
+      : `${API}/${pathStr}`;
+  const q = queryString
+    ? queryString.startsWith('?')
+      ? queryString
+      : `?${queryString}`
+    : '';
+  return `${url}${q}`;
+}
+
 /** Origin where `/uploads/...` is served (matches API app in app.js). */
 export function uploadsOrigin() {
   const raw = String(import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
@@ -243,7 +265,7 @@ export function formatActivityTimelineDateTimeShort(d) {
 
 /** Normalize status strings for class lookup ("Ready For Pickup", "initial_order", etc.). */
 function statusClassKey(s) {
-  return String(s || '')
+  return String(s ?? '')
     .toLowerCase()
     .trim()
     .replace(/\s+/g, '')

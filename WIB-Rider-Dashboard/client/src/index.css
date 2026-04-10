@@ -7562,6 +7562,7 @@ tr:hover { background: var(--bg-hover) !important; }
 .task-detail-edit-wrap .modal-label { margin-bottom: 0.2rem; }
 .task-detail-edit-wrap .form-control { width: 100%; }
 .task-details-modal .modal-header h3 { font-size: 1.1rem; font-weight: 400; }
+.task-details-modal-header .task-details-updating { font-size: 0.8rem; font-weight: 400; white-space: nowrap; }
 .modal-tabs { display: flex; gap: 0; border-bottom: 1px solid #e5e7eb; padding: 0 1.5rem 0; background: #f9fafb; }
 .modal-tabs button { padding: 0.85rem 1.25rem; border: none; background: none; font-size: 0.9rem; color: #6b7280; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; }
 .modal-tabs button:hover { color: #374151; }

@@ -39,7 +39,10 @@ export function notifyDashboardTasksMapDateChanged() {
 
 /** Normalize API task status for comparison (matches TaskPanel / AgentPanel). */
 export function normalizeTaskStatusKey(status) {
-  return (status || '').toLowerCase().replace(/\s+/g, '').replace(/_/g, '');
+  return String(status ?? '')
+    .toLowerCase()
+    .replace(/\s+/g, '')
+    .replace(/_/g, '');
 }
 
 /** Only these statuses get an orange task pin (excludes delivered/successful/completed and other terminal states). */

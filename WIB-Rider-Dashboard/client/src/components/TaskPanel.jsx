@@ -222,6 +222,10 @@ function TaskCardReadyForPickupBanner({ className = '' }) {
 
 export default function TaskPanel({ onOpenTaskDetails, onFocusTaskOnMap, listRevision = 0 }) {
   const navigate = useNavigate();
+  const openDetailsFromRow = (taskId, row) => {
+    if (onOpenTaskDetails) onOpenTaskDetails(taskId, row);
+    else navigate(`/tasks?highlight=${taskId}`);
+  };
   const [tasks, setTasks] = useState([]);
   const [counts, setCounts] = useState({ unassigned: 0, assigned: 0, completed: 0 });
   const [problemCounts, setProblemCounts] = useState({ cancelled: 0, declined: 0, failed: 0 });
@@ -413,7 +417,7 @@ export default function TaskPanel({ onOpenTaskDetails, onFocusTaskOnMap, listRev
         if (taskCacheKeyRef.current !== cacheKeyAtRequest) return;
         const raw = list || [];
         setTasks(raw);
-        const norm = (status) => (status || '').toLowerCase().replace(/\s+/g, '').replace(/_/g, '');
+        const norm = (status) => String(status ?? '').toLowerCase().replace(/\s+/g, '').replace(/_/g, '');
         if (taskMode === 'active') {
           let u = 0;
           let a = 0;
@@ -534,7 +538,7 @@ export default function TaskPanel({ onOpenTaskDetails, onFocusTaskOnMap, listRev
     };
   }, [fetchTasksQuiet]);
 
-  const normStatus = (status) => (status || '').toLowerCase().replace(/\s+/g, '').replace(/_/g, '');
+  const normStatus = (status) => String(status ?? '').toLowerCase().replace(/\s+/g, '').replace(/_/g, '');
 
   const filteredByTab = useMemo(() => {
     return tasks.filter((t) => {
@@ -567,8 +571,8 @@ export default function TaskPanel({ onOpenTaskDetails, onFocusTaskOnMap, listRev
     return [...filteredByMode].sort((a, b) => {
       const dateA = a.date_created ? new Date(a.date_created).getTime() : 0;
       const dateB = b.date_created ? new Date(b.date_created).getTime() : 0;
-      const dirA = (getDirectionFromTask(a) || '').toLowerCase();
-      const dirB = (getDirectionFromTask(b) || '').toLowerCase();
+      const dirA = String(getDirectionFromTask(a) ?? '').toLowerCase();
+      const dirB = String(getDirectionFromTask(b) ?? '').toLowerCase();
       const orderA = a.order_id ?? a.task_id ?? 0;
       const orderB = b.order_id ?? b.task_id ?? 0;
       let cmp = 0;
@@ -987,8 +991,7 @@ export default function TaskPanel({ onOpenTaskDetails, onFocusTaskOnMap, listRev
                         className="btn-assign-driver"
                         onClick={(e) => {
                           e.stopPropagation();
-                          if (onOpenTaskDetails) onOpenTaskDetails(t.task_id);
-                          else navigate(`/tasks?highlight=${t.task_id}`);
+                          openDetailsFromRow(t.task_id, t);
                         }}
                       >
                         Assign Driver
@@ -1048,8 +1051,7 @@ export default function TaskPanel({ onOpenTaskDetails, onFocusTaskOnMap, listRev
                       className="task-card-details"
                       onClick={(e) => {
                         e.stopPropagation();
-                        if (onOpenTaskDetails) onOpenTaskDetails(t.task_id);
-                        else navigate(`/tasks?highlight=${t.task_id}`);
+                        openDetailsFromRow(t.task_id, t);
                       }}
                       aria-label={`View details for order ${t.order_id ?? t.task_id}`}
                     >

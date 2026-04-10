@@ -91,6 +91,7 @@ export default function Tasks() {
   const [drivers, setDrivers] = useState([]);
   const [selectedDriver, setSelectedDriver] = useState('');
   const [detailsTaskId, setDetailsTaskId] = useState(null);
+  const [detailsListSnapshot, setDetailsListSnapshot] = useState(null);
   const [activityRefreshIntervalMs, setActivityRefreshIntervalMs] = useState(30000);
   const [dateCalendarOpen, setDateCalendarOpen] = useState(false);
   const [datePopoverRect, setDatePopoverRect] = useState({ top: 0, left: 0 });
@@ -246,7 +247,10 @@ export default function Tasks() {
   useEffect(() => {
     if (highlightId && !detailsTaskId) {
       const id = parseInt(highlightId, 10);
-      if (id) setDetailsTaskId(id);
+      if (id) {
+        setDetailsListSnapshot(null);
+        setDetailsTaskId(id);
+      }
     }
   }, [highlightId, detailsTaskId]);
 
@@ -271,7 +275,14 @@ export default function Tasks() {
       .finally(() => setAssigning(false));
   };
 
-  const openDetails = (taskId) => setDetailsTaskId(taskId);
+  const openDetails = (taskId, row) => {
+    if (row != null && typeof row === 'object' && String(row.task_id) === String(taskId)) {
+      setDetailsListSnapshot(row);
+    } else {
+      setDetailsListSnapshot(null);
+    }
+    setDetailsTaskId(taskId);
+  };
   const clearHighlight = () => setSearchParams(sp => { const p = new URLSearchParams(sp); p.delete('highlight'); return p; });
 
   const filteredByStatus = (tasks || []).filter((t) => {
@@ -503,7 +514,7 @@ export default function Tasks() {
                   </td>
                   <td className="tasks-actions-cell">
                     <div className="task-row-actions">
-                      <button type="button" className="btn btn-sm btn-ghost" onClick={() => openDetails(t.task_id)} title="View details">View</button>
+                      <button type="button" className="btn btn-sm btn-ghost" onClick={() => openDetails(t.task_id, t)} title="View details">View</button>
                       {(t.status || '').toLowerCase() === 'unassigned' && (
                         <button type="button" className="btn btn-sm btn-primary" onClick={() => setAssignTaskId(t.task_id)}>Assign</button>
                       )}
@@ -559,10 +570,24 @@ export default function Tasks() {
       {detailsTaskId != null && (
         <TaskDetailsModal
           taskId={detailsTaskId}
-          onClose={() => { setDetailsTaskId(null); if (highlightId) clearHighlight(); }}
-          onAssignDriver={(id) => { setDetailsTaskId(null); if (highlightId) clearHighlight(); setAssignTaskId(id); }}
+          listTaskSnapshot={detailsListSnapshot}
+          onClose={() => {
+            setDetailsTaskId(null);
+            setDetailsListSnapshot(null);
+            if (highlightId) clearHighlight();
+          }}
+          onAssignDriver={(id) => {
+            setDetailsTaskId(null);
+            setDetailsListSnapshot(null);
+            if (highlightId) clearHighlight();
+            setAssignTaskId(id);
+          }}
           onTaskListInvalidate={fetchTasks}
-          onTaskDeleted={() => { setDetailsTaskId(null); if (highlightId) clearHighlight(); }}
+          onTaskDeleted={() => {
+            setDetailsTaskId(null);
+            setDetailsListSnapshot(null);
+            if (highlightId) clearHighlight();
+          }}
           directionsMapSettings={directionsMapSettings}
         />
       )}
