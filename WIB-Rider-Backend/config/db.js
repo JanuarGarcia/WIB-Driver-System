@@ -8,6 +8,11 @@ const mysql = require('mysql2/promise');
  *       Typically the rider dashboard uses one DB; set DB_NAME to that. The named pools below are for
  *       cross-reading wheninba_MercifulGod vs wheninba_ErrandWib without mixing writes.
  */
+function poolConnectionLimit() {
+  const n = parseInt(String(process.env.DB_POOL_CONNECTION_LIMIT || '25'), 10);
+  return Number.isFinite(n) && n >= 1 ? Math.min(200, n) : 25;
+}
+
 function baseConn(overrides = {}) {
   return {
     host: overrides.host ?? process.env.DB_HOST ?? 'localhost',
@@ -15,8 +20,9 @@ function baseConn(overrides = {}) {
     user: overrides.user ?? process.env.DB_USER ?? 'root',
     password: overrides.password ?? process.env.DB_PASSWORD ?? '',
     waitForConnections: true,
-    connectionLimit: 10,
+    connectionLimit: poolConnectionLimit(),
     queueLimit: 0,
+    connectTimeout: parseInt(String(process.env.DB_CONNECT_TIMEOUT_MS || '20000'), 10) || 20000,
   };
 }
 

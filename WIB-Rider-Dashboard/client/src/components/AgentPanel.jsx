@@ -435,7 +435,7 @@ const AgentPanel = forwardRef(function AgentPanel(
         setDetails({ active, offline, total });
       }
     } catch (_) {
-      setDetails({ active: [], offline: [], total: [] });
+      // Do not clear a previously good roster — timeouts or transient API stalls were blanking the whole panel.
     } finally {
       if (!silent) setLoading(false);
     }

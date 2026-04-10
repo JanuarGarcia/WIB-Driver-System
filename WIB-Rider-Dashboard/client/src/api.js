@@ -94,6 +94,22 @@ export function userFacingApiError(err) {
 // Do not use /admin/api in the browser on static hosting without that proxy.
 const API = import.meta.env.VITE_API_URL || '/api';
 
+/** Abort hung requests so GET dedupe cannot stick forever (same URL would share one pending promise until reload). */
+const API_FETCH_TIMEOUT_MS = Math.min(
+  600000,
+  Math.max(8000, Number(import.meta.env.VITE_API_FETCH_TIMEOUT_MS) || 75000)
+);
+
+function fetchWithDeadline(url, init = {}) {
+  const { signal: outerSignal, ...rest } = init;
+  if (outerSignal) {
+    return fetch(url, init);
+  }
+  const ctrl = new AbortController();
+  const tid = setTimeout(() => ctrl.abort(), API_FETCH_TIMEOUT_MS);
+  return fetch(url, { ...rest, signal: ctrl.signal }).finally(() => clearTimeout(tid));
+}
+
 /**
  * Absolute URL for EventSource under the same base as {@link api} (SSE cannot use fetch headers).
  * When VITE_API_URL points at the Node rider API, a relative `/api/...` URL would hit static hosting only.
@@ -159,10 +175,22 @@ export async function api(path, options = {}) {
   if (token) headers['x-dashboard-token'] = token;
 
   const runFetch = async () => {
-    const res = await fetch(url, {
-      ...options,
-      headers,
-    });
+    let res;
+    try {
+      res = await fetchWithDeadline(url, {
+        ...options,
+        headers,
+      });
+    } catch (e) {
+      const aborted = e && (e.name === 'AbortError' || String(e.message || '').toLowerCase().includes('abort'));
+      if (aborted) {
+        throw {
+          error: 'Request timed out. The server may be busy — wait a moment or refresh the page.',
+          code: 'TIMEOUT',
+        };
+      }
+      throw e;
+    }
     const text = await res.text();
     let data;
     try {
