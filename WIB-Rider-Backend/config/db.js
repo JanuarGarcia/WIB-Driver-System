@@ -8,19 +8,30 @@ const mysql = require('mysql2/promise');
  *       Typically the rider dashboard uses one DB; set DB_NAME to that. The named pools below are for
  *       cross-reading wheninba_MercifulGod vs wheninba_ErrandWib without mixing writes.
  */
+/**
+ * Default 10 per pool (three pools may exist → cap total client connections).
+ * Raising this without raising MySQL max_user_connections / max_connections often causes
+ * every API route to return 500 on shared hosting.
+ */
 function poolConnectionLimit() {
-  const n = parseInt(String(process.env.DB_POOL_CONNECTION_LIMIT || '25'), 10);
-  return Number.isFinite(n) && n >= 1 ? Math.min(200, n) : 25;
+  const n = parseInt(String(process.env.DB_POOL_CONNECTION_LIMIT || '10'), 10);
+  return Number.isFinite(n) && n >= 1 ? Math.min(200, n) : 10;
 }
 
-function baseConn(overrides = {}) {
+/** Optional second/third DB pools — keep small so raising DB_POOL_CONNECTION_LIMIT does not 3× MySQL usage. */
+function auxPoolConnectionLimit() {
+  const n = parseInt(String(process.env.DB_AUX_POOL_CONNECTION_LIMIT || '5'), 10);
+  return Number.isFinite(n) && n >= 1 ? Math.min(100, n) : 5;
+}
+
+function baseConn(overrides = {}, connectionLimit = poolConnectionLimit()) {
   return {
     host: overrides.host ?? process.env.DB_HOST ?? 'localhost',
     port: parseInt(String((overrides.port ?? process.env.DB_PORT) || '3306'), 10),
     user: overrides.user ?? process.env.DB_USER ?? 'root',
     password: overrides.password ?? process.env.DB_PASSWORD ?? '',
     waitForConnections: true,
-    connectionLimit: poolConnectionLimit(),
+    connectionLimit,
     queueLimit: 0,
     connectTimeout: parseInt(String(process.env.DB_CONNECT_TIMEOUT_MS || '20000'), 10) || 20000,
   };
@@ -49,17 +60,17 @@ const mercifulGodDatabase = process.env.DB_MERCIFULGOD_NAME || 'wheninba_Mercifu
 const errandWibDatabase = process.env.DB_ERRANDWIB_NAME || 'wheninba_ErrandWib';
 
 const pool = mysql.createPool({
-  ...baseConn(),
+  ...baseConn({}, poolConnectionLimit()),
   database: primaryDatabase,
 });
 
 const mercifulGodPool = mysql.createPool({
-  ...baseConn(mercifulOverrides),
+  ...baseConn(mercifulOverrides, auxPoolConnectionLimit()),
   database: mercifulGodDatabase,
 });
 
 const errandWibPool = mysql.createPool({
-  ...baseConn(errandOverrides),
+  ...baseConn(errandOverrides, auxPoolConnectionLimit()),
   database: errandWibDatabase,
 });
 
