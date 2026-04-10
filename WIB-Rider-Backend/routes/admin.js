@@ -2859,6 +2859,24 @@ router.get('/tasks/:id', async (req, res) => {
   const result = { task };
 
   const orderId = task.order_id;
+  const orderIdForProofsEarly =
+    task.order_id != null && String(task.order_id).trim() !== ''
+      ? parseInt(String(task.order_id), 10)
+      : NaN;
+  const historyPromise = (async () => {
+    try {
+      return await fetchMergedTaskOrderHistory(pool, id, task.order_id);
+    } catch (e) {
+      if (e.code === 'ER_NO_SUCH_TABLE' || e.code === 'ER_BAD_FIELD_ERROR') return [];
+      throw e;
+    }
+  })();
+  const proofsPromise = fetchTaskProofPhotosWithUrls(
+    pool,
+    id,
+    Number.isFinite(orderIdForProofsEarly) && orderIdForProofsEarly > 0 ? orderIdForProofsEarly : null
+  );
+
   if (orderId) {
     try {
       result.order = await selectOrderRowWithPaymentProvider(orderId);
@@ -2954,36 +2972,18 @@ router.get('/tasks/:id', async (req, res) => {
     } catch (_) {}
   }
 
-  // Activity Timeline: task rows + order-only history (initial_order, preparing, etc.), oldest first
-  try {
-    result.order_history = await fetchMergedTaskOrderHistory(pool, id, task.order_id);
-  } catch (e) {
-    if (e.code === 'ER_NO_SUCH_TABLE' || e.code === 'ER_BAD_FIELD_ERROR') {
-      result.order_history = [];
-    } else {
-      throw e;
-    }
-  }
+  const [orderHistoryRows, proofPack] = await Promise.all([historyPromise, proofsPromise]);
+  result.order_history = orderHistoryRows;
 
   try {
     const advNote = await fetchLatestAdvanceOrderNoteForTask(pool, id, task.order_id);
     if (advNote) result.task.advance_order_note = advNote;
   } catch (_) {}
 
-  // Proof of delivery: mt_driver_task_photo for this task (+ order-scoped receipt rows), proof_urls for timeline
-  const orderIdForProofs =
-    task.order_id != null && String(task.order_id).trim() !== ''
-      ? parseInt(String(task.order_id), 10)
-      : null;
-  const { task_photos, proof_images, proof_receipt_url, proof_delivery_url } = await fetchTaskProofPhotosWithUrls(
-    pool,
-    id,
-    Number.isFinite(orderIdForProofs) && orderIdForProofs > 0 ? orderIdForProofs : null
-  );
-  result.task_photos = task_photos;
-  result.proof_images = proof_images;
-  result.proof_receipt_url = proof_receipt_url;
-  result.proof_delivery_url = proof_delivery_url;
+  result.task_photos = proofPack.task_photos;
+  result.proof_images = proofPack.proof_images;
+  result.proof_receipt_url = proofPack.proof_receipt_url;
+  result.proof_delivery_url = proofPack.proof_delivery_url;
 
   return res.json(result);
 });
@@ -3452,47 +3452,57 @@ router.get('/errand-orders/:orderId', async (req, res) => {
   try {
     const [[row]] = await errandWibPool.query('SELECT * FROM st_ordernew WHERE order_id = ? LIMIT 1', [orderId]);
     if (!row) return res.status(404).json({ error: 'Errand order not found' });
-    let driverDetail = null;
-    if (row.driver_id != null && String(row.driver_id).trim() !== '') {
-      const did = parseInt(String(row.driver_id), 10);
-      if (Number.isFinite(did)) {
-        driverDetail = await resolveErrandDriverDetail(errandWibPool, pool, did);
-      }
-    }
-    let merchantRow = null;
-    if (row.merchant_id != null && String(row.merchant_id).trim() !== '') {
-      const mid = parseInt(String(row.merchant_id), 10);
-      if (Number.isFinite(mid)) {
-        const mmap = await fetchErrandMerchantsByIds(errandWibPool, [mid]);
-        merchantRow = mmap.get(String(mid)) || null;
-      }
-    }
-    let clientRow = null;
-    let clientAddressRow = null;
-    if (row.client_id != null && String(row.client_id).trim() !== '') {
-      const cid = parseInt(String(row.client_id), 10);
-      if (Number.isFinite(cid) && cid > 0) {
+
+    const did =
+      row.driver_id != null && String(row.driver_id).trim() !== ''
+        ? parseInt(String(row.driver_id), 10)
+        : NaN;
+    const mid =
+      row.merchant_id != null && String(row.merchant_id).trim() !== ''
+        ? parseInt(String(row.merchant_id), 10)
+        : NaN;
+    const cid =
+      row.client_id != null && String(row.client_id).trim() !== '' ? parseInt(String(row.client_id), 10) : NaN;
+
+    const latestHistoryPromise = errandWibPool
+      .query('SELECT status FROM st_ordernew_history WHERE order_id = ? ORDER BY id DESC LIMIT 1', [orderId])
+      .then(([[hr]]) => (hr?.status != null ? String(hr.status).trim() : null))
+      .catch(() => null);
+
+    const proofsPromise = fetchErrandProofsForOrder(errandWibPool, orderId).catch(() => []);
+
+    const [
+      driverDetail,
+      merchantRow,
+      clientBundle,
+      latestHistoryStatus,
+      orderDetails,
+      orderHistoryRows,
+      proofs,
+    ] = await Promise.all([
+      Number.isFinite(did) && did > 0
+        ? resolveErrandDriverDetail(errandWibPool, pool, did)
+        : Promise.resolve(null),
+      Number.isFinite(mid)
+        ? fetchErrandMerchantsByIds(errandWibPool, [mid]).then((mmap) => mmap.get(String(mid)) || null)
+        : Promise.resolve(null),
+      (async () => {
+        if (!Number.isFinite(cid) || cid <= 0) return { clientRow: null, clientAddressRow: null };
         const cmap = await fetchErrandClientsByIds(errandWibPool, [cid]);
-        clientRow = cmap.get(String(cid)) || null;
+        const clientRow = cmap.get(String(cid)) || null;
         const addrMap = await fetchErrandClientAddressesByClientIds(errandWibPool, [cid]);
         const addrList = addrMap.get(String(cid)) || [];
-        clientAddressRow = pickClientAddressRow(row, addrList);
-      }
-    }
-    let latestHistoryStatus = null;
-    try {
-      const [[hr]] = await errandWibPool.query(
-        'SELECT status FROM st_ordernew_history WHERE order_id = ? ORDER BY id DESC LIMIT 1',
-        [orderId]
-      );
-      latestHistoryStatus = hr?.status != null ? String(hr.status).trim() : null;
-    } catch (_) {
-      latestHistoryStatus = null;
-    }
-    const [orderDetails, orderHistoryRows] = await Promise.all([
+        const clientAddressRow = pickClientAddressRow(row, addrList);
+        return { clientRow, clientAddressRow };
+      })(),
+      latestHistoryPromise,
       fetchErrandOrderLineItems(errandWibPool, orderId, row),
       fetchErrandOrderHistory(errandWibPool, orderId, row),
+      proofsPromise,
     ]);
+
+    const { clientRow, clientAddressRow } = clientBundle;
+
     const payload = buildErrandTaskDetailPayload(
       row,
       driverDetail,
@@ -3504,7 +3514,6 @@ router.get('/errand-orders/:orderId', async (req, res) => {
       orderHistoryRows
     );
     try {
-      const proofs = await fetchErrandProofsForOrder(errandWibPool, orderId);
       const taskPhotos = proofs.map((p) => ({
         id: p.id,
         task_id: null,

@@ -719,6 +719,7 @@ export default function TaskDetailsModal({
       setOrderHistory([]);
       setOrderHistoryProofImages([]);
       setError(null);
+      setLoading(false);
       setTab('details');
       setDeleteConfirmOpen(false);
       setAssignOpen(false);
@@ -751,8 +752,10 @@ export default function TaskDetailsModal({
     setLoading(true);
     const errandOid = Number(taskId) < 0 ? Math.abs(Number(taskId)) : null;
     const loadUrl = errandOid != null ? `errand-orders/${errandOid}` : `tasks/${taskId}`;
-    api(loadUrl)
+    let cancelled = false;
+    api(loadUrl, { skipDedupe: true })
       .then((res) => {
+        if (cancelled) return;
         if (res && typeof res === 'object' && !res.error) {
           setData(res);
           setOrderHistoryProofImages([]);
@@ -766,10 +769,17 @@ export default function TaskDetailsModal({
         }
       })
       .catch((err) => {
+        if (cancelled) return;
         setData(null);
         setError(userFacingApiError(err) || 'Failed to load task');
       })
-      .finally(() => setLoading(false));
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+      setLoading(false);
+    };
   }, [taskId]);
 
   useEffect(() => {
@@ -1529,7 +1539,9 @@ export default function TaskDetailsModal({
             {isErrandTask ? 'Mangan Order' : 'Task ID'} :{' '}
             {isErrandTask && task?.st_order_id != null
               ? task.st_order_id
-              : task?.task_id ?? taskId ?? '…'}
+              : isErrandTask && Number(taskId) < 0
+                ? Math.abs(Number(taskId))
+                : task?.task_id ?? taskId ?? '…'}
           </h3>
         </div>
         {loading && (

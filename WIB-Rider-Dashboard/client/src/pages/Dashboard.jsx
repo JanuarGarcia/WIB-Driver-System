@@ -540,7 +540,20 @@ export default function Dashboard() {
       </div>
       {taskDetailsId != null &&
         createPortal(
-          <Suspense fallback={null}>
+          <Suspense
+            fallback={
+              <div className="modal-backdrop task-details-backdrop" role="dialog" aria-busy="true" aria-label="Loading task">
+                <div className="modal-box modal-box-lg task-details-modal" onClick={(e) => e.stopPropagation()}>
+                  <div className="modal-header">
+                    <h3>Task</h3>
+                  </div>
+                  <div className="modal-body">
+                    <div className="loading">Loading…</div>
+                  </div>
+                </div>
+              </div>
+            }
+          >
             <TaskDetailsModal
               taskId={taskDetailsId}
               initialTab={taskDetailsInitialTab}
