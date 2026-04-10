@@ -8,6 +8,7 @@ import { useTableSort } from '../hooks/useTableSort';
 import TablePaginationControls from '../components/TablePaginationControls';
 import TableSortControls from '../components/TableSortControls';
 import TaskDetailsModal from '../components/TaskDetailsModal';
+import TaskDetailsModalErrorBoundary from '../components/TaskDetailsModalErrorBoundary';
 import { useTheme } from '../context/ThemeContext';
 
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
@@ -568,28 +569,37 @@ export default function Tasks() {
 
       {/* Task details modal */}
       {detailsTaskId != null && (
-        <TaskDetailsModal
-          taskId={detailsTaskId}
-          listTaskSnapshot={detailsListSnapshot}
+        <TaskDetailsModalErrorBoundary
+          key={String(detailsTaskId)}
           onClose={() => {
             setDetailsTaskId(null);
             setDetailsListSnapshot(null);
             if (highlightId) clearHighlight();
           }}
-          onAssignDriver={(id) => {
-            setDetailsTaskId(null);
-            setDetailsListSnapshot(null);
-            if (highlightId) clearHighlight();
-            setAssignTaskId(id);
-          }}
-          onTaskListInvalidate={fetchTasks}
-          onTaskDeleted={() => {
-            setDetailsTaskId(null);
-            setDetailsListSnapshot(null);
-            if (highlightId) clearHighlight();
-          }}
-          directionsMapSettings={directionsMapSettings}
-        />
+        >
+          <TaskDetailsModal
+            taskId={detailsTaskId}
+            listTaskSnapshot={detailsListSnapshot}
+            onClose={() => {
+              setDetailsTaskId(null);
+              setDetailsListSnapshot(null);
+              if (highlightId) clearHighlight();
+            }}
+            onAssignDriver={(id) => {
+              setDetailsTaskId(null);
+              setDetailsListSnapshot(null);
+              if (highlightId) clearHighlight();
+              setAssignTaskId(id);
+            }}
+            onTaskListInvalidate={fetchTasks}
+            onTaskDeleted={() => {
+              setDetailsTaskId(null);
+              setDetailsListSnapshot(null);
+              if (highlightId) clearHighlight();
+            }}
+            directionsMapSettings={directionsMapSettings}
+          />
+        </TaskDetailsModalErrorBoundary>
       )}
     </div>
   );

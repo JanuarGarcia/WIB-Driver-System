@@ -6,6 +6,7 @@ import MapErrorBoundary from '../components/MapErrorBoundary';
 
 const MapView = lazy(() => import('../components/MapView'));
 import TaskDetailsModal from '../components/TaskDetailsModal';
+import TaskDetailsModalErrorBoundary from '../components/TaskDetailsModalErrorBoundary';
 const ActivityTimelineToastStack = lazy(() => import('../components/ActivityTimelineToastStack'));
 
 /** Matches MapView MAP_STYLE so layout does not jump while the map chunk loads. */
@@ -549,33 +550,42 @@ export default function Dashboard() {
       </div>
       {taskDetailsId != null &&
         createPortal(
-          <TaskDetailsModal
-            taskId={taskDetailsId}
-            listTaskSnapshot={taskDetailsListSnapshot}
-            initialTab={taskDetailsInitialTab}
+          <TaskDetailsModalErrorBoundary
+            key={String(taskDetailsId)}
             onClose={() => {
               setTaskDetailsId(null);
               setTaskDetailsListSnapshot(null);
               setTaskDetailsInitialTab('details');
             }}
-            onAssignDriver={(id) => {
-              setTaskDetailsId(null);
-              setTaskDetailsListSnapshot(null);
-              navigate(`/tasks?highlight=${id}`);
-            }}
-            onTaskListInvalidate={bumpTaskLists}
-            onTaskDeleted={() => {
-              setTaskDetailsId(null);
-              setTaskDetailsListSnapshot(null);
-            }}
-            onFocusTaskOnMap={handleFocusTaskOnMap}
-            directionsMapSettings={{
-              mapProvider,
-              mapboxToken,
-              googleApiKey,
-              googleMapStyle,
-            }}
-          />,
+          >
+            <TaskDetailsModal
+              taskId={taskDetailsId}
+              listTaskSnapshot={taskDetailsListSnapshot}
+              initialTab={taskDetailsInitialTab}
+              onClose={() => {
+                setTaskDetailsId(null);
+                setTaskDetailsListSnapshot(null);
+                setTaskDetailsInitialTab('details');
+              }}
+              onAssignDriver={(id) => {
+                setTaskDetailsId(null);
+                setTaskDetailsListSnapshot(null);
+                navigate(`/tasks?highlight=${id}`);
+              }}
+              onTaskListInvalidate={bumpTaskLists}
+              onTaskDeleted={() => {
+                setTaskDetailsId(null);
+                setTaskDetailsListSnapshot(null);
+              }}
+              onFocusTaskOnMap={handleFocusTaskOnMap}
+              directionsMapSettings={{
+                mapProvider,
+                mapboxToken,
+                googleApiKey,
+                googleMapStyle,
+              }}
+            />
+          </TaskDetailsModalErrorBoundary>,
           document.body
         )}
       <div className="dashboard-layout-panel dashboard-layout-map">

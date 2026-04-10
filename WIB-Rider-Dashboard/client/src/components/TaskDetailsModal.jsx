@@ -113,7 +113,7 @@ function extractErrandAddedNamesFromHistoryClient(historyRows) {
   const acc = [];
   for (const row of historyRows) {
     const text = row?.remarks != null ? String(row.remarks) : '';
-    acc.push(...parseAddedItemNamesFromRemarksClient(text));
+    acc.push(...parseAddedItemNamesFromErrandRemarksClient(text));
   }
   return acc;
 }
