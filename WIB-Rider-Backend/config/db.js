@@ -24,6 +24,19 @@ function auxPoolConnectionLimit() {
   return Number.isFinite(n) && n >= 1 ? Math.min(100, n) : 5;
 }
 
+/**
+ * Max queued connection acquires when the pool is saturated. 0 = mysql2 default (unlimited queue — can hang HTTP forever).
+ * Default 80 fails fast with an error instead of stalling every route.
+ */
+function poolQueueLimit() {
+  const raw = process.env.DB_POOL_QUEUE_LIMIT;
+  if (raw == null || String(raw).trim() === '') return 80;
+  const n = parseInt(String(raw), 10);
+  if (!Number.isFinite(n) || n < 0) return 80;
+  if (n === 0) return 0;
+  return Math.min(500, n);
+}
+
 function baseConn(overrides = {}, connectionLimit = poolConnectionLimit()) {
   return {
     host: overrides.host ?? process.env.DB_HOST ?? 'localhost',
@@ -32,7 +45,7 @@ function baseConn(overrides = {}, connectionLimit = poolConnectionLimit()) {
     password: overrides.password ?? process.env.DB_PASSWORD ?? '',
     waitForConnections: true,
     connectionLimit,
-    queueLimit: 0,
+    queueLimit: poolQueueLimit(),
     connectTimeout: parseInt(String(process.env.DB_CONNECT_TIMEOUT_MS || '20000'), 10) || 20000,
   };
 }

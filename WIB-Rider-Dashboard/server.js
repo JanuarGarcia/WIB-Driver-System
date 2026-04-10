@@ -12,6 +12,11 @@ const app = express();
 const PORT = process.env.PORT || process.env.DASHBOARD_PORT || 3002;
 const BACKEND_URL = (process.env.BACKEND_URL || 'http://localhost:3000').replace(/\/$/, '');
 const ADMIN_SECRET = process.env.ADMIN_SECRET || '';
+/** Must be ≥ browser client timeout (see VITE_API_FETCH_TIMEOUT_MS); 15s was cutting off slow /settings, /tasks, etc. */
+const API_PROXY_GET_TIMEOUT_MS = Math.max(
+  5000,
+  parseInt(String(process.env.DASHBOARD_API_PROXY_TIMEOUT_MS || '90000'), 10) || 90000
+);
 
 function backendHeaders(req = null) {
   const h = { 'Content-Type': 'application/json' };
@@ -141,6 +146,75 @@ app.get('/api/auth/me', async (req, res) => {
   }
 });
 
+/**
+ * SSE — must not use the JSON proxy below (axios would buffer until the stream closes = hang / timeout).
+ * EventSource uses query ?token=…; forward query + optional session header.
+ */
+app.get('/api/realtime/stream', async (req, res) => {
+  setNoCache(res);
+  res.set('X-Dashboard-Proxy', '1');
+  const url = `${BACKEND_URL}/admin/api/realtime/stream`;
+  const headers = { ...backendHeaders(req) };
+  delete headers['Content-Type'];
+  headers.Accept = 'text/event-stream';
+  try {
+    const response = await axios.get(url, {
+      headers,
+      params: req.query,
+      responseType: 'stream',
+      timeout: 0,
+      validateStatus: () => true,
+    });
+    if (response.status !== 200) {
+      const chunks = [];
+      await new Promise((resolve, reject) => {
+        response.data.on('data', (c) => chunks.push(c));
+        response.data.on('end', resolve);
+        response.data.on('error', reject);
+      });
+      const raw = Buffer.concat(chunks).toString('utf8');
+      let data;
+      try {
+        data = raw ? JSON.parse(raw) : { error: 'Unauthorized' };
+      } catch {
+        data = { error: raw.slice(0, 200) || 'Upstream error' };
+      }
+      return res.status(response.status).json(typeof data === 'object' ? data : { error: String(data) });
+    }
+    const hopByHop = new Set([
+      'connection',
+      'keep-alive',
+      'proxy-authenticate',
+      'proxy-authorization',
+      'te',
+      'trailers',
+      'transfer-encoding',
+      'upgrade',
+    ]);
+    for (const [k, v] of Object.entries(response.headers)) {
+      if (v == null || v === '') continue;
+      const key = String(k).toLowerCase();
+      if (hopByHop.has(key)) continue;
+      try {
+        res.set(k, v);
+      } catch (_) {}
+    }
+    res.status(200);
+    response.data.pipe(res);
+    const cleanup = () => {
+      try {
+        response.data.destroy();
+      } catch (_) {}
+    };
+    req.on('close', cleanup);
+    res.on('close', cleanup);
+    response.data.on('error', cleanup);
+  } catch (err) {
+    const { status, data } = sanitizeAxiosError(err, 'SSE proxy failed');
+    res.status(status).json(data);
+  }
+});
+
 // Proxy: GET /api/* -> BACKEND_URL/admin/api/*
 app.get('/api/*', async (req, res) => {
   setNoCache(res);
@@ -151,7 +225,7 @@ app.get('/api/*', async (req, res) => {
     const response = await axios.get(url, {
       headers: backendHeaders(req),
       params: req.query,
-      timeout: 15000,
+      timeout: API_PROXY_GET_TIMEOUT_MS,
     });
     res.json(response.data);
   } catch (err) {

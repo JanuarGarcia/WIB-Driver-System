@@ -94,21 +94,11 @@ export function userFacingApiError(err) {
 // Do not use /admin/api in the browser on static hosting without that proxy.
 const API = import.meta.env.VITE_API_URL || '/api';
 
-/** Abort hung requests so GET dedupe cannot stick forever (same URL would share one pending promise until reload). */
+/** Covers the whole call (headers + body) — a slow `res.text()` was able to hang forever before. */
 const API_FETCH_TIMEOUT_MS = Math.min(
   600000,
   Math.max(8000, Number(import.meta.env.VITE_API_FETCH_TIMEOUT_MS) || 75000)
 );
-
-function fetchWithDeadline(url, init = {}) {
-  const { signal: outerSignal, ...rest } = init;
-  if (outerSignal) {
-    return fetch(url, init);
-  }
-  const ctrl = new AbortController();
-  const tid = setTimeout(() => ctrl.abort(), API_FETCH_TIMEOUT_MS);
-  return fetch(url, { ...rest, signal: ctrl.signal }).finally(() => clearTimeout(tid));
-}
 
 /**
  * Absolute URL for EventSource under the same base as {@link api} (SSE cannot use fetch headers).
@@ -161,27 +151,24 @@ export function resolveUploadUrl(path) {
   return origin ? `${origin}${rel}` : rel;
 }
 
-/** Coalesce concurrent identical GETs (e.g. dashboard map + task list share `tasks?date=…`). */
-const inFlightGetByKey = new Map();
-
 export async function api(path, options = {}) {
   const base = API.replace(/\/$/, '');
   const url = API.startsWith('http')
     ? (path.startsWith('/') ? base + path : `${base}/${path}`)
     : (path.startsWith('/') ? path : `${API}/${path}`);
-  const method = String(options.method || 'GET').toUpperCase();
-  const headers = { 'Content-Type': 'application/json', ...options.headers };
+  const { skipDedupe: _skipDedupe, signal: _userSignal, ...fetchOptions } = options;
+  const headers = { 'Content-Type': 'application/json', ...fetchOptions.headers };
   const token = getToken();
   if (token) headers['x-dashboard-token'] = token;
 
   const runFetch = async () => {
+    const ctrl = new AbortController();
+    const tid = setTimeout(() => ctrl.abort(), API_FETCH_TIMEOUT_MS);
     let res;
     try {
-      res = await fetchWithDeadline(url, {
-        ...options,
-        headers,
-      });
+      res = await fetch(url, { ...fetchOptions, headers, signal: ctrl.signal });
     } catch (e) {
+      clearTimeout(tid);
       const aborted = e && (e.name === 'AbortError' || String(e.message || '').toLowerCase().includes('abort'));
       if (aborted) {
         throw {
@@ -191,7 +178,22 @@ export async function api(path, options = {}) {
       }
       throw e;
     }
-    const text = await res.text();
+    let text;
+    try {
+      text = await res.text();
+    } catch (e) {
+      const aborted = e && (e.name === 'AbortError' || String(e.message || '').toLowerCase().includes('abort'));
+      clearTimeout(tid);
+      if (aborted) {
+        throw {
+          error: 'Request timed out. The server may be busy — wait a moment or refresh the page.',
+          code: 'TIMEOUT',
+        };
+      }
+      throw e;
+    } finally {
+      clearTimeout(tid);
+    }
     let data;
     try {
       data = text ? JSON.parse(text) : {};
@@ -235,19 +237,6 @@ export async function api(path, options = {}) {
     }
     return data;
   };
-
-  if (method === 'GET' && !options.body && !options.skipDedupe) {
-    const dedupeKey = `${token || ''}|${url}`;
-    const existing = inFlightGetByKey.get(dedupeKey);
-    if (existing) return existing;
-    const p = runFetch().finally(() => {
-      queueMicrotask(() => {
-        if (inFlightGetByKey.get(dedupeKey) === p) inFlightGetByKey.delete(dedupeKey);
-      });
-    });
-    inFlightGetByKey.set(dedupeKey, p);
-    return p;
-  }
 
   return runFetch();
 }

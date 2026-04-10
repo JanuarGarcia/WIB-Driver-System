@@ -768,7 +768,7 @@ export default function TaskDetailsModal({
     const errandOid = Number(taskId) < 0 ? Math.abs(Number(taskId)) : null;
     const loadUrl = errandOid != null ? `errand-orders/${errandOid}` : `tasks/${taskId}`;
     let cancelled = false;
-    api(loadUrl, { skipDedupe: true })
+    api(loadUrl)
       .then((res) => {
         if (cancelled) return;
         if (res && typeof res === 'object' && !res.error) {
