@@ -80,6 +80,68 @@ function orderLineUnitPrice(item) {
   return null;
 }
 
+function isGenericErrandOrderLineName(name) {
+  const s = name != null ? String(name).trim().toLowerCase() : '';
+  if (!s) return true;
+  if (s === 'errand service' || s === 'item') return true;
+  if (/^item\s*#\s*0$/i.test(s)) return true;
+  return false;
+}
+
+/** Match Mangan timeline copy: "Added White Rice x1" (backend applies same; client fallback if API is stale). */
+function parseAddedItemNamesFromErrandRemarksClient(text) {
+  const out = [];
+  if (!text || typeof text !== 'string') return out;
+  const re = /\badded\s+(.+?)\s*[x×]\s*\d+/gi;
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    const nm = m[1].trim();
+    if (/\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/i.test(nm)) continue;
+    if (nm && !isGenericErrandOrderLineName(nm)) out.push(nm);
+  }
+  return out;
+}
+
+function extractErrandAddedNamesFromHistoryClient(historyRows) {
+  if (!Array.isArray(historyRows) || !historyRows.length) return [];
+  for (let i = historyRows.length - 1; i >= 0; i -= 1) {
+    const text = historyRows[i]?.remarks != null ? String(historyRows[i].remarks) : '';
+    if (!/\badded\s+.+\s*[x×]\s*\d+/i.test(text)) continue;
+    const names = parseAddedItemNamesFromErrandRemarksClient(text);
+    if (names.length > 0) return names;
+  }
+  const acc = [];
+  for (const row of historyRows) {
+    const text = row?.remarks != null ? String(row.remarks) : '';
+    acc.push(...parseAddedItemNamesFromRemarksClient(text));
+  }
+  return acc;
+}
+
+function enrichErrandOrderDetailsFromTimelineRemarks(details, historyRows, isErrand) {
+  if (!isErrand || !Array.isArray(details) || !details.length) return details;
+  const names = extractErrandAddedNamesFromHistoryClient(historyRows);
+  if (!names.length) return details;
+  const needs = details.some((d) => d && isGenericErrandOrderLineName(d.item_name ?? d.itemName ?? d.name));
+  if (!needs) return details;
+  let ri = 0;
+  return details.map((line) => {
+    const cur = line?.item_name ?? line?.itemName ?? line?.name;
+    if (!line || !isGenericErrandOrderLineName(cur)) return line;
+    if (ri >= names.length) return line;
+    const nm = names[ri++];
+    return {
+      ...line,
+      item_name: nm,
+      itemName: nm,
+      name: nm,
+      label: nm,
+      service_name: nm,
+      item_name_display: nm,
+    };
+  });
+}
+
 /** Single-line drop-off address from mt_order_delivery_address row (matches classic receipt “Deliver to”). */
 function formatDeliveryAddressFromOrderRow(row) {
   if (!row || typeof row !== 'object') return '';
@@ -1245,6 +1307,18 @@ export default function TaskDetailsModal({
 
   const task = data && (data.task ?? data);
   const isErrandTask = data?.task_source === 'errand' || Number(taskId) < 0;
+  const orderDetails = useMemo(() => {
+    const raw = Array.isArray(data?.order_details) ? data.order_details : [];
+    const hist =
+      Array.isArray(orderHistory) && orderHistory.length > 0
+        ? orderHistory
+        : Array.isArray(data?.order_history)
+          ? data.order_history
+          : Array.isArray(data?.mt_order_history)
+            ? data.mt_order_history
+            : [];
+    return enrichErrandOrderDetailsFromTimelineRemarks(raw, hist, isErrandTask);
+  }, [data?.order_details, data?.order_history, data?.mt_order_history, orderHistory, isErrandTask]);
   const taskManagementDisplayId = (() => {
     if (isErrandTask) {
       if (task?.st_order_id != null) return task.st_order_id;
@@ -1255,7 +1329,6 @@ export default function TaskDetailsModal({
     return task?.task_id ?? taskId;
   })();
   const order = data?.order ?? null;
-  const orderDetails = Array.isArray(data?.order_details) ? data.order_details : [];
   const merchant = data?.merchant ?? null;
   const editTaskTypeLabel = (order?.trans_type ?? task?.trans_type ?? '').toString().trim() || '—';
   const editModalIsPickup = editTaskTypeLabel.toLowerCase().includes('pickup');

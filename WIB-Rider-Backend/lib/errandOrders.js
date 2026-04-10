@@ -1336,6 +1336,64 @@ function mergeErrandOrderDetailsWithJsonNames(orderDetails, stOrderRow, rawLineR
   });
 }
 
+/**
+ * Parse "Added White Rice x1" / "Added Garlic Rice x1" from timeline remarks (same text admins see in Activity Timeline).
+ * Used when `json_details` / history trans maps / SQL JSON columns do not resolve names.
+ */
+function parseAddedItemNamesFromErrandRemarksText(text) {
+  const out = [];
+  if (text == null || typeof text !== 'string') return out;
+  const re = /\badded\s+(.+?)\s*[x×]\s*\d+/gi;
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    let nm = m[1].trim();
+    if (ERRAND_LINE_ITEM_UUID_RE.test(nm)) continue;
+    const cleaned = errandPickLabel(nm, 280);
+    if (cleaned && !isGenericErrandItemName(cleaned)) out.push(cleaned);
+  }
+  return out;
+}
+
+/**
+ * Prefer the newest history row that contains an "Added … xN" summary (typical Mangan edit block).
+ * Otherwise concatenate adds from all rows in chronological order.
+ */
+function extractAddedItemNamesFromErrandTimelineRemarks(historyRows) {
+  if (!Array.isArray(historyRows) || !historyRows.length) return [];
+  for (let i = historyRows.length - 1; i >= 0; i -= 1) {
+    const text = historyRows[i]?.remarks != null ? String(historyRows[i].remarks) : '';
+    if (!/\badded\s+.+\s*[x×]\s*\d+/i.test(text)) continue;
+    const names = parseAddedItemNamesFromErrandRemarksText(text);
+    if (names.length > 0) return names;
+  }
+  const acc = [];
+  for (const row of historyRows) {
+    const text = row?.remarks != null ? String(row.remarks) : '';
+    acc.push(...parseAddedItemNamesFromErrandRemarksText(text));
+  }
+  return acc;
+}
+
+function applyRemarkFallbackNamesToGenericErrandLines(lines, remarkNames) {
+  if (!Array.isArray(lines) || !Array.isArray(remarkNames) || remarkNames.length === 0) return lines;
+  let ri = 0;
+  return lines.map((line) => {
+    if (!line || !isGenericErrandItemName(line.item_name)) return line;
+    if (ri >= remarkNames.length) return line;
+    const nm = remarkNames[ri++];
+    if (!nm) return line;
+    return {
+      ...line,
+      item_name: nm,
+      itemName: nm,
+      name: nm,
+      label: nm,
+      service_name: nm,
+      item_name_display: nm,
+    };
+  });
+}
+
 function filterNonVoidedErrandLines(rows) {
   return (rows || []).filter((r) => {
     const v = r.voided_at;
@@ -1963,18 +2021,22 @@ function buildErrandTaskDetailPayload(
       }
     : null;
 
+  const historyList = Array.isArray(orderHistoryRows) ? orderHistoryRows : [];
+
   const rawLines =
     Array.isArray(orderDetails) && ERRAND_ORDER_LINES_RAW in orderDetails ? orderDetails[ERRAND_ORDER_LINES_RAW] : null;
   const histHints =
     Array.isArray(orderDetails) && ERRAND_HISTORY_UUID_HINTS in orderDetails ? orderDetails[ERRAND_HISTORY_UUID_HINTS] : null;
-  const lines = mergeErrandOrderDetailsWithJsonNames(
+  let lines = mergeErrandOrderDetailsWithJsonNames(
     orderDetails,
     row,
     Array.isArray(rawLines) ? rawLines : null,
     histHints instanceof Map ? histHints : null
   );
-
-  const historyList = Array.isArray(orderHistoryRows) ? orderHistoryRows : [];
+  lines = applyRemarkFallbackNamesToGenericErrandLines(
+    lines,
+    extractAddedItemNamesFromErrandTimelineRemarks(historyList)
+  );
 
   let errandOrderPayload = row;
   if (options && options.forRiderApp === true && row && typeof row === 'object') {
