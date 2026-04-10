@@ -7,18 +7,14 @@ const { success, error } = require('../lib/response');
 const { validateApiKey, resolveDriver } = require('../middleware/auth');
 const {
   mapStOrderRowToTaskListRow,
-  buildErrandTaskDetailPayload,
-  fetchErrandOrderLineItems,
-  fetchErrandOrderHistory,
+  buildErrandOrderDetailPayloadForDriver,
   fetchErrandMerchantsByIds,
   fetchErrandClientsByIds,
   fetchErrandClientAddressesByClientIds,
   fetchErrandLatestHistoryStatusByOrderIds,
-  pickClientAddressRow,
   fetchErrandStDriversByIds,
   attachErrandDriverGroups,
   fetchMtDriverTeamNamesByIds,
-  resolveErrandDriverDetail,
 } = require('../lib/errandOrders');
 const { normalizeIncomingStatusRaw } = require('../lib/errandDriverStatus');
 const {
@@ -169,56 +165,8 @@ async function loadErrandOrderRow(orderId) {
 }
 
 async function buildDetailPayloadForOrder(orderId) {
-  const row = await loadErrandOrderRow(orderId);
-  if (!row) return null;
-  const did = orderDriverId(row);
-  const driverDetail =
-    did != null && did > 0 ? await resolveErrandDriverDetail(errandWibPool, pool, did) : null;
-  let merchantRow = null;
-  if (row.merchant_id != null && String(row.merchant_id).trim() !== '') {
-    const mid = parseInt(String(row.merchant_id), 10);
-    if (Number.isFinite(mid)) {
-      const mmap = await fetchErrandMerchantsByIds(errandWibPool, [mid]);
-      merchantRow = mmap.get(String(mid)) || null;
-    }
-  }
-  let clientRow = null;
-  let clientAddressRow = null;
-  if (row.client_id != null && String(row.client_id).trim() !== '') {
-    const cid = parseInt(String(row.client_id), 10);
-    if (Number.isFinite(cid) && cid > 0) {
-      const cmap = await fetchErrandClientsByIds(errandWibPool, [cid]);
-      clientRow = cmap.get(String(cid)) || null;
-      const addrMap = await fetchErrandClientAddressesByClientIds(errandWibPool, [cid]);
-      const addrList = addrMap.get(String(cid)) || [];
-      clientAddressRow = pickClientAddressRow(row, addrList);
-    }
-  }
-  let latestHistoryStatus = null;
-  try {
-    const [[hr]] = await errandWibPool.query(
-      'SELECT status FROM st_ordernew_history WHERE order_id = ? ORDER BY id DESC LIMIT 1',
-      [orderId]
-    );
-    latestHistoryStatus = hr?.status != null ? String(hr.status).trim() : null;
-  } catch (_) {
-    latestHistoryStatus = null;
-  }
-  const [orderDetails, orderHistoryRows] = await Promise.all([
-    fetchErrandOrderLineItems(errandWibPool, orderId, row),
-    fetchErrandOrderHistory(errandWibPool, orderId, row),
-  ]);
-  const payload = buildErrandTaskDetailPayload(
-    row,
-    driverDetail,
-    merchantRow,
-    clientRow,
-    clientAddressRow,
-    latestHistoryStatus,
-    orderDetails,
-    orderHistoryRows,
-    { forRiderApp: true }
-  );
+  const payload = await buildErrandOrderDetailPayloadForDriver(errandWibPool, pool, orderId);
+  if (!payload) return null;
   const proofs = await fetchErrandProofsForOrder(errandWibPool, orderId);
   const taskPhotos = proofs.map((p) => ({
     id: p.id,

@@ -35,6 +35,8 @@ const { notifyDashboardAfterMtTaskHistoryRow } = require('../lib/mtTaskStatusDas
 const { sendCustomerTaskMessage } = require('../lib/sendCustomerTaskMessage');
 const { notifyCustomerFoodTaskStatusPushFireAndForget } = require('../lib/customerOrderPushDispatch');
 const { updateMtOrderStatusIfDeliveryComplete } = require('../lib/mtOrderStatusSync');
+const { buildErrandOrderDetailPayloadForDriver } = require('../lib/errandOrders');
+const { fetchErrandProofsForOrder } = require('../lib/errandProof');
 
 const uploadDir = path.join(__dirname, '..', 'uploads', 'profiles');
 if (!fs.existsSync(uploadDir)) {
@@ -1245,15 +1247,70 @@ router.post('/GetTaskByDate', validateApiKey, resolveDriver, async (req, res) =>
   return success(res, { data });
 });
 
+/**
+ * Mangan/errand orders use ErrandWib `st_ordernew` and negative `task_id` in list APIs.
+ * Same access rules as GetErrandOrderDetails; proof attachment matches buildDetailPayloadForOrder.
+ * @returns {Promise<null|'forbidden'|Record<string, unknown>>}
+ */
+async function tryErrandTaskDetailsForGetTaskDetails(errandPool, mainPool, orderId, driverId) {
+  const oid = parseInt(String(orderId), 10);
+  if (!errandPool || !Number.isFinite(oid) || oid <= 0) return null;
+  const [[row]] = await errandPool.query('SELECT driver_id FROM st_ordernew WHERE order_id = ? LIMIT 1', [oid]);
+  if (!row) return null;
+  let assigned = null;
+  if (row.driver_id != null && String(row.driver_id).trim() !== '') {
+    const n = parseInt(String(row.driver_id), 10);
+    assigned = Number.isFinite(n) ? n : null;
+  }
+  const unassigned = assigned == null || assigned === 0;
+  if (!unassigned && assigned !== driverId) return 'forbidden';
+  const details = await buildErrandOrderDetailPayloadForDriver(errandPool, mainPool, oid);
+  if (!details) return null;
+  const proofs = await fetchErrandProofsForOrder(errandPool, oid);
+  const taskPhotos = proofs.map((p) => ({
+    id: p.id,
+    task_id: null,
+    errand_order_id: oid,
+    photo_name: p.photo_name,
+    date_created: p.date_created,
+    proof_url: p.proof_url,
+    proof_type: p.proof_type,
+  }));
+  details.task_photos = taskPhotos;
+  details.proof_images = proofs.map((p) => p.proof_url).filter(Boolean);
+  return details;
+}
+
 router.post('/GetTaskDetails', validateApiKey, resolveDriver, async (req, res) => {
   const body = req.body || {};
   const orderId = parseInt(body.order_id ?? body.orderId, 10);
   const taskId = parseInt(body.task_id ?? body.taskId, 10);
 
+  if (Number.isFinite(taskId) && taskId < 0) {
+    if (!errandWibPool) return error(res, 'order_id or task_id required');
+    try {
+      const out = await tryErrandTaskDetailsForGetTaskDetails(errandWibPool, pool, Math.abs(taskId), req.driver.id);
+      if (out === 'forbidden') return error(res, 'Task not found');
+      if (out) return success(res, out);
+      return error(res, 'Task not found');
+    } catch (e) {
+      return error(res, e.message || 'Failed to load task details');
+    }
+  }
+
   // Rollout compatibility: if both are provided, order_id wins.
   let rows = [];
   if (Number.isFinite(orderId) && orderId > 0) {
     rows = await queryRiderTaskRows('WHERE t.order_id = ? ORDER BY t.task_id DESC LIMIT 1', [orderId]);
+    if (!rows.length && errandWibPool) {
+      try {
+        const out = await tryErrandTaskDetailsForGetTaskDetails(errandWibPool, pool, orderId, req.driver.id);
+        if (out === 'forbidden') return error(res, 'Task not found');
+        if (out) return success(res, out);
+      } catch (e) {
+        return error(res, e.message || 'Failed to load task details');
+      }
+    }
   } else if (Number.isFinite(taskId) && taskId > 0) {
     rows = await queryRiderTaskRows('WHERE t.task_id = ? LIMIT 1', [taskId]);
   } else {

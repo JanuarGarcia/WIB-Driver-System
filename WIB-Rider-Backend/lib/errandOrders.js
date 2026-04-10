@@ -2318,9 +2318,74 @@ async function fetchErrandDriverLocationsForMap(errandPool, includeOffline) {
   return out;
 }
 
+/**
+ * Full errand/Mangan order JSON for the rider app (line-item names merged like dashboard).
+ * Used by `GetErrandOrderDetails` and by `GetTaskDetails` when `task_id` is negative.
+ * Proof photos are not attached here — callers add them via `fetchErrandProofsForOrder`.
+ * @param {import('mysql2/promise').Pool} errandPool
+ * @param {import('mysql2/promise').Pool} mainPool - primary DB (`mt_driver` name fallback)
+ * @param {number} orderId - `st_ordernew.order_id`
+ * @returns {Promise<Record<string, unknown>|null>}
+ */
+async function buildErrandOrderDetailPayloadForDriver(errandPool, mainPool, orderId) {
+  const oid = parseInt(String(orderId), 10);
+  if (!errandPool || !Number.isFinite(oid) || oid <= 0) return null;
+  const [[row]] = await errandPool.query('SELECT * FROM st_ordernew WHERE order_id = ? LIMIT 1', [oid]);
+  if (!row) return null;
+  const did = row.driver_id != null ? parseInt(String(row.driver_id), 10) : null;
+  const driverDetail =
+    did != null && did > 0 ? await resolveErrandDriverDetail(errandPool, mainPool, did) : null;
+  let merchantRow = null;
+  if (row.merchant_id != null && String(row.merchant_id).trim() !== '') {
+    const mid = parseInt(String(row.merchant_id), 10);
+    if (Number.isFinite(mid)) {
+      const mmap = await fetchErrandMerchantsByIds(errandPool, [mid]);
+      merchantRow = mmap.get(String(mid)) || null;
+    }
+  }
+  let clientRow = null;
+  let clientAddressRow = null;
+  if (row.client_id != null && String(row.client_id).trim() !== '') {
+    const cid = parseInt(String(row.client_id), 10);
+    if (Number.isFinite(cid) && cid > 0) {
+      const cmap = await fetchErrandClientsByIds(errandPool, [cid]);
+      clientRow = cmap.get(String(cid)) || null;
+      const addrMap = await fetchErrandClientAddressesByClientIds(errandPool, [cid]);
+      const addrList = addrMap.get(String(cid)) || [];
+      clientAddressRow = pickClientAddressRow(row, addrList);
+    }
+  }
+  let latestHistoryStatus = null;
+  try {
+    const [[hr]] = await errandPool.query(
+      'SELECT status FROM st_ordernew_history WHERE order_id = ? ORDER BY id DESC LIMIT 1',
+      [oid]
+    );
+    latestHistoryStatus = hr?.status != null ? String(hr.status).trim() : null;
+  } catch (_) {
+    latestHistoryStatus = null;
+  }
+  const [orderDetails, orderHistoryRows] = await Promise.all([
+    fetchErrandOrderLineItems(errandPool, oid, row),
+    fetchErrandOrderHistory(errandPool, oid, row),
+  ]);
+  return buildErrandTaskDetailPayload(
+    row,
+    driverDetail,
+    merchantRow,
+    clientRow,
+    clientAddressRow,
+    latestHistoryStatus,
+    orderDetails,
+    orderHistoryRows,
+    { forRiderApp: true }
+  );
+}
+
 module.exports = {
   mapStOrderRowToTaskListRow,
   buildErrandTaskDetailPayload,
+  buildErrandOrderDetailPayloadForDriver,
   fetchErrandOrderLineItems,
   fetchErrandOrderHistory,
   resolveErrandHistoryRemarks,
