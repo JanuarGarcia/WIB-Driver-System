@@ -32,7 +32,7 @@ const { attachOrderDetailCategories } = require('../lib/orderDetailCategories');
 const { formatActorFromDriver } = require('../lib/dashboardRiderNotify');
 const { insertMtOrderHistoryRow } = require('../lib/mtOrderHistoryInsert');
 const { notifyDashboardAfterMtTaskHistoryRow } = require('../lib/mtTaskStatusDashboardNotify');
-const { sendCustomerTaskMessage } = require('../lib/sendCustomerTaskMessage');
+const { sendCustomerTaskMessage, sendCustomerTaskNotify } = require('../lib/sendCustomerTaskMessage');
 const { notifyCustomerFoodTaskStatusPushFireAndForget } = require('../lib/customerOrderPushDispatch');
 const { updateMtOrderStatusIfDeliveryComplete } = require('../lib/mtOrderStatusSync');
 const { buildErrandOrderDetailPayloadForDriver } = require('../lib/errandOrders');
@@ -1338,8 +1338,20 @@ async function handleSendCustomerTaskMessage(req, res) {
   }
 }
 
+async function handleNotifyCustomer(req, res) {
+  try {
+    const r = await sendCustomerTaskNotify(pool, errandWibPool, req.driver, req.body);
+    if (r.err) return error(res, r.err);
+    return success(res, r.details, 'ok');
+  } catch (e) {
+    return error(res, e.message || 'Failed to notify customer');
+  }
+}
+
 router.post('/SendCustomerTaskMessage', validateApiKey, resolveDriver, handleSendCustomerTaskMessage);
 router.post('/sendCustomerTaskMessage', validateApiKey, resolveDriver, handleSendCustomerTaskMessage);
+router.post('/NotifyCustomer', validateApiKey, resolveDriver, handleNotifyCustomer);
+router.post('/notifyCustomer', validateApiKey, resolveDriver, handleNotifyCustomer);
 
 router.post('/ChangeTaskStatus', validateApiKey, resolveDriver, async (req, res) => {
   const body = req.body || {};

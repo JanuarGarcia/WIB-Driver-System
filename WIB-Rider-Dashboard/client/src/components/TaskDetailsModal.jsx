@@ -13,6 +13,7 @@ import { getAdvanceOrderLines, formatDbTimeTo12h } from '../utils/advanceOrder';
 import MapView from './MapView';
 import LocationPreviewModal from './LocationPreviewModal';
 import DirectionsModal from './DirectionsModal';
+import CustomerNotifyButton from './CustomerNotifyButton';
 import { CountryCodeDropdown, COUNTRY_CODES } from './NewTaskModal';
 import { taskDropoffLatLng } from '../utils/mapTasks';
 import { markNotificationToastSuppressedFromModalHistoryRow } from '../utils/notificationToastDedupe';
@@ -1334,6 +1335,13 @@ export default function TaskDetailsModal({
   /** Full-screen loader only when we have no row to show yet (avoids flash when list snapshot is provided). */
   const blockingLoad = loading && !task;
   const isErrandTask = data?.task_source === 'errand' || Number(taskId) < 0;
+  const hasAssignedDriverForNotify =
+    task?.driver_id != null &&
+    String(task.driver_id).trim() !== '' &&
+    String(task.driver_id).trim() !== '0';
+  const notifyOrderIdRaw = isErrandTask ? resolveErrandOrderId() : task?.order_id != null ? parseInt(String(task.order_id), 10) : NaN;
+  const notifyOrderId =
+    Number.isFinite(notifyOrderIdRaw) && notifyOrderIdRaw > 0 ? notifyOrderIdRaw : undefined;
   const orderDetails = useMemo(() => {
     const raw = Array.isArray(data?.order_details) ? data.order_details : [];
     const hist =
@@ -2004,6 +2012,11 @@ export default function TaskDetailsModal({
                 {!changeStatusOpen && !editOpen && !assignOpen && (
                   <button type="button" className="btn" onClick={openChangeStatus} disabled={actionLoading}>Change status</button>
                 )}
+                <CustomerNotifyButton
+                  taskId={taskId}
+                  orderId={notifyOrderId}
+                  disabled={actionLoading || !hasAssignedDriverForNotify}
+                />
                 {directionsMapSettings && (
                   <button type="button" className="btn" onClick={openDirectionsModal} disabled={actionLoading}>
                     Get directions

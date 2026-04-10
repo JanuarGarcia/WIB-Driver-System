@@ -43,6 +43,11 @@ function mapDeliveryToTaskStatus(deliveryStatus, orderStatus) {
   return mapDeliveryToCanonicalTaskStatus(deliveryStatus, orderStatus);
 }
 
+/** SQL fragment: exclude Mangan orders removed via admin DELETE (soft-cancel on `delivery_status`). */
+const ST_ORDERNEW_EXCLUDE_ADMIN_DELETED_SQL = ` AND (
+  delivery_status IS NULL OR LOWER(TRIM(delivery_status)) NOT IN ('cancelled', 'canceled')
+)`;
+
 /**
  * Map latest `st_ordernew_history.status` + row into driver task status (canonical ladder).
  * @param {string|null|undefined} historyStatusRaw
@@ -2234,6 +2239,7 @@ async function fetchErrandOrderTaskCountsByDriver(errandPool, driverIds, dateOnl
       `SELECT driver_id, COUNT(*) AS cnt FROM st_ordernew
        WHERE driver_id IN (${ph})
          AND DATE(COALESCE(delivery_date, created_at, date_created, date_modified)) = ?
+         ${ST_ORDERNEW_EXCLUDE_ADMIN_DELETED_SQL}
        GROUP BY driver_id`,
       [...uniq, d]
     );
@@ -2404,4 +2410,5 @@ module.exports = {
   buildErrandPseudoRowsForAgentDashboard,
   fetchErrandOrderTaskCountsByDriver,
   fetchErrandDriverLocationsForMap,
+  ST_ORDERNEW_EXCLUDE_ADMIN_DELETED_SQL,
 };

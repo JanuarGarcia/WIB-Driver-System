@@ -15,6 +15,7 @@ const {
   fetchErrandStDriversByIds,
   attachErrandDriverGroups,
   fetchMtDriverTeamNamesByIds,
+  ST_ORDERNEW_EXCLUDE_ADMIN_DELETED_SQL,
 } = require('../lib/errandOrders');
 const { normalizeIncomingStatusRaw } = require('../lib/errandDriverStatus');
 const {
@@ -277,6 +278,7 @@ router.post('/GetErrandOrders', validateApiKey, resolveDriver, async (req, res) 
            driver_id = ?
            OR (? = 1 AND (driver_id IS NULL OR driver_id = 0))
          )
+         ${ST_ORDERNEW_EXCLUDE_ADMIN_DELETED_SQL}
        ORDER BY order_id DESC
        LIMIT 200`,
       [date, driverId, flag]

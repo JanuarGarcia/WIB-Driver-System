@@ -25,6 +25,7 @@ const {
   fetchErrandOrderTaskCountsByDriver,
   fetchErrandDriverLocationsForMap,
   resolveErrandHistoryRemarks,
+  ST_ORDERNEW_EXCLUDE_ADMIN_DELETED_SQL,
 } = require('../lib/errandOrders');
 const { normalizeIncomingStatusRaw, CANONICAL: ERRAND_CANONICAL_STATUSES } = require('../lib/errandDriverStatus');
 const { success, error } = require('../lib/response');
@@ -58,6 +59,7 @@ const {
   notifyCustomerFoodTaskStatusPushFireAndForget,
 } = require('../lib/customerOrderPushDispatch');
 const { updateMtOrderStatusIfDeliveryComplete } = require('../lib/mtOrderStatusSync');
+const { sendCustomerTaskNotify } = require('../lib/sendCustomerTaskMessage');
 
 const ADMIN_SECRET = process.env.ADMIN_SECRET || '';
 
@@ -3230,6 +3232,7 @@ router.get('/tasks', async (req, res) => {
         const [eRows] = await errandWibPool.query(
           `SELECT * FROM st_ordernew
            WHERE DATE(COALESCE(delivery_date, created_at, date_created)) = ?
+           ${ST_ORDERNEW_EXCLUDE_ADMIN_DELETED_SQL}
            ORDER BY order_id DESC
            LIMIT 500`,
           [date]
@@ -4138,6 +4141,58 @@ router.post('/tasks/:id/retry-auto-assign', async (req, res) => {
       return res.status(503).json({ error: 'Tasks table unavailable.' });
     }
     throw e;
+  }
+});
+
+/**
+ * Dashboard: ping the order’s customer with the same preset as POST /driver/api/NotifyCustomer
+ * (uses assigned rider id + shared 15s per-task rate limit on the backend).
+ */
+router.post('/notify-customer', async (req, res) => {
+  const body = req.body || {};
+  const taskIdRaw = parseInt(String(body.task_id ?? body.taskId ?? ''), 10);
+  if (!Number.isFinite(taskIdRaw) || taskIdRaw === 0) {
+    return res.status(400).json({ error: 'task_id required' });
+  }
+  const orderIdBody = parseInt(String(body.order_id ?? body.orderId ?? ''), 10);
+
+  let driverId = NaN;
+  try {
+    if (taskIdRaw < 0) {
+      const oid =
+        Number.isFinite(orderIdBody) && orderIdBody > 0 ? orderIdBody : Math.abs(taskIdRaw);
+      if (!errandWibPool) return res.status(503).json({ error: 'Errand orders unavailable.' });
+      const [[row]] = await errandWibPool.query(
+        'SELECT driver_id FROM st_ordernew WHERE order_id = ? LIMIT 1',
+        [oid]
+      );
+      if (!row) return res.status(404).json({ error: 'Task not found' });
+      driverId = row.driver_id != null ? parseInt(String(row.driver_id), 10) : NaN;
+    } else {
+      const [[task]] = await pool.query(
+        'SELECT driver_id FROM mt_driver_task WHERE task_id = ? LIMIT 1',
+        [taskIdRaw]
+      );
+      if (!task) return res.status(404).json({ error: 'Task not found' });
+      driverId = task.driver_id != null ? parseInt(String(task.driver_id), 10) : NaN;
+    }
+  } catch (e) {
+    if (e.code === 'ER_NO_SUCH_TABLE') {
+      return res.status(503).json({ error: 'Task lookup unavailable.' });
+    }
+    throw e;
+  }
+
+  if (!Number.isFinite(driverId) || driverId <= 0) {
+    return res.status(400).json({ error: 'Task has no assigned rider' });
+  }
+
+  try {
+    const r = await sendCustomerTaskNotify(pool, errandWibPool, { id: driverId }, body);
+    if (r.err) return res.status(400).json({ error: r.err });
+    return res.json({ ok: true, details: r.details });
+  } catch (e) {
+    return res.status(500).json({ error: e.message || 'Failed to notify customer' });
   }
 });
 

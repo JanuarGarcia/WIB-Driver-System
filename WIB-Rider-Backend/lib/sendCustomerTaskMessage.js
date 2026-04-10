@@ -6,7 +6,8 @@ const { fetchErrandLatestHistoryStatusByOrderIds } = require('./errandOrders');
 
 /** @type {Map<string, number>} */
 const rateLastSent = new Map();
-const RATE_MS = 10_000;
+/** Min interval between customer pushes per driver+task (notify + custom message share this bucket). */
+const RATE_MS = 15_000;
 const NOTIFY_BODY_MAX = 230;
 const MESSAGE_MAX = 500;
 
@@ -345,4 +346,29 @@ async function sendCustomerTaskMessage(pool, errandWibPool, driver, body) {
   };
 }
 
-module.exports = { sendCustomerTaskMessage };
+const DEFAULT_NOTIFY_TITLE = 'Update from your rider';
+const DEFAULT_NOTIFY_BODY =
+  'Your rider is trying to reach you. Open the app to view your order.';
+
+/**
+ * One-tap notify for the rider app: same validation and rate limit as {@link sendCustomerTaskMessage},
+ * fixed title/body/type (customer app can key off `push_type` `rider_customer_notify`).
+ * @param {import('mysql2/promise').Pool} pool
+ * @param {import('mysql2/promise').Pool} errandWibPool
+ * @param {{ id: number }} driver
+ * @param {Record<string, unknown>} body
+ */
+async function sendCustomerTaskNotify(pool, errandWibPool, driver, body) {
+  const b = body || {};
+  return sendCustomerTaskMessage(pool, errandWibPool, driver, {
+    task_id: b.task_id ?? b.taskId,
+    order_id: b.order_id ?? b.orderId,
+    app_version: b.app_version ?? b.appVersion,
+    message: DEFAULT_NOTIFY_BODY,
+    push_title: DEFAULT_NOTIFY_TITLE,
+    push_message: DEFAULT_NOTIFY_BODY,
+    push_type: 'rider_customer_notify',
+  });
+}
+
+module.exports = { sendCustomerTaskMessage, sendCustomerTaskNotify };
