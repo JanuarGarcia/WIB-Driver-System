@@ -188,20 +188,39 @@ async function reloadDriverLoginRow(driverId) {
   return null;
 }
 
-const FETCH_DRIVER_LOGIN_BY_USERNAME_SQLS = [
-  'SELECT driver_id AS id, username, password AS password_hash, password_bcrypt, on_duty, client_id, status FROM mt_driver WHERE username = ?',
-  'SELECT driver_id AS id, username, password AS password_hash, password_bcrypt, on_duty, client_id FROM mt_driver WHERE username = ?',
-  'SELECT driver_id AS id, username, password AS password_hash, on_duty, client_id, status FROM mt_driver WHERE username = ?',
-  'SELECT driver_id AS id, username, password AS password_hash, on_duty, client_id FROM mt_driver WHERE username = ?',
-];
+function buildDriverLoginSelectSqls(whereClause) {
+  return [
+    `SELECT driver_id AS id, username, password AS password_hash, password_bcrypt, on_duty, client_id, status FROM mt_driver WHERE ${whereClause} LIMIT 1`,
+    `SELECT driver_id AS id, username, password AS password_hash, password_bcrypt, on_duty, client_id FROM mt_driver WHERE ${whereClause} LIMIT 1`,
+    `SELECT driver_id AS id, username, password AS password_hash, on_duty, client_id, status FROM mt_driver WHERE ${whereClause} LIMIT 1`,
+    `SELECT driver_id AS id, username, password AS password_hash, on_duty, client_id FROM mt_driver WHERE ${whereClause} LIMIT 1`,
+  ];
+}
 
-async function fetchDriverRowForLoginByUsername(username) {
-  for (const sql of FETCH_DRIVER_LOGIN_BY_USERNAME_SQLS) {
-    try {
-      const [rows] = await pool.query(sql, [username]);
-      return rows && rows[0] ? rows[0] : null;
-    } catch (e) {
-      if (e.code !== 'ER_BAD_FIELD_ERROR') throw e;
+/**
+ * Resolve mt_driver row for Login: username (case-insensitive, trimmed), then email, then phone digits.
+ * Matches how rider apps often let users sign in with email/phone while username differs.
+ */
+async function fetchDriverRowForLogin(loginKey) {
+  const attempts = [
+    ['LOWER(TRIM(username)) = LOWER(?)', [loginKey]],
+    ['LOWER(TRIM(COALESCE(email, \'\'))) = LOWER(?)', [loginKey]],
+  ];
+  const digits = loginKey.replace(/\D/g, '');
+  if (digits.length >= 7) {
+    const phoneExpr =
+      "REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(TRIM(COALESCE(phone, '')), ' ', ''), '-', ''), '(', ''), ')', ''), '+', '')";
+    attempts.push([`${phoneExpr} = ?`, [digits]]);
+  }
+  for (const [whereClause, params] of attempts) {
+    for (const sql of buildDriverLoginSelectSqls(whereClause)) {
+      try {
+        const [rows] = await pool.query(sql, params);
+        if (rows && rows[0]) return rows[0];
+        break;
+      } catch (e) {
+        if (e.code !== 'ER_BAD_FIELD_ERROR') throw e;
+      }
     }
   }
   return null;
@@ -892,7 +911,7 @@ router.post('/Login', validateApiKey, async (req, res) => {
     process.env.DRIVER_LOGIN_CHECK_ERRAND_ST_CLIENT === '1' ||
     /^true$/i.test(String(process.env.DRIVER_LOGIN_CHECK_ERRAND_ST_CLIENT || ''));
 
-  let driver = await fetchDriverRowForLoginByUsername(loginKey);
+  let driver = await fetchDriverRowForLogin(loginKey);
   let stored = driver ? String(driver.password_hash || '').trim() : '';
   let passwordOk = false;
 
@@ -984,11 +1003,11 @@ router.post('/Login', validateApiKey, async (req, res) => {
     stored = String(driver.password_hash || '').trim();
   } else {
     console.warn('[driver/api/Login] failed', { reason: 'unknown_user' });
-    return error(res, 'No driver account was found for this username.');
+    return error(res, 'No driver account matches this username, email, or mobile number.');
   }
 
   if (!driver) {
-    return error(res, 'No driver account was found for this username.');
+    return error(res, 'No driver account matches this username, email, or mobile number.');
   }
 
   if (driverStatusBlocksLogin(driver.status)) {

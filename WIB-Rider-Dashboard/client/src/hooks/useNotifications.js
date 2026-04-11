@@ -234,17 +234,24 @@ export function useNotifications() {
     }
 
     if (toastFresh.length > 0 && isSoundOn()) {
-      const tabHidden = typeof document !== 'undefined' && document.visibilityState === 'hidden';
       const playOne = async () => {
-        if (!tabHidden && audioRef.current) {
-          const el = audioRef.current;
+        const el = audioRef.current;
+        if (el) {
           try {
             el.volume = 0.72;
             el.currentTime = 0;
             await el.play();
             return;
           } catch {
-            /* fall through to chime */
+            /* Autoplay / background tab policy — try a fresh element (sometimes succeeds after unlock). */
+            try {
+              const a2 = new Audio(alertSoundUrl);
+              a2.volume = 0.72;
+              await a2.play();
+              return;
+            } catch {
+              /* fall through */
+            }
           }
         }
         playWebAudioChime();
