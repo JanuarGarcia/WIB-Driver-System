@@ -174,6 +174,8 @@ const RELOAD_DRIVER_LOGIN_SQLS = [
   'SELECT driver_id AS id, username, `password` AS password_hash, password_bcrypt, on_duty, client_id FROM mt_driver WHERE driver_id = ?',
   'SELECT driver_id AS id, username, `password` AS password_hash, on_duty, client_id, status FROM mt_driver WHERE driver_id = ?',
   'SELECT driver_id AS id, username, `password` AS password_hash, on_duty, client_id FROM mt_driver WHERE driver_id = ?',
+  /** Legacy `mt_driver` without client_id / password_bcrypt / status / on_duty — still need login row. */
+  'SELECT driver_id AS id, username, `password` AS password_hash FROM mt_driver WHERE driver_id = ?',
 ];
 
 async function reloadDriverLoginRow(driverId) {
@@ -194,6 +196,11 @@ function buildDriverLoginSelectSqls(whereClause) {
     `SELECT driver_id AS id, username, \`password\` AS password_hash, password_bcrypt, on_duty, client_id FROM mt_driver WHERE ${whereClause} LIMIT 1`,
     `SELECT driver_id AS id, username, \`password\` AS password_hash, on_duty, client_id, status FROM mt_driver WHERE ${whereClause} LIMIT 1`,
     `SELECT driver_id AS id, username, \`password\` AS password_hash, on_duty, client_id FROM mt_driver WHERE ${whereClause} LIMIT 1`,
+    /**
+     * Last resort: older schemas may lack `client_id`, `password_bcrypt`, `status`, or `on_duty`.
+     * COUNT-only debug queries still match username, but every richer SELECT had been failing with ER_BAD_FIELD_ERROR.
+     */
+    `SELECT driver_id AS id, username, \`password\` AS password_hash FROM mt_driver WHERE ${whereClause} LIMIT 1`,
   ];
 }
 
