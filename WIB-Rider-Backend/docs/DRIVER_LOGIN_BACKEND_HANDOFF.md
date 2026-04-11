@@ -4,6 +4,8 @@ Use this document to align the **WIB-Rider-Backend** driver JSON API with the mo
 
 **When In Baguio Rider (Flutter):** login uses **`application/x-www-form-urlencoded`** with **`api_key`**, **`app_version`**, **`username`**, **`password`** (optional **`device_id`**, **`device_platform`**). `app_version` is ignored by the server for login. JSON bodies are also accepted.
 
+**Lookup order:** `mt_driver.username` is matched with a plain **`LOWER(TRIM(username))`** first, then a second pass strips BOM/zero-width from the **column** before compare (invisible characters in DB). Set **`DRIVER_LOGIN_DEBUG=1`** on the server to log **`SELECT DATABASE()`** and body field names when no row matches (omit in production once stable).
+
 ---
 
 ## 1. Which field is the “login username”?

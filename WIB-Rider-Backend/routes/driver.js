@@ -268,6 +268,8 @@ function mtDriverUsernameNormalizedLowerExpr() {
  */
 async function fetchDriverRowForLogin(loginKey) {
   const attempts = [
+    // Plain match first (fast; works for normal usernames). Unicode-stripped variant follows for invisible chars in DB.
+    ['LOWER(TRIM(`username`)) = LOWER(?)', [loginKey]],
     [`${mtDriverUsernameNormalizedLowerExpr()} = LOWER(?)`, [loginKey]],
     ['LOWER(TRIM(COALESCE(user_name, \'\'))) = LOWER(?)', [loginKey]],
     ['LOWER(TRIM(COALESCE(`login`, \'\'))) = LOWER(?)', [loginKey]],
@@ -981,9 +983,13 @@ async function enrichRiderTaskDetails(pool, taskRow) {
  * Extra fields (e.g. `app_version`) are ignored. Paths **`/Login`** and **`/login`** both work (Express paths are case-sensitive).
  */
 async function handleDriverApiLogin(req, res) {
-  const { password, device_id, device_platform } = req.body;
-  const loginKey = resolveLoginKeyFromBody(req.body);
-  if (!loginKey || !password) {
+  const body = req.body && typeof req.body === 'object' ? req.body : {};
+  const passwordRaw = body.password;
+  const password =
+    passwordRaw != null && typeof passwordRaw !== 'string' ? String(passwordRaw) : passwordRaw ?? '';
+  const { device_id, device_platform } = body;
+  const loginKey = resolveLoginKeyFromBody(body);
+  if (!loginKey || password === '' || password == null) {
     return error(res, 'Username and password required');
   }
   if (!checkDriverLoginRateLimit(req, loginKey)) {
@@ -996,6 +1002,46 @@ async function handleDriverApiLogin(req, res) {
     /^true$/i.test(String(process.env.DRIVER_LOGIN_CHECK_ERRAND_ST_CLIENT || ''));
 
   let driver = await fetchDriverRowForLogin(loginKey);
+  const loginDebug =
+    process.env.DRIVER_LOGIN_DEBUG === '1' || /^true$/i.test(String(process.env.DRIVER_LOGIN_DEBUG || ''));
+  if (!driver && loginDebug) {
+    let dbName = process.env.DB_NAME || '';
+    let mysqlHost = '';
+    try {
+      const [[dbRow]] = await pool.query('SELECT DATABASE() AS db, @@hostname AS mysql_host');
+      if (dbRow && dbRow.db) dbName = String(dbRow.db);
+      if (dbRow && dbRow.mysql_host != null) mysqlHost = String(dbRow.mysql_host);
+    } catch (_) {}
+    console.warn('[driver/api/Login] debug no mt_driver match yet', {
+      db: dbName,
+      mysqlHost,
+      loginKeyLen: loginKey.length,
+      bodyKeys: Object.keys(body).filter((k) => k !== 'password'),
+    });
+    try {
+      const [[cPlain]] = await pool.query(
+        'SELECT COUNT(*) AS c FROM mt_driver WHERE LOWER(TRIM(`username`)) = LOWER(?)',
+        [loginKey]
+      );
+      const [[cNorm]] = await pool.query(
+        `SELECT COUNT(*) AS c FROM mt_driver WHERE ${mtDriverUsernameNormalizedLowerExpr()} = LOWER(?)`,
+        [loginKey]
+      );
+      console.warn('[driver/api/Login] debug mt_driver COUNT for login key', {
+        plainLowerTrim: Number(cPlain?.c ?? 0),
+        unicodeStrippedUsername: Number(cNorm?.c ?? 0),
+      });
+      if (Number(cPlain?.c ?? 0) === 0 && Number(cNorm?.c ?? 0) === 0) {
+        const [[near]] = await pool.query(
+          "SELECT COUNT(*) AS c FROM mt_driver WHERE `username` LIKE CONCAT('%', ?, '%')",
+          [loginKey]
+        );
+        console.warn('[driver/api/Login] debug mt_driver LIKE username contains key', { likeCount: Number(near?.c ?? 0) });
+      }
+    } catch (e) {
+      console.warn('[driver/api/Login] debug COUNT/LIKE failed', { code: e.code, message: e.message });
+    }
+  }
   let stored = driver ? String(driver.password_hash || '').trim() : '';
   let passwordOk = false;
 
@@ -1036,7 +1082,7 @@ async function handleDriverApiLogin(req, res) {
     let linked = null;
     try {
       const [linkedRows] = await pool.query(
-        `SELECT driver_id AS id, username, password AS password_hash, password_bcrypt, on_duty, client_id
+        `SELECT driver_id AS id, username, \`password\` AS password_hash, password_bcrypt, on_duty, client_id
          FROM mt_driver
          WHERE client_id = ?
            AND (status IS NULL OR TRIM(status) = '' OR LOWER(TRIM(status)) NOT IN ('suspended', 'blocked', 'expired'))
@@ -1049,7 +1095,7 @@ async function handleDriverApiLogin(req, res) {
       if (e.code === 'ER_BAD_FIELD_ERROR') {
         try {
           const [linkedRows] = await pool.query(
-            `SELECT driver_id AS id, username, password AS password_hash, on_duty, client_id
+            `SELECT driver_id AS id, username, \`password\` AS password_hash, on_duty, client_id
              FROM mt_driver WHERE client_id = ? ORDER BY driver_id ASC LIMIT 1`,
             [riderClient.client_id]
           );
@@ -1085,7 +1131,19 @@ async function handleDriverApiLogin(req, res) {
     }
     driver = fresh;
     stored = String(driver.password_hash || '').trim();
-  } else {
+    } else {
+    if (loginDebug) {
+      let dbName = process.env.DB_NAME || '';
+      try {
+        const [[dbRow]] = await pool.query('SELECT DATABASE() AS db');
+        if (dbRow && dbRow.db) dbName = String(dbRow.db);
+      } catch (_) {}
+      console.warn('[driver/api/Login] debug unknown_user (mt_driver path)', {
+        db: dbName,
+        loginKeyLen: loginKey.length,
+        mtClientFallback: false,
+      });
+    }
     console.warn('[driver/api/Login] failed', { reason: 'unknown_user' });
     return error(res, 'No rider account matches this username, email, or mobile number.');
   }

@@ -11,7 +11,8 @@
     "migrate-driver-client-id": "node -r dotenv/config scripts/add-mt-driver-client-id.js",
     "migrate-client-password-bcrypt": "node -r dotenv/config scripts/add-client-password-bcrypt-column.js",
     "migrate-mt-driver-password-bcrypt": "node -r dotenv/config scripts/add-mt-driver-password-bcrypt-column.js",
-    "smoke-driver-login": "node -r dotenv/config scripts/smoke-driver-login.js"
+    "smoke-driver-login": "node -r dotenv/config scripts/smoke-driver-login.js",
+    "debug-login-db": "node -r dotenv/config scripts/debug-driver-login-db.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
