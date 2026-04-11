@@ -2105,7 +2105,10 @@ async function fanOutOrderHistoryFeedEventsToRiderNotifications(pool, events) {
       if (eMk && !(await riderNotificationService.tryConsumeTimelineNotifyKey(pool, eMk))) continue;
     }
     const td = descByTask.get(tid);
-    const actor = timelineNotifyActorFromFeedEvent(ev) || driverByTask.get(tid) || '';
+    const fromFeed = timelineNotifyActorFromFeedEvent(ev) || '';
+    /* Ready-for-pickup is a merchant / order milestone — do not attribute the task's assigned driver (often none yet). */
+    const actor =
+      cat === 'ready_for_pickup' ? fromFeed : fromFeed || driverByTask.get(tid) || '';
     const payload = timelineNotifyPayloadFromCategory(tid, td, ev.order_id ?? null, cat, actor);
     if (payload) notifyAllDashboardAdminsFireAndForget(pool, { ...payload, activityAt: ev.date_created });
   }

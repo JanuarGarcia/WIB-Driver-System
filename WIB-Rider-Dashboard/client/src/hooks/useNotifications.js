@@ -92,7 +92,10 @@ function showDesktopNotificationsForEach(fresh) {
     const n = fresh[i];
     try {
       const title = (n.title || 'WIB Riders').toString().trim() || 'WIB Riders';
-      const body = (n.message || '').toString().trim() || 'New notification';
+      const body =
+        formatNotificationMessageForDisplay(n.message) ||
+        (n.message || '').toString().trim() ||
+        'New notification';
       new Notification(title, {
         body,
         silent: false,
@@ -112,7 +115,9 @@ function showDesktopNotificationSummary(fresh) {
   const title = count === 1 ? (n.title || 'WIB Riders').toString().trim() || 'WIB Riders' : 'WIB Riders';
   const body =
     count === 1
-      ? ((n.message || '').toString().trim() || 'New notification')
+      ? formatNotificationMessageForDisplay(n.message) ||
+        (n.message || '').toString().trim() ||
+        'New notification'
       : `${count} new notifications. Open the dashboard to view.`;
   try {
     new Notification(title, {
