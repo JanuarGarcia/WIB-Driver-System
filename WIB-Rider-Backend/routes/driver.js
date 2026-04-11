@@ -946,8 +946,11 @@ async function enrichRiderTaskDetails(pool, taskRow) {
 /**
  * Rider accounts are **`mt_driver`** rows (`username` + `password` + optional `password_bcrypt`).
  * Optional: `DRIVER_LOGIN_MT_CLIENT_FALLBACK=1` enables login via `mt_client` email + `mt_driver.client_id` (see docs).
+ *
+ * Flutter rider app: `POST` **form-urlencoded** (`api_key`, `app_version`, `username`, `password`, optional `device_id`, `device_platform`).
+ * Extra fields (e.g. `app_version`) are ignored. Paths **`/Login`** and **`/login`** both work (Express paths are case-sensitive).
  */
-router.post('/Login', validateApiKey, async (req, res) => {
+async function handleDriverApiLogin(req, res) {
   const { password, device_id, device_platform } = req.body;
   const loginKey = resolveLoginKeyFromBody(req.body);
   if (!loginKey || !password) {
@@ -1099,7 +1102,10 @@ router.post('/Login', validateApiKey, async (req, res) => {
     topic_new_task: null,
     topic_alert: null,
   });
-});
+}
+
+router.post('/Login', validateApiKey, handleDriverApiLogin);
+router.post('/login', validateApiKey, handleDriverApiLogin);
 
 async function getDriverSettingsMap() {
   try {

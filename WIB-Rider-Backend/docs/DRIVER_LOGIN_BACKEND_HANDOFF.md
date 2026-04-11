@@ -1,12 +1,14 @@
 # Driver app login — backend handoff (copy to API / mobile team)
 
-Use this document to align the **WIB-Rider-Backend** driver JSON API with the mobile app. Implementation lives in **`routes/driver.js`** (`POST /Login`, `fetchDriverRowForLogin`) and **`middleware/auth.js`** (`validateApiKey`, token helpers).
+Use this document to align the **WIB-Rider-Backend** driver JSON API with the mobile app. Implementation lives in **`routes/driver.js`** (`POST /Login` or **`POST /login`**, `fetchDriverRowForLogin`) and **`middleware/auth.js`** (`validateApiKey`, token helpers).
+
+**When In Baguio Rider (Flutter):** login uses **`application/x-www-form-urlencoded`** with **`api_key`**, **`app_version`**, **`username`**, **`password`** (optional **`device_id`**, **`device_platform`**). `app_version` is ignored by the server for login. JSON bodies are also accepted.
 
 ---
 
 ## 1. Which field is the “login username”?
 
-The app sends a **login key** and **`password`** in the body (plus **`api_key`**). The key is usually in JSON field **`username`** (legacy Flutter contract). The backend also accepts the **first non-empty** among these body keys, in order: **`username`**, **`user_name`**, **`UserName`**, **`login`**, **`login_id`**, **`email`**, **`mobile`**, **`phone`** (see `resolveLoginKeyFromBody` in `routes/driver.js`). Values are trimmed and stripped of BOM / zero-width characters before lookup.
+The app sends a **login key** and **`password`** in the body (plus **`api_key`**). The key is usually in field **`username`** (Flutter sends it there; JSON clients use the same key). The backend also accepts the **first non-empty** among these body keys, in order: **`username`**, **`user_name`**, **`UserName`**, **`login`**, **`login_id`**, **`email`**, **`mobile`**, **`phone`** (see `resolveLoginKeyFromBody` in `routes/driver.js`). Values are trimmed and stripped of BOM / zero-width characters before lookup.
 
 The login key is matched against **`mt_driver`** in this order (each step is skipped if the column does not exist in your schema):
 
