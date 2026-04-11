@@ -204,6 +204,51 @@ function buildDriverLoginSelectSqls(whereClause) {
   ];
 }
 
+/** Scalar from row (handles Buffers from mysql2). */
+function mtDriverScalarCell(v) {
+  if (v == null) return '';
+  if (Buffer.isBuffer(v)) return v.toString('utf8');
+  return String(v);
+}
+
+/**
+ * When typed SELECTs all fail (unknown column names) or omit the real password field, `SELECT *` + map
+ * still yields a row compatible with verifyRiderPasswordResult.
+ * @param {Record<string, unknown>} row
+ */
+function mapMtDriverRowForLogin(row) {
+  if (!row || typeof row !== 'object') return row;
+  const idRaw = row.driver_id ?? row.id;
+  const id = idRaw != null ? parseInt(String(idRaw), 10) : NaN;
+  const userRaw = row.username ?? row.user_name ?? row.login ?? '';
+  const pwdCandidates = [
+    'password_hash',
+    'password',
+    'passwd',
+    'pass',
+    'user_password',
+    'pwd',
+    'hash_password',
+    'password_md5',
+  ];
+  let password_hash = '';
+  for (const k of pwdCandidates) {
+    if (row[k] != null && mtDriverScalarCell(row[k]).trim() !== '') {
+      password_hash = mtDriverScalarCell(row[k]).trim();
+      break;
+    }
+  }
+  return {
+    id: Number.isFinite(id) ? id : idRaw,
+    username: mtDriverScalarCell(userRaw).trim(),
+    password_hash,
+    password_bcrypt: row.password_bcrypt != null ? mtDriverScalarCell(row.password_bcrypt).trim() : '',
+    on_duty: row.on_duty,
+    client_id: row.client_id,
+    status: row.status,
+  };
+}
+
 /** DB expression: strip formatting and compare digit-only phones (column must be passed safely — known identifiers only). */
 function mtDriverPhoneDigitsExpr(column) {
   return `REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(TRIM(COALESCE(${column}, '')), ' ', ''), '-', ''), '(', ''), ')', ''), '+', '')`;
@@ -311,6 +356,13 @@ async function fetchDriverRowForLogin(loginKey) {
       } catch (e) {
         if (e.code !== 'ER_BAD_FIELD_ERROR') throw e;
       }
+    }
+    try {
+      const [starRows] = await pool.query(`SELECT * FROM mt_driver WHERE ${whereClause} LIMIT 1`, params);
+      const raw = starRows && starRows[0];
+      if (raw) return mapMtDriverRowForLogin(raw);
+    } catch (e) {
+      if (e.code !== 'ER_BAD_FIELD_ERROR' && e.code !== 'ER_NO_SUCH_TABLE') throw e;
     }
   }
   return null;
