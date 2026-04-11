@@ -379,6 +379,40 @@ async function resolveErrandDriverDetail(errandPool, mainPool, driverId) {
   };
 }
 
+/** Baguio reference — matches rider dashboard task cards. */
+const BAGUIO_CENTER_LAT = 16.4023;
+const BAGUIO_CENTER_LNG = 120.596;
+
+function getBearing(fromLat, fromLng, toLat, toLng) {
+  const lat1 = (fromLat * Math.PI) / 180;
+  const lat2 = (toLat * Math.PI) / 180;
+  const dLng = ((toLng - fromLng) * Math.PI) / 180;
+  const y = Math.sin(dLng) * Math.cos(lat2);
+  const x = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLng);
+  let br = (Math.atan2(y, x) * 180) / Math.PI;
+  return (br + 360) % 360;
+}
+
+function bearingToCompass(bearing) {
+  if (bearing == null || Number.isNaN(bearing)) return null;
+  const b = ((Number(bearing) % 360) + 360) % 360;
+  const labels = [
+    { max: 22.5, label: 'North' },
+    { max: 67.5, label: 'North east' },
+    { max: 112.5, label: 'East' },
+    { max: 157.5, label: 'South east' },
+    { max: 202.5, label: 'South' },
+    { max: 247.5, label: 'South west' },
+    { max: 292.5, label: 'West' },
+    { max: 337.5, label: 'North west' },
+    { max: 360, label: 'North' },
+  ];
+  for (const { max, label } of labels) {
+    if (b <= max) return label;
+  }
+  return 'North';
+}
+
 /** Prefer pickup merchant coords; else use coordinates on the order row (ErrandWib `st_ordernew` varies by schema). */
 function coordsFromOrderRow(row) {
   if (!row || typeof row !== 'object') return null;
@@ -708,6 +742,11 @@ function mapStOrderRowToTaskListRow(
   let taskLat = null;
   let taskLng = null;
   const clientCoords = coordsFromClientAddressRow(clientAddrRow);
+  let direction = null;
+  if (clientCoords && Number.isFinite(clientCoords.lat) && Number.isFinite(clientCoords.lng)) {
+    const br = getBearing(BAGUIO_CENTER_LAT, BAGUIO_CENTER_LNG, clientCoords.lat, clientCoords.lng);
+    direction = bearingToCompass(br);
+  }
   if (clientCoords) {
     taskLat = clientCoords.lat;
     taskLng = clientCoords.lng;
@@ -813,6 +852,7 @@ function mapStOrderRowToTaskListRow(
     payment_code: row.payment_code,
     service_code: row.service_code,
     total: row.total,
+    direction,
   };
 }
 
