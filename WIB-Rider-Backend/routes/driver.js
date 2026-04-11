@@ -170,10 +170,10 @@ function driverMirrorSecretFromClientRow(authRow, matched) {
 }
 
 const RELOAD_DRIVER_LOGIN_SQLS = [
-  'SELECT driver_id AS id, username, password AS password_hash, password_bcrypt, on_duty, client_id, status FROM mt_driver WHERE driver_id = ?',
-  'SELECT driver_id AS id, username, password AS password_hash, password_bcrypt, on_duty, client_id FROM mt_driver WHERE driver_id = ?',
-  'SELECT driver_id AS id, username, password AS password_hash, on_duty, client_id, status FROM mt_driver WHERE driver_id = ?',
-  'SELECT driver_id AS id, username, password AS password_hash, on_duty, client_id FROM mt_driver WHERE driver_id = ?',
+  'SELECT driver_id AS id, username, `password` AS password_hash, password_bcrypt, on_duty, client_id, status FROM mt_driver WHERE driver_id = ?',
+  'SELECT driver_id AS id, username, `password` AS password_hash, password_bcrypt, on_duty, client_id FROM mt_driver WHERE driver_id = ?',
+  'SELECT driver_id AS id, username, `password` AS password_hash, on_duty, client_id, status FROM mt_driver WHERE driver_id = ?',
+  'SELECT driver_id AS id, username, `password` AS password_hash, on_duty, client_id FROM mt_driver WHERE driver_id = ?',
 ];
 
 async function reloadDriverLoginRow(driverId) {
@@ -190,10 +190,10 @@ async function reloadDriverLoginRow(driverId) {
 
 function buildDriverLoginSelectSqls(whereClause) {
   return [
-    `SELECT driver_id AS id, username, password AS password_hash, password_bcrypt, on_duty, client_id, status FROM mt_driver WHERE ${whereClause} LIMIT 1`,
-    `SELECT driver_id AS id, username, password AS password_hash, password_bcrypt, on_duty, client_id FROM mt_driver WHERE ${whereClause} LIMIT 1`,
-    `SELECT driver_id AS id, username, password AS password_hash, on_duty, client_id, status FROM mt_driver WHERE ${whereClause} LIMIT 1`,
-    `SELECT driver_id AS id, username, password AS password_hash, on_duty, client_id FROM mt_driver WHERE ${whereClause} LIMIT 1`,
+    `SELECT driver_id AS id, username, \`password\` AS password_hash, password_bcrypt, on_duty, client_id, status FROM mt_driver WHERE ${whereClause} LIMIT 1`,
+    `SELECT driver_id AS id, username, \`password\` AS password_hash, password_bcrypt, on_duty, client_id FROM mt_driver WHERE ${whereClause} LIMIT 1`,
+    `SELECT driver_id AS id, username, \`password\` AS password_hash, on_duty, client_id, status FROM mt_driver WHERE ${whereClause} LIMIT 1`,
+    `SELECT driver_id AS id, username, \`password\` AS password_hash, on_duty, client_id FROM mt_driver WHERE ${whereClause} LIMIT 1`,
   ];
 }
 
@@ -204,7 +204,18 @@ function mtDriverPhoneDigitsExpr(column) {
 
 /** Strip BOM / zero-width chars riders paste from chat or email clients. */
 function normalizeLoginKeyInput(raw) {
-  return String(raw ?? '')
+  if (raw == null) return '';
+  if (Array.isArray(raw)) {
+    for (const item of raw) {
+      const s = normalizeLoginKeyInput(item);
+      if (s !== '') return s;
+    }
+    return '';
+  }
+  if (typeof raw === 'object') {
+    return '';
+  }
+  return String(raw)
     .replace(/\uFEFF/g, '')
     .replace(/[\u200B-\u200D]/g, '')
     .trim();
@@ -218,9 +229,12 @@ function resolveLoginKeyFromBody(body) {
   if (!body || typeof body !== 'object') return '';
   const keys = [
     'username',
+    'Username',
+    'USERNAME',
     'user_name',
     'UserName',
     'login',
+    'Login',
     'login_id',
     'email',
     'mobile',
@@ -228,9 +242,24 @@ function resolveLoginKeyFromBody(body) {
   ];
   for (const k of keys) {
     const v = body[k];
-    if (v != null && normalizeLoginKeyInput(v) !== '') return normalizeLoginKeyInput(v);
+    if (v == null) continue;
+    const normalized = normalizeLoginKeyInput(v);
+    if (normalized !== '') return normalized;
   }
   return '';
+}
+
+/**
+ * Lowercase compare after TRIM + strip BOM / zero-width on the DB column (MySQL TRIM alone does not remove U+200B).
+ * Uses UNHEX UTF-8 bytes for U+FEFF, U+200B, U+200C, U+200D.
+ */
+function mtDriverUsernameNormalizedLowerExpr() {
+  let col = 'COALESCE(`username`,\'\')';
+  col = `REPLACE(${col}, UNHEX('EFBBBF'), '')`;
+  col = `REPLACE(${col}, UNHEX('E2808B'), '')`;
+  col = `REPLACE(${col}, UNHEX('E2808C'), '')`;
+  col = `REPLACE(${col}, UNHEX('E2808D'), '')`;
+  return `LOWER(TRIM(${col}))`;
 }
 
 /**
@@ -239,9 +268,10 @@ function resolveLoginKeyFromBody(body) {
  */
 async function fetchDriverRowForLogin(loginKey) {
   const attempts = [
-    ['LOWER(TRIM(username)) = LOWER(?)', [loginKey]],
+    [`${mtDriverUsernameNormalizedLowerExpr()} = LOWER(?)`, [loginKey]],
     ['LOWER(TRIM(COALESCE(user_name, \'\'))) = LOWER(?)', [loginKey]],
     ['LOWER(TRIM(COALESCE(`login`, \'\'))) = LOWER(?)', [loginKey]],
+    ['LOWER(TRIM(COALESCE(login_id, \'\'))) = LOWER(?)', [loginKey]],
     ['LOWER(TRIM(COALESCE(email, \'\'))) = LOWER(?)', [loginKey]],
     ['LOWER(TRIM(COALESCE(email_address, \'\'))) = LOWER(?)', [loginKey]],
   ];
