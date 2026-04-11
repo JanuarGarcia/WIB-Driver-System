@@ -1131,7 +1131,7 @@ async function handleDriverApiLogin(req, res) {
     }
     driver = fresh;
     stored = String(driver.password_hash || '').trim();
-    } else {
+  } else {
     if (loginDebug) {
       let dbName = process.env.DB_NAME || '';
       try {
