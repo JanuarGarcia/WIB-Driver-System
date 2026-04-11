@@ -25,12 +25,26 @@ When fallback is **off** (default), only **`mt_driver.username`** is used.
 
 ## Response
 
-`{ code, msg, details }` — **`code === 1`** success with non-empty **`details.token`**.
+`{ code, msg, details }` — **`code === 1`** success with non-empty **`details.token`**. Failures use **`code !== 1`** and a non-empty **`msg`** the app can show as-is.
 
 | Situation | `msg` (approx.) |
 |-----------|------------------|
-| Wrong password / unknown user | `Invalid credentials` |
+| Missing `api_key` | `API key is required` |
+| Wrong `api_key` | `Invalid API key` |
+| Unknown username (fallback off) | `No driver account was found for this username.` |
+| Wrong password (`mt_driver` username path) | `Incorrect password.` |
+| Fallback on, unknown email | `No account was found for this email address.` |
+| Fallback on, wrong customer password | `Incorrect password.` |
+| `mt_driver.status` blocked (e.g. suspended, inactive) after password OK | `This driver account is disabled or suspended...` |
 | Fallback on, correct customer password, no linked `mt_driver` | `This account is not a driver account...` |
+
+## One driver API origin (Login, GetAppSettings, Logout, tasks)
+
+All driver JSON routes live under **`/driver/api`** on the Node server (see `app.js`). The app should use **one base URL** for the whole session, for example `https://your-host.com/driver/api`.
+
+- **`POST /driver/api/Login`** — issues `token` stored on `mt_driver.token` for that same database.
+- **`POST /driver/api/GetAppSettings`** — returns **`valid_token: true`** only if the `token` in the body/query matches a row in that same database. **`mobile_api_url`** is included only when **`MOBILE_API_URL`** is set in server env; it is normalized to end with **`/driver/api`**. If it is omitted, the app keeps its built-in default base. **Do not** set `MOBILE_API_URL` to a different host unless that host runs this same API against the **same** `mt_driver` data; otherwise `Login` may succeed on one host while `GetAppSettings` reports `valid_token: false`.
+- **`POST /driver/api/Logout`** — same auth as other protected routes (`api_key` + `token` in body or query, or `Authorization: Bearer`). It clears `mt_driver.token` for that driver.
 
 ## Migrations
 
@@ -43,5 +57,5 @@ When fallback is **off** (default), only **`mt_driver.username`** is used.
 
 ## Security
 
-- `api_key` validation unchanged.
+- `api_key` is required; wrong key returns **`Invalid API key`** (same HTTP status envelope as other driver errors).
 - Failed logins logged; rate limit on Login unchanged.

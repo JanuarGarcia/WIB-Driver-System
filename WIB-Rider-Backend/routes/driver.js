@@ -117,6 +117,39 @@ function cleanupUploadOnAuthError(req, res, next) {
 
 const BASE_URL = process.env.BASE_URL || 'http://localhost:3000';
 
+const BLOCKED_DRIVER_STATUSES = new Set(['suspended', 'blocked', 'expired', 'inactive']);
+
+function driverStatusBlocksLogin(statusRaw) {
+  const s = String(statusRaw || '').trim().toLowerCase();
+  if (!s) return false;
+  return BLOCKED_DRIVER_STATUSES.has(s);
+}
+
+/**
+ * Canonical driver JSON API base for mobile (…/driver/api, no trailing slash).
+ * If MOBILE_API_URL already ends with /driver/api, it is left as-is (except trailing slash trim).
+ */
+function normalizeMobileDriverApiBaseUrl(raw) {
+  const s0 = String(raw || '').trim();
+  if (!s0) return '';
+  let s = s0.replace(/\/+$/, '');
+  if (s.toLowerCase().endsWith('/driver/api')) return s;
+  if (!/^https?:\/\//i.test(s)) {
+    return `${s}/driver/api`.replace(/([^:]\/)\/+/g, '$1');
+  }
+  try {
+    const u = new URL(s);
+    let p = u.pathname.replace(/\/+$/, '') || '';
+    if (p.toLowerCase().endsWith('/driver/api')) return s;
+    u.pathname = (!p || p === '/' ? '' : p) + '/driver/api';
+    u.pathname = u.pathname.replace(/\/+/g, '/');
+    if (!u.pathname.startsWith('/')) u.pathname = `/${u.pathname}`;
+    return u.toString().replace(/\/+$/, '');
+  } catch {
+    return `${s}/driver/api`.replace(/([^:]\/)\/+/g, '$1');
+  }
+}
+
 function shouldAutoFillRiderPasswordBcrypt() {
   const v = process.env.AUTO_FILL_RIDER_PASSWORD_BCRYPT ?? process.env.AUTO_FILL_CLIENT_PASSWORD_BCRYPT;
   if (v == null || v === '') return true;
@@ -136,38 +169,42 @@ function driverMirrorSecretFromClientRow(authRow, matched) {
   return String(authRow.password || '').trim();
 }
 
+const RELOAD_DRIVER_LOGIN_SQLS = [
+  'SELECT driver_id AS id, username, password AS password_hash, password_bcrypt, on_duty, client_id, status FROM mt_driver WHERE driver_id = ?',
+  'SELECT driver_id AS id, username, password AS password_hash, password_bcrypt, on_duty, client_id FROM mt_driver WHERE driver_id = ?',
+  'SELECT driver_id AS id, username, password AS password_hash, on_duty, client_id, status FROM mt_driver WHERE driver_id = ?',
+  'SELECT driver_id AS id, username, password AS password_hash, on_duty, client_id FROM mt_driver WHERE driver_id = ?',
+];
+
 async function reloadDriverLoginRow(driverId) {
-  try {
-    const [fr] = await pool.query(
-      'SELECT driver_id AS id, username, password AS password_hash, password_bcrypt, on_duty, client_id FROM mt_driver WHERE driver_id = ?',
-      [driverId]
-    );
-    return fr && fr[0] ? fr[0] : null;
-  } catch (e) {
-    if (e.code !== 'ER_BAD_FIELD_ERROR') throw e;
-    const [fr] = await pool.query(
-      'SELECT driver_id AS id, username, password AS password_hash, on_duty, client_id FROM mt_driver WHERE driver_id = ?',
-      [driverId]
-    );
-    return fr && fr[0] ? fr[0] : null;
+  for (const sql of RELOAD_DRIVER_LOGIN_SQLS) {
+    try {
+      const [fr] = await pool.query(sql, [driverId]);
+      return fr && fr[0] ? fr[0] : null;
+    } catch (e) {
+      if (e.code !== 'ER_BAD_FIELD_ERROR') throw e;
+    }
   }
+  return null;
 }
 
+const FETCH_DRIVER_LOGIN_BY_USERNAME_SQLS = [
+  'SELECT driver_id AS id, username, password AS password_hash, password_bcrypt, on_duty, client_id, status FROM mt_driver WHERE username = ?',
+  'SELECT driver_id AS id, username, password AS password_hash, password_bcrypt, on_duty, client_id FROM mt_driver WHERE username = ?',
+  'SELECT driver_id AS id, username, password AS password_hash, on_duty, client_id, status FROM mt_driver WHERE username = ?',
+  'SELECT driver_id AS id, username, password AS password_hash, on_duty, client_id FROM mt_driver WHERE username = ?',
+];
+
 async function fetchDriverRowForLoginByUsername(username) {
-  try {
-    const [rows] = await pool.query(
-      'SELECT driver_id AS id, username, password AS password_hash, password_bcrypt, on_duty, client_id FROM mt_driver WHERE username = ?',
-      [username]
-    );
-    return rows && rows[0] ? rows[0] : null;
-  } catch (e) {
-    if (e.code !== 'ER_BAD_FIELD_ERROR') throw e;
-    const [rows] = await pool.query(
-      'SELECT driver_id AS id, username, password AS password_hash, on_duty, client_id FROM mt_driver WHERE username = ?',
-      [username]
-    );
-    return rows && rows[0] ? rows[0] : null;
+  for (const sql of FETCH_DRIVER_LOGIN_BY_USERNAME_SQLS) {
+    try {
+      const [rows] = await pool.query(sql, [username]);
+      return rows && rows[0] ? rows[0] : null;
+    } catch (e) {
+      if (e.code !== 'ER_BAD_FIELD_ERROR') throw e;
+    }
   }
+  return null;
 }
 
 function todayStr() {
@@ -876,7 +913,7 @@ router.post('/Login', validateApiKey, async (req, res) => {
     }
     if (!passwordOk) {
       console.warn('[driver/api/Login] failed', { reason: 'bad_password', path: 'mt_driver' });
-      return error(res, 'Invalid credentials');
+      return error(res, 'Incorrect password.');
     }
   } else if (allowMtClientFallback()) {
     const riderClient = await findRiderClientAcrossDatabases(loginKey, pool, errandWibPool, {
@@ -884,13 +921,13 @@ router.post('/Login', validateApiKey, async (req, res) => {
     });
     if (!riderClient) {
       console.warn('[driver/api/Login] failed', { reason: 'unknown_user' });
-      return error(res, 'Invalid credentials');
+      return error(res, 'No account was found for this email address.');
     }
     const riderVr = await verifyRiderPasswordResult(password, riderClient);
     passwordOk = riderVr.ok;
     if (!passwordOk) {
       console.warn('[driver/api/Login] failed', { reason: 'bad_password', path: 'rider_client' });
-      return error(res, 'Invalid credentials');
+      return error(res, 'Incorrect password.');
     }
 
     let linked = null;
@@ -919,7 +956,7 @@ router.post('/Login', validateApiKey, async (req, res) => {
             console.error(
               '[driver/api/Login] mt_driver.client_id missing. Run: node -r dotenv/config scripts/add-mt-driver-client-id.js'
             );
-            return error(res, 'Invalid credentials');
+            return error(res, 'Sign-in is temporarily unavailable. Please contact support.');
           }
           throw e2;
         }
@@ -941,17 +978,22 @@ router.post('/Login', validateApiKey, async (req, res) => {
     const fresh = await reloadDriverLoginRow(linked.id);
     if (!fresh) {
       console.error('[driver/api/Login] driver row missing after client link', linked.id);
-      return error(res, 'Invalid credentials');
+      return error(res, 'Sign-in failed. Please try again or contact support.');
     }
     driver = fresh;
     stored = String(driver.password_hash || '').trim();
   } else {
     console.warn('[driver/api/Login] failed', { reason: 'unknown_user' });
-    return error(res, 'Invalid credentials');
+    return error(res, 'No driver account was found for this username.');
   }
 
   if (!driver) {
-    return error(res, 'Invalid credentials');
+    return error(res, 'No driver account was found for this username.');
+  }
+
+  if (driverStatusBlocksLogin(driver.status)) {
+    console.warn('[driver/api/Login] failed', { reason: 'account_disabled', driver_id: driver.id });
+    return error(res, 'This driver account is disabled or suspended. Contact support if you need help.');
   }
 
   const isBcrypt = stored.startsWith('$2a$') || stored.startsWith('$2b$') || stored.startsWith('$2y$');
@@ -1041,14 +1083,15 @@ router.post('/GetAppSettings', validateApiKey, optionalDriver, async (req, res) 
   const appName = (settings.app_name != null && String(settings.app_name).trim() !== '') ? String(settings.app_name).trim() : (settings.website_title || 'WIB Driver');
   const configuredApiKey = settings.driver_api_hash_key || settings.api_hash_key || process.env.API_HASH_KEY || '';
   const envMobileApiUrlRaw = (process.env.MOBILE_API_URL || '').trim();
-  const envMobileApiUrl = envMobileApiUrlRaw ? envMobileApiUrlRaw.replace(/\/+$/, '') : '';
-  const mobileApiUrl = configuredApiKey && String(configuredApiKey).trim() ? envMobileApiUrl : '';
+  const mobileApiBase =
+    configuredApiKey && String(configuredApiKey).trim()
+      ? normalizeMobileDriverApiBaseUrl(envMobileApiUrlRaw)
+      : '';
   const details = {
     app_language: settings.app_default_language || 'en',
     app_name: appName,
     allow_task_successful_when: settings.allow_task_successful_when || 'picture_proof',
-    mobile_api_url: mobileApiUrl,
-    valid_token: !!driver,
+    valid_token: driver != null,
     todays_date: todayStr(),
     todays_date_raw: todayRaw(),
     on_duty: driver?.on_duty ?? 0,
@@ -1063,6 +1106,9 @@ router.post('/GetAppSettings', validateApiKey, optionalDriver, async (req, res) 
     map_provider: 'google',
     translation: {},
   };
+  if (mobileApiBase) {
+    details.mobile_api_url = mobileApiBase;
+  }
   return success(res, details);
 });
 
