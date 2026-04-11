@@ -416,7 +416,7 @@ export default function Drivers() {
                     />
                   </th>
                   <th>ID</th>
-                  <th>Username</th>
+                  <th title="Rider app: use this username (or the email / phone in the next columns), not only the display name.">Username</th>
                   <th>Name</th>
                   <th>Email</th>
                   <th>Phone</th>
@@ -523,6 +523,9 @@ export default function Drivers() {
                       <div className="driver-form-grid">
                         <div className="send-push-field driver-form-field-full">
                           <label className="modal-label" htmlFor="driver-username">Username *</label>
+                          <p className="driver-form-label-muted" style={{ margin: '0 0 0.35rem' }}>
+                            In the rider app, sign in with <strong>this username</strong> or the <strong>email</strong> / <strong>phone</strong> saved below (not only the display name in the table).
+                          </p>
                           <input id="driver-username" type="text" className="form-control send-push-input" value={driverForm.username} onChange={(e) => setDriverForm((f) => ({ ...f, username: e.target.value }))} required autoComplete="username" />
                         </div>
                         <div className="send-push-field driver-form-field-full">

@@ -31,7 +31,7 @@ When fallback is **off** (default), login still resolves the **`username`** body
 |-----------|------------------|
 | Missing `api_key` | `API key is required` |
 | Wrong `api_key` | `Invalid API key` |
-| No row after username, email, and phone lookup (fallback off) | `No driver account matches this username, email, or mobile number.` |
+| No row after username, email, and phone lookup (fallback off) | `No rider account matches this username, email, or mobile number.` |
 | Wrong password (`mt_driver` username path) | `Incorrect password.` |
 | Fallback on, unknown email | `No account was found for this email address.` |
 | Fallback on, wrong customer password | `Incorrect password.` |

@@ -197,20 +197,71 @@ function buildDriverLoginSelectSqls(whereClause) {
   ];
 }
 
+/** DB expression: strip formatting and compare digit-only phones (column must be passed safely — known identifiers only). */
+function mtDriverPhoneDigitsExpr(column) {
+  return `REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(TRIM(COALESCE(${column}, '')), ' ', ''), '-', ''), '(', ''), ')', ''), '+', '')`;
+}
+
+/** Strip BOM / zero-width chars riders paste from chat or email clients. */
+function normalizeLoginKeyInput(raw) {
+  return String(raw ?? '')
+    .replace(/\uFEFF/g, '')
+    .replace(/[\u200B-\u200D]/g, '')
+    .trim();
+}
+
 /**
- * Resolve mt_driver row for Login: username (case-insensitive, trimmed), then email, then phone digits.
- * Matches how rider apps often let users sign in with email/phone while username differs.
+ * Login key from JSON / form body. Apps vary: `username`, `user_name`, or email/phone in alternate keys.
+ * @param {Record<string, unknown>} body
+ */
+function resolveLoginKeyFromBody(body) {
+  if (!body || typeof body !== 'object') return '';
+  const keys = [
+    'username',
+    'user_name',
+    'UserName',
+    'login',
+    'login_id',
+    'email',
+    'mobile',
+    'phone',
+  ];
+  for (const k of keys) {
+    const v = body[k];
+    if (v != null && normalizeLoginKeyInput(v) !== '') return normalizeLoginKeyInput(v);
+  }
+  return '';
+}
+
+/**
+ * Resolve mt_driver row for Login: username, legacy `login`, email / email_address, phone-like columns,
+ * then first_name (UpdateProfile maps the rider "username" field to first_name on some builds).
  */
 async function fetchDriverRowForLogin(loginKey) {
   const attempts = [
     ['LOWER(TRIM(username)) = LOWER(?)', [loginKey]],
+    ['LOWER(TRIM(COALESCE(user_name, \'\'))) = LOWER(?)', [loginKey]],
+    ['LOWER(TRIM(COALESCE(`login`, \'\'))) = LOWER(?)', [loginKey]],
     ['LOWER(TRIM(COALESCE(email, \'\'))) = LOWER(?)', [loginKey]],
+    ['LOWER(TRIM(COALESCE(email_address, \'\'))) = LOWER(?)', [loginKey]],
   ];
   const digits = loginKey.replace(/\D/g, '');
   if (digits.length >= 7) {
-    const phoneExpr =
-      "REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(TRIM(COALESCE(phone, '')), ' ', ''), '-', ''), '(', ''), ')', ''), '+', '')";
-    attempts.push([`${phoneExpr} = ?`, [digits]]);
+    for (const col of ['phone', 'contact_phone', 'mobile', 'mobile_number']) {
+      attempts.push([`${mtDriverPhoneDigitsExpr(col)} = ?`, [digits]]);
+    }
+  }
+  attempts.push(['LOWER(TRIM(COALESCE(first_name, \'\'))) = LOWER(?)', [loginKey]]);
+  const collapsedName = loginKey.trim().replace(/\s+/g, ' ');
+  if (/\s/.test(collapsedName)) {
+    attempts.push([
+      `LOWER(TRIM(CONCAT(COALESCE(first_name,''), ' ', COALESCE(last_name,'')))) = LOWER(?)`,
+      [collapsedName],
+    ]);
+  }
+  const numericId = /^\d+$/.test(loginKey) ? parseInt(loginKey, 10) : NaN;
+  if (Number.isFinite(numericId) && numericId > 0) {
+    attempts.push(['driver_id = ?', [numericId]]);
   }
   for (const [whereClause, params] of attempts) {
     for (const sql of buildDriverLoginSelectSqls(whereClause)) {
@@ -897,11 +948,11 @@ async function enrichRiderTaskDetails(pool, taskRow) {
  * Optional: `DRIVER_LOGIN_MT_CLIENT_FALLBACK=1` enables login via `mt_client` email + `mt_driver.client_id` (see docs).
  */
 router.post('/Login', validateApiKey, async (req, res) => {
-  const { username, password, device_id, device_platform } = req.body;
-  if (!username || !password) {
+  const { password, device_id, device_platform } = req.body;
+  const loginKey = resolveLoginKeyFromBody(req.body);
+  if (!loginKey || !password) {
     return error(res, 'Username and password required');
   }
-  const loginKey = String(username).trim();
   if (!checkDriverLoginRateLimit(req, loginKey)) {
     console.warn('[driver/api/Login] rate limited', { ip: clientIp(req) });
     return error(res, 'Too many login attempts. Try again later.');
@@ -1003,11 +1054,11 @@ router.post('/Login', validateApiKey, async (req, res) => {
     stored = String(driver.password_hash || '').trim();
   } else {
     console.warn('[driver/api/Login] failed', { reason: 'unknown_user' });
-    return error(res, 'No driver account matches this username, email, or mobile number.');
+    return error(res, 'No rider account matches this username, email, or mobile number.');
   }
 
   if (!driver) {
-    return error(res, 'No driver account matches this username, email, or mobile number.');
+    return error(res, 'No rider account matches this username, email, or mobile number.');
   }
 
   if (driverStatusBlocksLogin(driver.status)) {

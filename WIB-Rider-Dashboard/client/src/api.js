@@ -1,4 +1,4 @@
-import { getToken, clearToken } from './auth';
+import { getToken, clearToken, getAuthEpoch } from './auth';
 
 /** True if a string looks like an HTML document (cPanel, 404 page, SPA index, etc.). */
 export function looksLikeHtmlResponse(s) {
@@ -92,7 +92,8 @@ export function userFacingApiError(err) {
 // Prefer explicit env-configured base URL (useful for phones / other devices).
 // Default /api: Vite dev proxy and dashboard server.js both map /api/* -> backend /admin/api/*.
 // Do not use /admin/api in the browser on static hosting without that proxy.
-const API = import.meta.env.VITE_API_URL || '/api';
+export const API_BASE = import.meta.env.VITE_API_URL || '/api';
+const API = API_BASE;
 
 /** Covers the whole call (headers + body) — a slow `res.text()` was able to hang forever before. */
 const API_FETCH_TIMEOUT_MS = Math.min(
@@ -152,6 +153,7 @@ export function resolveUploadUrl(path) {
 }
 
 export async function api(path, options = {}) {
+  const authEpochAtStart = getAuthEpoch();
   const base = API.replace(/\/$/, '');
   const url = API.startsWith('http')
     ? (path.startsWith('/') ? base + path : `${base}/${path}`)
@@ -204,7 +206,8 @@ export async function api(path, options = {}) {
         if (
           normalized.code === 'AUTH_REQUIRED' &&
           !isLoginAttempt &&
-          typeof window !== 'undefined'
+          typeof window !== 'undefined' &&
+          getAuthEpoch() === authEpochAtStart
         ) {
           try {
             clearToken();
@@ -226,7 +229,8 @@ export async function api(path, options = {}) {
       if (
         normalized.code === 'AUTH_REQUIRED' &&
         !isLoginAttempt &&
-        typeof window !== 'undefined'
+        typeof window !== 'undefined' &&
+        getAuthEpoch() === authEpochAtStart
       ) {
         try {
           clearToken();

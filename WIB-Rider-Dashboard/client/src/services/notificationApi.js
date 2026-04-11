@@ -1,8 +1,5 @@
 import { getToken } from '../auth';
-import { looksLikeHtmlResponse } from '../api';
-
-/* Dev: same-origin /api → Vite proxy (vite.config.js) → backend /admin/api. Override with VITE_API_URL if needed. */
-const API_BASE = import.meta.env.VITE_API_URL || '/api';
+import { looksLikeHtmlResponse, API_BASE } from '../api';
 
 function authHeaders() {
   const h = { 'Content-Type': 'application/json' };

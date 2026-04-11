@@ -1,9 +1,8 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { setToken, setDashboardAdminId, notifyDashboardAdminIdChanged } from '../auth';
+import { API_BASE } from '../api';
 import { migrateLegacyMapMerchantFilterLocalStorage } from '../utils/mapMerchantFilterPrefs';
-
-const API = import.meta.env.DEV ? 'http://localhost:3000/admin/api' : '/api';
 const LOGO_IMG = '/when-in-baguio-logo.png';
 
 function IconEnvelope() {
@@ -46,6 +45,7 @@ export default function Login() {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const submitLockRef = useRef(false);
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -53,15 +53,18 @@ export default function Login() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (submitLockRef.current) return;
     setError('');
     const login = (emailOrUsername || '').trim();
     if (!login || !password) {
       setError('Invalid credentials.');
       return;
     }
+    submitLockRef.current = true;
     setLoading(true);
     try {
-      const res = await fetch(`${API}/auth/login`, {
+      const loginUrl = `${API_BASE.replace(/\/$/, '')}/auth/login`;
+      const res = await fetch(loginUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -73,7 +76,6 @@ export default function Login() {
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         setError(data.error || 'Invalid credentials.');
-        setLoading(false);
         return;
       }
       setToken(data.token || '', rememberMe);
@@ -87,6 +89,7 @@ export default function Login() {
       setError('Invalid credentials.');
     } finally {
       setLoading(false);
+      submitLockRef.current = false;
     }
   };
 
