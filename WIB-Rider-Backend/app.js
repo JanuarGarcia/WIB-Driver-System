@@ -3,6 +3,7 @@ const express = require('express');
 const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
+const { databaseNames } = require('./config/db');
 const driverRoutes = require('./routes/driver');
 const adminRoutes = require('./routes/admin');
 
@@ -38,7 +39,11 @@ app.use('/driver/api', driverRoutes);
 app.use('/admin/api', adminRoutes);
 
 app.get('/health', (req, res) => {
-  res.json({ ok: true });
+  res.json({
+    ok: true,
+    /** Resolved at process start from DB_NAME (primary pool used by driver login). */
+    primary_database: databaseNames.primary,
+  });
 });
 
 module.exports = app;
