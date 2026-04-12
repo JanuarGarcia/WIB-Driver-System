@@ -63,13 +63,14 @@ function bearingToCompass(bearing) {
 }
 
 function getDirectionFromTask(t) {
+  const drop = taskDropoffLatLng(t, null);
+  if (drop && Number.isFinite(drop.lat) && Number.isFinite(drop.lng)) {
+    const bearing = getBearing(BAGUIO_CENTER_LAT, BAGUIO_CENTER_LNG, drop.lat, drop.lng);
+    const derived = bearingToCompass(bearing);
+    if (derived) return derived;
+  }
   const fromApi = (t.direction != null && String(t.direction).trim() !== '') ? String(t.direction).trim() : null;
-  if (fromApi) return fromApi;
-  const lat = t.task_lat != null ? parseFloat(t.task_lat) : null;
-  const lng = t.task_lng != null ? parseFloat(t.task_lng) : null;
-  if (lat == null || lng == null || Number.isNaN(lat) || Number.isNaN(lng)) return null;
-  const bearing = getBearing(BAGUIO_CENTER_LAT, BAGUIO_CENTER_LNG, lat, lng);
-  return bearingToCompass(bearing);
+  return fromApi;
 }
 
 function directionArrowRotation(dir) {

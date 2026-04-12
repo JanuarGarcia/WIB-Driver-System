@@ -12,7 +12,8 @@ function formatActorFromDriver(driver) {
   if (full) return full;
   const u = (driver.username || '').trim();
   if (u) return u;
-  if (driver.id != null && String(driver.id).trim() !== '') return `Driver #${driver.id}`;
+  const idNum = driver.id != null && String(driver.id).trim() !== '' ? Number(driver.id) : NaN;
+  if (Number.isFinite(idNum) && idNum > 0) return `Driver #${idNum}`;
   return '';
 }
 

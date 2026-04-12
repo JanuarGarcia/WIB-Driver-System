@@ -1,6 +1,20 @@
 const TOKEN_KEY = 'wib_dashboard_token';
 const ADMIN_ID_KEY = 'wib_dashboard_admin_id';
 
+/**
+ * Bumped on every setToken/clearToken so api() can ignore 401s from requests that
+ * started before the latest credential change (stale in-flight responses after login).
+ */
+let authEpoch = 0;
+
+export function getAuthEpoch() {
+  return authEpoch;
+}
+
+function bumpAuthEpoch() {
+  authEpoch += 1;
+}
+
 /** Fired when the stored dashboard admin id changes (e.g. after login or /auth/me). Map filter cache key uses this. */
 export const DASHBOARD_ADMIN_ID_EVENT = 'wib-dashboard-admin-id';
 
@@ -13,6 +27,7 @@ export function setToken(token, remember = false) {
   sessionStorage.removeItem(TOKEN_KEY);
   if (remember) localStorage.setItem(TOKEN_KEY, token);
   else sessionStorage.setItem(TOKEN_KEY, token);
+  bumpAuthEpoch();
 }
 
 export function getDashboardAdminId() {
@@ -45,6 +60,7 @@ export function clearToken() {
   sessionStorage.removeItem(TOKEN_KEY);
   localStorage.removeItem(ADMIN_ID_KEY);
   sessionStorage.removeItem(ADMIN_ID_KEY);
+  bumpAuthEpoch();
 }
 
 export function isAuthenticated() {

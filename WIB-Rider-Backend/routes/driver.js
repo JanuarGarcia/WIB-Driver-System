@@ -117,6 +117,39 @@ function cleanupUploadOnAuthError(req, res, next) {
 
 const BASE_URL = process.env.BASE_URL || 'http://localhost:3000';
 
+const BLOCKED_DRIVER_STATUSES = new Set(['suspended', 'blocked', 'expired', 'inactive']);
+
+function driverStatusBlocksLogin(statusRaw) {
+  const s = String(statusRaw || '').trim().toLowerCase();
+  if (!s) return false;
+  return BLOCKED_DRIVER_STATUSES.has(s);
+}
+
+/**
+ * Canonical driver JSON API base for mobile (…/driver/api, no trailing slash).
+ * If MOBILE_API_URL already ends with /driver/api, it is left as-is (except trailing slash trim).
+ */
+function normalizeMobileDriverApiBaseUrl(raw) {
+  const s0 = String(raw || '').trim();
+  if (!s0) return '';
+  let s = s0.replace(/\/+$/, '');
+  if (s.toLowerCase().endsWith('/driver/api')) return s;
+  if (!/^https?:\/\//i.test(s)) {
+    return `${s}/driver/api`.replace(/([^:]\/)\/+/g, '$1');
+  }
+  try {
+    const u = new URL(s);
+    let p = u.pathname.replace(/\/+$/, '') || '';
+    if (p.toLowerCase().endsWith('/driver/api')) return s;
+    u.pathname = (!p || p === '/' ? '' : p) + '/driver/api';
+    u.pathname = u.pathname.replace(/\/+/g, '/');
+    if (!u.pathname.startsWith('/')) u.pathname = `/${u.pathname}`;
+    return u.toString().replace(/\/+$/, '');
+  } catch {
+    return `${s}/driver/api`.replace(/([^:]\/)\/+/g, '$1');
+  }
+}
+
 function shouldAutoFillRiderPasswordBcrypt() {
   const v = process.env.AUTO_FILL_RIDER_PASSWORD_BCRYPT ?? process.env.AUTO_FILL_CLIENT_PASSWORD_BCRYPT;
   if (v == null || v === '') return true;
@@ -136,38 +169,203 @@ function driverMirrorSecretFromClientRow(authRow, matched) {
   return String(authRow.password || '').trim();
 }
 
+const RELOAD_DRIVER_LOGIN_SQLS = [
+  'SELECT driver_id AS id, username, `password` AS password_hash, password_bcrypt, on_duty, client_id, status FROM mt_driver WHERE driver_id = ?',
+  'SELECT driver_id AS id, username, `password` AS password_hash, password_bcrypt, on_duty, client_id FROM mt_driver WHERE driver_id = ?',
+  'SELECT driver_id AS id, username, `password` AS password_hash, on_duty, client_id, status FROM mt_driver WHERE driver_id = ?',
+  'SELECT driver_id AS id, username, `password` AS password_hash, on_duty, client_id FROM mt_driver WHERE driver_id = ?',
+  /** Legacy `mt_driver` without client_id / password_bcrypt / status / on_duty — still need login row. */
+  'SELECT driver_id AS id, username, `password` AS password_hash FROM mt_driver WHERE driver_id = ?',
+];
+
 async function reloadDriverLoginRow(driverId) {
-  try {
-    const [fr] = await pool.query(
-      'SELECT driver_id AS id, username, password AS password_hash, password_bcrypt, on_duty, client_id FROM mt_driver WHERE driver_id = ?',
-      [driverId]
-    );
-    return fr && fr[0] ? fr[0] : null;
-  } catch (e) {
-    if (e.code !== 'ER_BAD_FIELD_ERROR') throw e;
-    const [fr] = await pool.query(
-      'SELECT driver_id AS id, username, password AS password_hash, on_duty, client_id FROM mt_driver WHERE driver_id = ?',
-      [driverId]
-    );
-    return fr && fr[0] ? fr[0] : null;
+  for (const sql of RELOAD_DRIVER_LOGIN_SQLS) {
+    try {
+      const [fr] = await pool.query(sql, [driverId]);
+      return fr && fr[0] ? fr[0] : null;
+    } catch (e) {
+      if (e.code !== 'ER_BAD_FIELD_ERROR') throw e;
+    }
   }
+  return null;
 }
 
-async function fetchDriverRowForLoginByUsername(username) {
-  try {
-    const [rows] = await pool.query(
-      'SELECT driver_id AS id, username, password AS password_hash, password_bcrypt, on_duty, client_id FROM mt_driver WHERE username = ?',
-      [username]
-    );
-    return rows && rows[0] ? rows[0] : null;
-  } catch (e) {
-    if (e.code !== 'ER_BAD_FIELD_ERROR') throw e;
-    const [rows] = await pool.query(
-      'SELECT driver_id AS id, username, password AS password_hash, on_duty, client_id FROM mt_driver WHERE username = ?',
-      [username]
-    );
-    return rows && rows[0] ? rows[0] : null;
+function buildDriverLoginSelectSqls(whereClause) {
+  return [
+    `SELECT driver_id AS id, username, \`password\` AS password_hash, password_bcrypt, on_duty, client_id, status FROM mt_driver WHERE ${whereClause} LIMIT 1`,
+    `SELECT driver_id AS id, username, \`password\` AS password_hash, password_bcrypt, on_duty, client_id FROM mt_driver WHERE ${whereClause} LIMIT 1`,
+    `SELECT driver_id AS id, username, \`password\` AS password_hash, on_duty, client_id, status FROM mt_driver WHERE ${whereClause} LIMIT 1`,
+    `SELECT driver_id AS id, username, \`password\` AS password_hash, on_duty, client_id FROM mt_driver WHERE ${whereClause} LIMIT 1`,
+    /**
+     * Last resort: older schemas may lack `client_id`, `password_bcrypt`, `status`, or `on_duty`.
+     * COUNT-only debug queries still match username, but every richer SELECT had been failing with ER_BAD_FIELD_ERROR.
+     */
+    `SELECT driver_id AS id, username, \`password\` AS password_hash FROM mt_driver WHERE ${whereClause} LIMIT 1`,
+  ];
+}
+
+/** Scalar from row (handles Buffers from mysql2). */
+function mtDriverScalarCell(v) {
+  if (v == null) return '';
+  if (Buffer.isBuffer(v)) return v.toString('utf8');
+  return String(v);
+}
+
+/**
+ * When typed SELECTs all fail (unknown column names) or omit the real password field, `SELECT *` + map
+ * still yields a row compatible with verifyRiderPasswordResult.
+ * @param {Record<string, unknown>} row
+ */
+function mapMtDriverRowForLogin(row) {
+  if (!row || typeof row !== 'object') return row;
+  const idRaw = row.driver_id ?? row.id;
+  const id = idRaw != null ? parseInt(String(idRaw), 10) : NaN;
+  const userRaw = row.username ?? row.user_name ?? row.login ?? '';
+  const pwdCandidates = [
+    'password_hash',
+    'password',
+    'passwd',
+    'pass',
+    'user_password',
+    'pwd',
+    'hash_password',
+    'password_md5',
+  ];
+  let password_hash = '';
+  for (const k of pwdCandidates) {
+    if (row[k] != null && mtDriverScalarCell(row[k]).trim() !== '') {
+      password_hash = mtDriverScalarCell(row[k]).trim();
+      break;
+    }
   }
+  return {
+    id: Number.isFinite(id) ? id : idRaw,
+    username: mtDriverScalarCell(userRaw).trim(),
+    password_hash,
+    password_bcrypt: row.password_bcrypt != null ? mtDriverScalarCell(row.password_bcrypt).trim() : '',
+    on_duty: row.on_duty,
+    client_id: row.client_id,
+    status: row.status,
+  };
+}
+
+/** DB expression: strip formatting and compare digit-only phones (column must be passed safely — known identifiers only). */
+function mtDriverPhoneDigitsExpr(column) {
+  return `REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(TRIM(COALESCE(${column}, '')), ' ', ''), '-', ''), '(', ''), ')', ''), '+', '')`;
+}
+
+/** Strip BOM / zero-width chars riders paste from chat or email clients. */
+function normalizeLoginKeyInput(raw) {
+  if (raw == null) return '';
+  if (Array.isArray(raw)) {
+    for (const item of raw) {
+      const s = normalizeLoginKeyInput(item);
+      if (s !== '') return s;
+    }
+    return '';
+  }
+  if (typeof raw === 'object') {
+    return '';
+  }
+  return String(raw)
+    .replace(/\uFEFF/g, '')
+    .replace(/[\u200B-\u200D]/g, '')
+    .trim();
+}
+
+/**
+ * Login key from JSON / form body. Apps vary: `username`, `user_name`, or email/phone in alternate keys.
+ * @param {Record<string, unknown>} body
+ */
+function resolveLoginKeyFromBody(body) {
+  if (!body || typeof body !== 'object') return '';
+  const keys = [
+    'username',
+    'Username',
+    'USERNAME',
+    'user_name',
+    'UserName',
+    'login',
+    'Login',
+    'login_id',
+    'email',
+    'mobile',
+    'phone',
+  ];
+  for (const k of keys) {
+    const v = body[k];
+    if (v == null) continue;
+    const normalized = normalizeLoginKeyInput(v);
+    if (normalized !== '') return normalized;
+  }
+  return '';
+}
+
+/**
+ * Lowercase compare after TRIM + strip BOM / zero-width on the DB column (MySQL TRIM alone does not remove U+200B).
+ * Uses UNHEX UTF-8 bytes for U+FEFF, U+200B, U+200C, U+200D.
+ */
+function mtDriverUsernameNormalizedLowerExpr() {
+  let col = 'COALESCE(`username`,\'\')';
+  col = `REPLACE(${col}, UNHEX('EFBBBF'), '')`;
+  col = `REPLACE(${col}, UNHEX('E2808B'), '')`;
+  col = `REPLACE(${col}, UNHEX('E2808C'), '')`;
+  col = `REPLACE(${col}, UNHEX('E2808D'), '')`;
+  return `LOWER(TRIM(${col}))`;
+}
+
+/**
+ * Resolve mt_driver row for Login: username, legacy `login`, email / email_address, phone-like columns,
+ * then first_name (UpdateProfile maps the rider "username" field to first_name on some builds).
+ */
+async function fetchDriverRowForLogin(loginKey) {
+  const attempts = [
+    // Plain match first (fast; works for normal usernames). Unicode-stripped variant follows for invisible chars in DB.
+    ['LOWER(TRIM(`username`)) = LOWER(?)', [loginKey]],
+    [`${mtDriverUsernameNormalizedLowerExpr()} = LOWER(?)`, [loginKey]],
+    ['LOWER(TRIM(COALESCE(user_name, \'\'))) = LOWER(?)', [loginKey]],
+    ['LOWER(TRIM(COALESCE(`login`, \'\'))) = LOWER(?)', [loginKey]],
+    ['LOWER(TRIM(COALESCE(login_id, \'\'))) = LOWER(?)', [loginKey]],
+    ['LOWER(TRIM(COALESCE(email, \'\'))) = LOWER(?)', [loginKey]],
+    ['LOWER(TRIM(COALESCE(email_address, \'\'))) = LOWER(?)', [loginKey]],
+  ];
+  const digits = loginKey.replace(/\D/g, '');
+  if (digits.length >= 7) {
+    for (const col of ['phone', 'contact_phone', 'mobile', 'mobile_number']) {
+      attempts.push([`${mtDriverPhoneDigitsExpr(col)} = ?`, [digits]]);
+    }
+  }
+  attempts.push(['LOWER(TRIM(COALESCE(first_name, \'\'))) = LOWER(?)', [loginKey]]);
+  const collapsedName = loginKey.trim().replace(/\s+/g, ' ');
+  if (/\s/.test(collapsedName)) {
+    attempts.push([
+      `LOWER(TRIM(CONCAT(COALESCE(first_name,''), ' ', COALESCE(last_name,'')))) = LOWER(?)`,
+      [collapsedName],
+    ]);
+  }
+  const numericId = /^\d+$/.test(loginKey) ? parseInt(loginKey, 10) : NaN;
+  if (Number.isFinite(numericId) && numericId > 0) {
+    attempts.push(['driver_id = ?', [numericId]]);
+  }
+  for (const [whereClause, params] of attempts) {
+    for (const sql of buildDriverLoginSelectSqls(whereClause)) {
+      try {
+        const [rows] = await pool.query(sql, params);
+        if (rows && rows[0]) return rows[0];
+        break;
+      } catch (e) {
+        if (e.code !== 'ER_BAD_FIELD_ERROR') throw e;
+      }
+    }
+    try {
+      const [starRows] = await pool.query(`SELECT * FROM mt_driver WHERE ${whereClause} LIMIT 1`, params);
+      const raw = starRows && starRows[0];
+      if (raw) return mapMtDriverRowForLogin(raw);
+    } catch (e) {
+      if (e.code !== 'ER_BAD_FIELD_ERROR' && e.code !== 'ER_NO_SUCH_TABLE') throw e;
+    }
+  }
+  return null;
 }
 
 function todayStr() {
@@ -839,13 +1037,20 @@ async function enrichRiderTaskDetails(pool, taskRow) {
 /**
  * Rider accounts are **`mt_driver`** rows (`username` + `password` + optional `password_bcrypt`).
  * Optional: `DRIVER_LOGIN_MT_CLIENT_FALLBACK=1` enables login via `mt_client` email + `mt_driver.client_id` (see docs).
+ *
+ * Flutter rider app: `POST` **form-urlencoded** (`api_key`, `app_version`, `username`, `password`, optional `device_id`, `device_platform`).
+ * Extra fields (e.g. `app_version`) are ignored. Paths **`/Login`** and **`/login`** both work (Express paths are case-sensitive).
  */
-router.post('/Login', validateApiKey, async (req, res) => {
-  const { username, password, device_id, device_platform } = req.body;
-  if (!username || !password) {
+async function handleDriverApiLogin(req, res) {
+  const body = req.body && typeof req.body === 'object' ? req.body : {};
+  const passwordRaw = body.password;
+  const password =
+    passwordRaw != null && typeof passwordRaw !== 'string' ? String(passwordRaw) : passwordRaw ?? '';
+  const { device_id, device_platform } = body;
+  const loginKey = resolveLoginKeyFromBody(body);
+  if (!loginKey || password === '' || password == null) {
     return error(res, 'Username and password required');
   }
-  const loginKey = String(username).trim();
   if (!checkDriverLoginRateLimit(req, loginKey)) {
     console.warn('[driver/api/Login] rate limited', { ip: clientIp(req) });
     return error(res, 'Too many login attempts. Try again later.');
@@ -855,7 +1060,47 @@ router.post('/Login', validateApiKey, async (req, res) => {
     process.env.DRIVER_LOGIN_CHECK_ERRAND_ST_CLIENT === '1' ||
     /^true$/i.test(String(process.env.DRIVER_LOGIN_CHECK_ERRAND_ST_CLIENT || ''));
 
-  let driver = await fetchDriverRowForLoginByUsername(loginKey);
+  let driver = await fetchDriverRowForLogin(loginKey);
+  const loginDebug =
+    process.env.DRIVER_LOGIN_DEBUG === '1' || /^true$/i.test(String(process.env.DRIVER_LOGIN_DEBUG || ''));
+  if (!driver && loginDebug) {
+    let dbName = process.env.DB_NAME || '';
+    let mysqlHost = '';
+    try {
+      const [[dbRow]] = await pool.query('SELECT DATABASE() AS db, @@hostname AS mysql_host');
+      if (dbRow && dbRow.db) dbName = String(dbRow.db);
+      if (dbRow && dbRow.mysql_host != null) mysqlHost = String(dbRow.mysql_host);
+    } catch (_) {}
+    console.warn('[driver/api/Login] debug no mt_driver match yet', {
+      db: dbName,
+      mysqlHost,
+      loginKeyLen: loginKey.length,
+      bodyKeys: Object.keys(body).filter((k) => k !== 'password'),
+    });
+    try {
+      const [[cPlain]] = await pool.query(
+        'SELECT COUNT(*) AS c FROM mt_driver WHERE LOWER(TRIM(`username`)) = LOWER(?)',
+        [loginKey]
+      );
+      const [[cNorm]] = await pool.query(
+        `SELECT COUNT(*) AS c FROM mt_driver WHERE ${mtDriverUsernameNormalizedLowerExpr()} = LOWER(?)`,
+        [loginKey]
+      );
+      console.warn('[driver/api/Login] debug mt_driver COUNT for login key', {
+        plainLowerTrim: Number(cPlain?.c ?? 0),
+        unicodeStrippedUsername: Number(cNorm?.c ?? 0),
+      });
+      if (Number(cPlain?.c ?? 0) === 0 && Number(cNorm?.c ?? 0) === 0) {
+        const [[near]] = await pool.query(
+          "SELECT COUNT(*) AS c FROM mt_driver WHERE `username` LIKE CONCAT('%', ?, '%')",
+          [loginKey]
+        );
+        console.warn('[driver/api/Login] debug mt_driver LIKE username contains key', { likeCount: Number(near?.c ?? 0) });
+      }
+    } catch (e) {
+      console.warn('[driver/api/Login] debug COUNT/LIKE failed', { code: e.code, message: e.message });
+    }
+  }
   let stored = driver ? String(driver.password_hash || '').trim() : '';
   let passwordOk = false;
 
@@ -876,7 +1121,7 @@ router.post('/Login', validateApiKey, async (req, res) => {
     }
     if (!passwordOk) {
       console.warn('[driver/api/Login] failed', { reason: 'bad_password', path: 'mt_driver' });
-      return error(res, 'Invalid credentials');
+      return error(res, 'Incorrect password.');
     }
   } else if (allowMtClientFallback()) {
     const riderClient = await findRiderClientAcrossDatabases(loginKey, pool, errandWibPool, {
@@ -884,19 +1129,19 @@ router.post('/Login', validateApiKey, async (req, res) => {
     });
     if (!riderClient) {
       console.warn('[driver/api/Login] failed', { reason: 'unknown_user' });
-      return error(res, 'Invalid credentials');
+      return error(res, 'No account was found for this email address.');
     }
     const riderVr = await verifyRiderPasswordResult(password, riderClient);
     passwordOk = riderVr.ok;
     if (!passwordOk) {
       console.warn('[driver/api/Login] failed', { reason: 'bad_password', path: 'rider_client' });
-      return error(res, 'Invalid credentials');
+      return error(res, 'Incorrect password.');
     }
 
     let linked = null;
     try {
       const [linkedRows] = await pool.query(
-        `SELECT driver_id AS id, username, password AS password_hash, password_bcrypt, on_duty, client_id
+        `SELECT driver_id AS id, username, \`password\` AS password_hash, password_bcrypt, on_duty, client_id
          FROM mt_driver
          WHERE client_id = ?
            AND (status IS NULL OR TRIM(status) = '' OR LOWER(TRIM(status)) NOT IN ('suspended', 'blocked', 'expired'))
@@ -909,7 +1154,7 @@ router.post('/Login', validateApiKey, async (req, res) => {
       if (e.code === 'ER_BAD_FIELD_ERROR') {
         try {
           const [linkedRows] = await pool.query(
-            `SELECT driver_id AS id, username, password AS password_hash, on_duty, client_id
+            `SELECT driver_id AS id, username, \`password\` AS password_hash, on_duty, client_id
              FROM mt_driver WHERE client_id = ? ORDER BY driver_id ASC LIMIT 1`,
             [riderClient.client_id]
           );
@@ -919,7 +1164,7 @@ router.post('/Login', validateApiKey, async (req, res) => {
             console.error(
               '[driver/api/Login] mt_driver.client_id missing. Run: node -r dotenv/config scripts/add-mt-driver-client-id.js'
             );
-            return error(res, 'Invalid credentials');
+            return error(res, 'Sign-in is temporarily unavailable. Please contact support.');
           }
           throw e2;
         }
@@ -941,17 +1186,34 @@ router.post('/Login', validateApiKey, async (req, res) => {
     const fresh = await reloadDriverLoginRow(linked.id);
     if (!fresh) {
       console.error('[driver/api/Login] driver row missing after client link', linked.id);
-      return error(res, 'Invalid credentials');
+      return error(res, 'Sign-in failed. Please try again or contact support.');
     }
     driver = fresh;
     stored = String(driver.password_hash || '').trim();
   } else {
+    if (loginDebug) {
+      let dbName = process.env.DB_NAME || '';
+      try {
+        const [[dbRow]] = await pool.query('SELECT DATABASE() AS db');
+        if (dbRow && dbRow.db) dbName = String(dbRow.db);
+      } catch (_) {}
+      console.warn('[driver/api/Login] debug unknown_user (mt_driver path)', {
+        db: dbName,
+        loginKeyLen: loginKey.length,
+        mtClientFallback: false,
+      });
+    }
     console.warn('[driver/api/Login] failed', { reason: 'unknown_user' });
-    return error(res, 'Invalid credentials');
+    return error(res, 'No rider account matches this username, email, or mobile number.');
   }
 
   if (!driver) {
-    return error(res, 'Invalid credentials');
+    return error(res, 'No rider account matches this username, email, or mobile number.');
+  }
+
+  if (driverStatusBlocksLogin(driver.status)) {
+    console.warn('[driver/api/Login] failed', { reason: 'account_disabled', driver_id: driver.id });
+    return error(res, 'This driver account is disabled or suspended. Contact support if you need help.');
   }
 
   const isBcrypt = stored.startsWith('$2a$') || stored.startsWith('$2b$') || stored.startsWith('$2y$');
@@ -987,7 +1249,10 @@ router.post('/Login', validateApiKey, async (req, res) => {
     topic_new_task: null,
     topic_alert: null,
   });
-});
+}
+
+router.post('/Login', validateApiKey, handleDriverApiLogin);
+router.post('/login', validateApiKey, handleDriverApiLogin);
 
 async function getDriverSettingsMap() {
   try {
@@ -1041,14 +1306,15 @@ router.post('/GetAppSettings', validateApiKey, optionalDriver, async (req, res) 
   const appName = (settings.app_name != null && String(settings.app_name).trim() !== '') ? String(settings.app_name).trim() : (settings.website_title || 'WIB Driver');
   const configuredApiKey = settings.driver_api_hash_key || settings.api_hash_key || process.env.API_HASH_KEY || '';
   const envMobileApiUrlRaw = (process.env.MOBILE_API_URL || '').trim();
-  const envMobileApiUrl = envMobileApiUrlRaw ? envMobileApiUrlRaw.replace(/\/+$/, '') : '';
-  const mobileApiUrl = configuredApiKey && String(configuredApiKey).trim() ? envMobileApiUrl : '';
+  const mobileApiBase =
+    configuredApiKey && String(configuredApiKey).trim()
+      ? normalizeMobileDriverApiBaseUrl(envMobileApiUrlRaw)
+      : '';
   const details = {
     app_language: settings.app_default_language || 'en',
     app_name: appName,
     allow_task_successful_when: settings.allow_task_successful_when || 'picture_proof',
-    mobile_api_url: mobileApiUrl,
-    valid_token: !!driver,
+    valid_token: driver != null,
     todays_date: todayStr(),
     todays_date_raw: todayRaw(),
     on_duty: driver?.on_duty ?? 0,
@@ -1063,6 +1329,9 @@ router.post('/GetAppSettings', validateApiKey, optionalDriver, async (req, res) 
     map_provider: 'google',
     translation: {},
   };
+  if (mobileApiBase) {
+    details.mobile_api_url = mobileApiBase;
+  }
   return success(res, details);
 });
 

@@ -5,10 +5,19 @@
 
 const BY_SUFFIX = /\s·\sBy\s+(.+)$/i;
 
+/** Backend may still attach "By Driver #0" when task.driver_id is unset — never show that as a person. */
+function isUnassignedDriverActorLabel(actor) {
+  const a = String(actor || '').trim();
+  return /^driver\s*#\s*0$/i.test(a) || /^rider\s*#\s*0$/i.test(a);
+}
+
 export function parseActorFromNotificationMessage(message) {
   const s = String(message || '').trim();
   const m = s.match(BY_SUFFIX);
-  return m ? m[1].trim() : '';
+  if (!m) return '';
+  const actor = m[1].trim();
+  if (isUnassignedDriverActorLabel(actor)) return '';
+  return actor;
 }
 
 export function stripActorSuffixForDisplay(message) {

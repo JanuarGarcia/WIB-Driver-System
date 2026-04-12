@@ -1224,15 +1224,6 @@ export default function TaskDetailsModal({
       .finally(() => setActionLoading(false));
   };
 
-  const handleAssignToAll = () => {
-    if (!window.confirm('Send this task to all drivers? They will receive a push notification.')) return;
-    setActionLoading(true);
-    api(`tasks/${taskId}/assign-all`, { method: 'POST' })
-      .then(() => {})
-      .catch((err) => alert(userFacingApiError(err) || 'Failed'))
-      .finally(() => setActionLoading(false));
-  };
-
   const handleRetryAutoAssign = () => {
     setActionLoading(true);
     api(`tasks/${taskId}/retry-auto-assign`, { method: 'POST' })
@@ -1999,10 +1990,14 @@ export default function TaskDetailsModal({
                   <>
                     <button type="button" className="btn btn-primary" onClick={openAssignModal} disabled={actionLoading}>Assign driver</button>
                     {!isErrandTask && (
-                      <>
-                        <button type="button" className="btn" onClick={handleAssignToAll} disabled={actionLoading}>Assign to all drivers</button>
-                        <button type="button" className="btn" onClick={handleRetryAutoAssign} disabled={actionLoading}>Retry auto-assign</button>
-                      </>
+                      <button
+                        type="button"
+                        className="btn task-details-footer-retry-auto-assign"
+                        onClick={handleRetryAutoAssign}
+                        disabled={actionLoading}
+                      >
+                        Retry auto-assign
+                      </button>
                     )}
                   </>
                 )}

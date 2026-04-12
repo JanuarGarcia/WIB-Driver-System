@@ -10225,6 +10225,9 @@ tr:hover { background: var(--bg-hover) !important; }
   .task-details-modal .task-details-footer-actions .btn-primary {
     grid-column: 1 / -1;
   }
+  .task-details-modal .task-details-footer-actions .task-details-footer-retry-auto-assign {
+    grid-column: 1 / -1;
+  }
   .task-details-modal .task-details-footer-actions > .btn:last-child {
     grid-column: 1 / -1;
   }

@@ -2105,7 +2105,10 @@ async function fanOutOrderHistoryFeedEventsToRiderNotifications(pool, events) {
       if (eMk && !(await riderNotificationService.tryConsumeTimelineNotifyKey(pool, eMk))) continue;
     }
     const td = descByTask.get(tid);
-    const actor = timelineNotifyActorFromFeedEvent(ev) || driverByTask.get(tid) || '';
+    const fromFeed = timelineNotifyActorFromFeedEvent(ev) || '';
+    /* Ready-for-pickup is a merchant / order milestone — do not attribute the task's assigned driver (often none yet). */
+    const actor =
+      cat === 'ready_for_pickup' ? fromFeed : fromFeed || driverByTask.get(tid) || '';
     const payload = timelineNotifyPayloadFromCategory(tid, td, ev.order_id ?? null, cat, actor);
     if (payload) notifyAllDashboardAdminsFireAndForget(pool, { ...payload, activityAt: ev.date_created });
   }
@@ -3110,6 +3113,10 @@ function bearingToCompass(bearing) {
   return 'North';
 }
 
+/** Reference point for task-card compass (same as rider dashboard client). */
+const BAGUIO_CENTER_LAT = 16.4023;
+const BAGUIO_CENTER_LNG = 120.596;
+
 // ---- Tasks (mt_driver_task) ----
 router.get('/tasks', async (req, res) => {
   const { date, status, status_in } = req.query;
@@ -3211,10 +3218,9 @@ router.get('/tasks', async (req, res) => {
       if (Number.isFinite(mapLng)) out.task_lng = mapLng;
       const lm = r.delivery_location_name != null ? String(r.delivery_location_name).trim() : '';
       if (lm) out.delivery_landmark = lm;
-      const drLat = r.driver_lat != null && r.driver_lng != null ? parseFloat(r.driver_lat) : null;
-      const drLng = r.driver_lat != null && r.driver_lng != null ? parseFloat(r.driver_lng) : null;
-      if (Number.isFinite(drLat) && Number.isFinite(drLng) && Number.isFinite(mapLat) && Number.isFinite(mapLng)) {
-        out.direction = bearingToCompass(getBearing(drLat, drLng, mapLat, mapLng));
+      /* Compass = sector of drop-off vs city center (delivery coords), not driver→customer or merchant. */
+      if (Number.isFinite(mapLat) && Number.isFinite(mapLng)) {
+        out.direction = bearingToCompass(getBearing(BAGUIO_CENTER_LAT, BAGUIO_CENTER_LNG, mapLat, mapLng));
       } else if (r.direction != null && String(r.direction).trim() !== '') {
         out.direction = String(r.direction).trim();
       } else {

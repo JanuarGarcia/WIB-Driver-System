@@ -23,6 +23,13 @@ async function main() {
     [username, hash, username, '', hash, username, '']
   );
   console.log('Driver created/updated:', username);
+  const apiKey = process.env.API_HASH_KEY || '<API_HASH_KEY_or_mt_option.driver_api_hash_key>';
+  const base = (process.env.SMOKE_BASE || process.env.BASE_URL || 'http://localhost:3000').replace(/\/+$/, '');
+  console.log('\nSmoke test (curl):');
+  console.log(
+    `curl -sS -X POST "${base}/driver/api/Login" -H "Content-Type: application/json" -d "{\\"api_key\\":\\"${apiKey}\\",\\"username\\":\\"${username}\\",\\"password\\":\\"${password}\\"}"`
+  );
+  console.log('\nOr: npm run smoke-driver-login --', username, password);
   pool.end();
 }
 

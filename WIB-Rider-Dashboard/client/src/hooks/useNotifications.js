@@ -92,7 +92,10 @@ function showDesktopNotificationsForEach(fresh) {
     const n = fresh[i];
     try {
       const title = (n.title || 'WIB Riders').toString().trim() || 'WIB Riders';
-      const body = (n.message || '').toString().trim() || 'New notification';
+      const body =
+        formatNotificationMessageForDisplay(n.message) ||
+        (n.message || '').toString().trim() ||
+        'New notification';
       new Notification(title, {
         body,
         silent: false,
@@ -112,7 +115,9 @@ function showDesktopNotificationSummary(fresh) {
   const title = count === 1 ? (n.title || 'WIB Riders').toString().trim() || 'WIB Riders' : 'WIB Riders';
   const body =
     count === 1
-      ? ((n.message || '').toString().trim() || 'New notification')
+      ? formatNotificationMessageForDisplay(n.message) ||
+        (n.message || '').toString().trim() ||
+        'New notification'
       : `${count} new notifications. Open the dashboard to view.`;
   try {
     new Notification(title, {
@@ -229,17 +234,24 @@ export function useNotifications() {
     }
 
     if (toastFresh.length > 0 && isSoundOn()) {
-      const tabHidden = typeof document !== 'undefined' && document.visibilityState === 'hidden';
       const playOne = async () => {
-        if (!tabHidden && audioRef.current) {
-          const el = audioRef.current;
+        const el = audioRef.current;
+        if (el) {
           try {
             el.volume = 0.72;
             el.currentTime = 0;
             await el.play();
             return;
           } catch {
-            /* fall through to chime */
+            /* Autoplay / background tab policy — try a fresh element (sometimes succeeds after unlock). */
+            try {
+              const a2 = new Audio(alertSoundUrl);
+              a2.volume = 0.72;
+              await a2.play();
+              return;
+            } catch {
+              /* fall through */
+            }
           }
         }
         playWebAudioChime();

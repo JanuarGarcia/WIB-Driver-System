@@ -47,6 +47,17 @@ In the **WIB Driver App** folder, set the API base URL to this backend (no `/dri
 - In `.env`: `API_BASE_URL=http://localhost:3000` (or your PC’s LAN IP for a real device)
 - Optional: `DRIVER_API_KEY=GodissoGood@33` (must match backend `API_HASH_KEY`)
 
+## Deploy on cPanel / A2 (Git “Deploy HEAD Commit”)
+
+The **monorepo root** (`WIB-Driver-System`) includes **`.cpanel.yml`**, which copies **`WIB-Rider-Backend/`** into your Node **Application root** and runs **`npm install --omit=dev`**.
+
+1. In **cPanel → Setup Node.js App**, open the rider API app and copy the full **Application root** path (the directory that already contains `package.json` and `server.js`).
+2. Edit **`.cpanel.yml`** at the repo root: set **`DEPLOYPATH=`** to that path (replace `/home/wheninba/nodeapps/rider-api` if yours differs). Commit and push.
+3. If cPanel says **“No uncommitted changes”** / deploy disabled: **Terminal** → `cd` to the **Repository path** (e.g. `/home/wheninba/repositories/WIB-Driver-System`) → run `git status`. Either **`git stash`** or **`git reset --hard origin/main`** (discards server-only edits), then **Update from Remote** and **Deploy HEAD Commit** again.
+4. **Restart** the Node app in **Setup Node.js App** after a successful deploy.
+
+Without Git deploy: SSH into **Application root**, `git pull`, `npm install --omit=dev`, then restart the app.
+
 ## API summary
 
 - **Driver API** (`/driver/api`): Login, GetAppSettings, GetProfile, UpdateProfile, UpdateVehicle, ChangeDutyStatus, UpdateDriverLocation, GetTaskByDate, GetTaskDetails, ChangeTaskStatus, reRegisterDevice, joinQueue, leaveQueue, queuePosition, GetNotifications, ClearNotifications, ForgotPassword, ChangePassword, Logout, UploadProfilePhoto. All POST, form-urlencoded; response `{ code, msg, details }`.

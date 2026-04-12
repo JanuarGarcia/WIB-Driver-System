@@ -1,0 +1,6 @@
+---
+deployment:
+  tasks:
+    - export DEPLOYPATH=/home/wheninba/nodeapps/rider-api
+    - /bin/cp -R WIB-Rider-Backend/. "$DEPLOYPATH/"
+    - cd "$DEPLOYPATH" && npm install --omit=dev
