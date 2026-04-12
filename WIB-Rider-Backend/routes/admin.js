@@ -2433,12 +2433,12 @@ router.get('/order-history/feed', async (req, res) => {
     if (afterId === 0) {
       // INNER JOIN avoids scanning mt_order_history with a per-row EXISTS (very slow on large history tables).
       const cursorSql = `
-        SELECT COALESCE(MAX(h.id), 0) AS cursor
+        SELECT COALESCE(MAX(h.id), 0) AS max_history_id
         FROM mt_order_history h
         INNER JOIN mt_driver_task t ON ${historyLinkSql}
         WHERE ${taskCondsSql}`;
       const [rows] = await pool.query(cursorSql, [...taskParams]);
-      const cursor = rows && rows[0] ? Number(rows[0].cursor) || 0 : 0;
+      const cursor = rows && rows[0] ? Number(rows[0].max_history_id) || 0 : 0;
       /* Same as timeline bootstrap: incremental feed uses id > cursor, so existing rows never arrive — fan-out up to cursor once (dedupe prevents duplicates). */
       if (cursor > 0) {
         const fanSql = `
@@ -2552,13 +2552,13 @@ router.get('/order-history/errand-feed', async (req, res) => {
   try {
     if (afterId === 0) {
       const [[row]] = await errandWibPool.query(
-        `SELECT COALESCE(MAX(h.id), 0) AS cursor
+        `SELECT COALESCE(MAX(h.id), 0) AS max_history_id
          FROM st_ordernew_history h
          INNER JOIN st_ordernew o ON o.order_id = h.order_id
          WHERE ${dateExpr} = ?`,
         [dateStr]
       );
-      const cursor = row && row.cursor != null ? Number(row.cursor) || 0 : 0;
+      const cursor = row && row.max_history_id != null ? Number(row.max_history_id) || 0 : 0;
       if (cursor > 0) {
         try {
           const [rawFan] = await errandWibPool.query(
