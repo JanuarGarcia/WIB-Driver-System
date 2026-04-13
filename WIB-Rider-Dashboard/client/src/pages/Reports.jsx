@@ -17,8 +17,8 @@ function buildChartData(rows) {
     if (!byDate[dateStr]) {
       byDate[dateStr] = { date: dateStr, completed: 0, cancelled: 0, failed: 0, other: 0, total: 0 };
     }
-    const s = String(r.status || '').toLowerCase();
-    if (s === 'completed') byDate[dateStr].completed += 1;
+    const s = String(r.status || '').toLowerCase().replace(/\s+/g, '');
+    if (s === 'completed' || s === 'successful' || s === 'delivered') byDate[dateStr].completed += 1;
     else if (s === 'cancelled') byDate[dateStr].cancelled += 1;
     else if (s === 'failed') byDate[dateStr].failed += 1;
     else byDate[dateStr].other += 1;
@@ -107,6 +107,16 @@ export default function Reports() {
   const rows = Array.isArray(reportData) ? reportData : [];
   const chartData = useMemo(() => buildChartData(rows), [rows]);
   const chartMax = chartData.length ? Math.max(...chartData.map((d) => d.total), 1) : 1;
+  /** Plot area height in px — bar heights are computed in px so they are not broken by flex % layout. */
+  const CHART_TRACK_PX = 220;
+  const barFillPx = (total) => {
+    if (total <= 0) return 6;
+    return Math.max(16, Math.round((total / chartMax) * CHART_TRACK_PX));
+  };
+  const segmentPx = (count, total, barPx) => {
+    if (count <= 0 || total <= 0 || barPx <= 0) return 0;
+    return Math.max(count > 0 ? 3 : 0, Math.round((count / total) * barPx));
+  };
   const sortedRows = useTableSort(rows, sortKey, sortOrder, REPORT_SORT_OPTIONS);
   const {
     paginatedItems: paginatedRows,
@@ -197,48 +207,61 @@ export default function Reports() {
                 <span className="reports-chart-legend-item reports-chart-legend-other">Other</span>
               </div>
               <div className="reports-chart-bars-wrap">
-                <div className="reports-chart-bars" role="img" aria-label="Bar chart of tasks per day by status">
-                  {chartData.map((d) => (
-                    <div key={d.date} className="reports-chart-bar-col">
-                      <div
-                        className="reports-chart-bar"
-                        style={{ height: `${(d.total / chartMax) * 100}%` }}
-                      >
-                        {d.completed > 0 && (
-                          <div
-                            className="reports-chart-bar-segment reports-chart-bar-completed"
-                            style={{ height: `${(d.completed / d.total) * 100}%` }}
-                            title={`${d.date}: ${d.completed} completed`}
-                          />
-                        )}
-                        {d.cancelled > 0 && (
-                          <div
-                            className="reports-chart-bar-segment reports-chart-bar-cancelled"
-                            style={{ height: `${(d.cancelled / d.total) * 100}%` }}
-                            title={`${d.date}: ${d.cancelled} cancelled`}
-                          />
-                        )}
-                        {d.failed > 0 && (
-                          <div
-                            className="reports-chart-bar-segment reports-chart-bar-failed"
-                            style={{ height: `${(d.failed / d.total) * 100}%` }}
-                            title={`${d.date}: ${d.failed} failed`}
-                          />
-                        )}
-                        {d.other > 0 && (
-                          <div
-                            className="reports-chart-bar-segment reports-chart-bar-other"
-                            style={{ height: `${(d.other / d.total) * 100}%` }}
-                            title={`${d.date}: ${d.other} other`}
-                          />
-                        )}
+                <div
+                  className="reports-chart-bars"
+                  style={{ '--reports-chart-track': `${CHART_TRACK_PX}px` }}
+                  role="img"
+                  aria-label="Bar chart of tasks per day by status"
+                >
+                  {chartData.map((d, i) => {
+                    const barPx = barFillPx(d.total);
+                    return (
+                      <div key={d.date} className="reports-chart-bar-col" style={{ animationDelay: `${i * 45}ms` }}>
+                        <div className="reports-chart-bar-track">
+                          <div className="reports-chart-bar-guides" aria-hidden />
+                          <div className="reports-chart-bar" style={{ height: `${barPx}px` }}>
+                            {d.completed > 0 && (
+                              <div
+                                className="reports-chart-bar-segment reports-chart-bar-completed"
+                                style={{ height: `${segmentPx(d.completed, d.total, barPx)}px` }}
+                                title={`${d.date}: ${d.completed} completed (${d.total} total)`}
+                              />
+                            )}
+                            {d.cancelled > 0 && (
+                              <div
+                                className="reports-chart-bar-segment reports-chart-bar-cancelled"
+                                style={{ height: `${segmentPx(d.cancelled, d.total, barPx)}px` }}
+                                title={`${d.date}: ${d.cancelled} cancelled (${d.total} total)`}
+                              />
+                            )}
+                            {d.failed > 0 && (
+                              <div
+                                className="reports-chart-bar-segment reports-chart-bar-failed"
+                                style={{ height: `${segmentPx(d.failed, d.total, barPx)}px` }}
+                                title={`${d.date}: ${d.failed} failed (${d.total} total)`}
+                              />
+                            )}
+                            {d.other > 0 && (
+                              <div
+                                className="reports-chart-bar-segment reports-chart-bar-other"
+                                style={{ height: `${segmentPx(d.other, d.total, barPx)}px` }}
+                                title={`${d.date}: ${d.other} other (${d.total} total)`}
+                              />
+                            )}
+                          </div>
+                        </div>
+                        <span className="reports-chart-x-label" title={d.date}>
+                          {d.date.slice(5)}
+                        </span>
+                        <span className="reports-chart-bar-total" aria-hidden="true">
+                          {d.total}
+                        </span>
                       </div>
-                      <span className="reports-chart-x-label">{d.date.slice(5)}</span>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
-              <p className="reports-chart-hint text-muted">Tasks per day by status. Hover bars for counts.</p>
+              <p className="reports-chart-hint text-muted">Tasks per day by status. Hover a bar for counts; number below each day is the daily total.</p>
             </div>
           )}
           <div className="listing-table-card" style={{ marginTop: '1.5rem' }}>
