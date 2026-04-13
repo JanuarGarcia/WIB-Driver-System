@@ -330,6 +330,38 @@ function merchantLogoUrl(logo) {
   return resolveMerchantPublicLogoUrl(s) || resolveUploadUrl(`/uploads/merchants/${encodeURIComponent(s)}`);
 }
 
+/** Basename of logo file from a resolved map pin URL (public-logo or uploads path). */
+function merchantPinImageBasename(src) {
+  const s = String(src || '').trim();
+  if (!s) return '';
+  try {
+    if (s.startsWith('http://') || s.startsWith('https://')) {
+      const u = new URL(s);
+      const seg = u.pathname.split('/').filter(Boolean).pop() || '';
+      return decodeURIComponent(seg.split('?')[0].split('#')[0] || '');
+    }
+  } catch {
+    /* fall through */
+  }
+  const seg = s.split('/').filter(Boolean).pop() || '';
+  try {
+    return decodeURIComponent(seg.split('?')[0].split('#')[0] || '');
+  } catch {
+    return seg.split('?')[0].split('#')[0] || '';
+  }
+}
+
+/** If primary pin URL is proxied public-logo, try same file via `/uploads/merchants/…` on the API origin (some hosts proxy uploads but not admin routes). */
+function merchantMapPinUploadsFallbackUrl(primaryImgSrc) {
+  const base = merchantPinImageBasename(primaryImgSrc);
+  if (!base || !/\.(jpe?g|png|gif|webp)$/i.test(base)) return '';
+  const direct = resolveUploadUrl(`/uploads/merchants/${encodeURIComponent(base)}`);
+  const a = String(primaryImgSrc || '').trim();
+  const b = String(direct || '').trim();
+  if (!b || a === b) return '';
+  return b;
+}
+
 /** Storefront glyph for merchant pins when logos are off (Mapbox GL path). */
 function MerchantStoreGlyph() {
   return (
@@ -360,6 +392,8 @@ function PinMarker({ type, imageUrl, title }) {
   const resolvedUrl = type === 'merchant' && imageUrl ? merchantLogoUrl(imageUrl) || imageUrl : imageUrl;
   const hasImage = type === 'merchant' && resolvedUrl && String(resolvedUrl).trim().length > 0;
   const merchantFallback = type === 'merchant' && !hasImage;
+  const merchantFbEnc =
+    type === 'merchant' && hasImage ? merchantMapPinUploadsFallbackUrl(resolvedUrl) : '';
   return (
     <div className="map-pin-wrap" title={title || undefined}>
       <div
@@ -377,7 +411,27 @@ function PinMarker({ type, imageUrl, title }) {
             </span>
           ) : null}
           {hasImage ? (
-            <img src={resolvedUrl} alt="" className="map-pin-img" />
+            <img
+              src={resolvedUrl}
+              alt=""
+              className="map-pin-img"
+              {...(merchantFbEnc
+                ? {
+                    'data-wib-merch-fb': encodeURIComponent(merchantFbEnc),
+                    onError: (e) => {
+                      const enc = e.currentTarget.getAttribute('data-wib-merch-fb');
+                      if (!enc) return;
+                      try {
+                        const next = decodeURIComponent(enc);
+                        if (next && e.currentTarget.src !== next) {
+                          e.currentTarget.onerror = null;
+                          e.currentTarget.src = next;
+                        }
+                      } catch (_) {}
+                    },
+                  }
+                : {})}
+            />
           ) : null}
         </div>
         <div className="map-pin-point" />
@@ -390,7 +444,12 @@ function leafletPinIcon(type, logoUrl) {
   const hasImage = type === 'merchant' && logoUrl && String(logoUrl).trim().length > 0;
   const merchantFallback = type === 'merchant' && !hasImage;
   const safeUrl = hasImage ? String(logoUrl).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;') : '';
-  const imgHtml = hasImage ? `<img src="${safeUrl}" alt="" class="leaflet-pin-img" decoding="async" />` : '';
+  const fbRaw = hasImage ? merchantMapPinUploadsFallbackUrl(String(logoUrl)) : '';
+  const fbAttr =
+    fbRaw && fbRaw !== String(logoUrl).trim()
+      ? ` data-wib-merch-fb="${encodeURIComponent(fbRaw).replace(/"/g, '&quot;')}" onerror="var e=this,t=e.getAttribute('data-wib-merch-fb');if(t){e.onerror=null;try{e.src=decodeURIComponent(t)}catch(x){}}"`
+      : '';
+  const imgHtml = hasImage ? `<img src="${safeUrl}" alt="" class="leaflet-pin-img" decoding="async"${fbAttr} />` : '';
   const storeHtml = merchantFallback ? LEAFLET_MERCHANT_STORE_GLYPH_HTML : '';
   const taskInner =
     type === 'task'

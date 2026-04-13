@@ -251,14 +251,28 @@ function resolveMerchantLogoFileBasename(dbLogo, restaurantName, merchantsDir) {
 
 /**
  * Basename of a file in uploads/merchants (or sibling uploads/merchant) for dashboard map + merchant list.
- * Does not use DB `logo` / `logo_url` / `image_url` — only on-disk files matched from `restaurant_name` (slug + fuzzy rules).
- * @param {{ restaurant_name?: unknown, restaurantName?: unknown }} row
+ * Does not use DB `logo` / `logo_url` / `image_url` — only on-disk files matched from `restaurant_name` (slug + fuzzy rules),
+ * then optional `merchant-{id}.(png|jpg|…)` style filenames.
+ * @param {{ restaurant_name?: unknown, restaurantName?: unknown, merchant_id?: unknown, id?: unknown }} row
  * @param {string} merchantsDir
  * @returns {string | null}
  */
 function resolveMerchantLogoForApi(row, merchantsDir) {
   const name = row?.restaurant_name ?? row?.restaurantName;
-  return resolveMerchantLogoFileBasename('', name, merchantsDir);
+  const fromName = resolveMerchantLogoFileBasename('', name, merchantsDir);
+  if (fromName) return fromName;
+  const midRaw = row?.merchant_id ?? row?.id;
+  const mid = midRaw != null ? parseInt(String(midRaw), 10) : NaN;
+  if (!Number.isFinite(mid) || mid <= 0) return null;
+  const idStr = String(mid);
+  const stems = [`merchant-${idStr}`, `merchant_${idStr}`, `merchant${idStr}`, idStr];
+  for (const stem of stems) {
+    for (const ext of ['.png', '.jpg', '.jpeg', '.webp', '.gif']) {
+      const bn = `${stem}${ext}`;
+      if (fileExistsInMerchantDirs(merchantsDir, bn)) return bn;
+    }
+  }
+  return null;
 }
 
 module.exports = {
