@@ -165,6 +165,57 @@ function fuzzyMatchRestaurantToFile(restaurantName, index) {
   return bestScore >= 5 ? bestFile : null;
 }
 
+/**
+ * Score one restaurant word against a filename stem token (hyphen-separated).
+ * Handles `pet` vs `pets`, `bulaluhan` vs `bulaluha`, substring brand tokens.
+ */
+function wordTokenRoughMatch(w, token) {
+  const a = String(w || '').toLowerCase();
+  const b = String(token || '').toLowerCase();
+  if (!a.length || !b.length) return 0;
+  if (a === b) return a.length + 2;
+  if (b.includes(a) || a.includes(b)) return Math.min(a.length, b.length) + 1;
+  let i = 0;
+  const max = Math.min(a.length, b.length);
+  while (i < max && a[i] === b[i]) i += 1;
+  if (i >= 5) return i;
+  if (Math.abs(a.length - b.length) === 1 && i >= Math.min(a.length, b.length) - 1) {
+    const shorter = a.length < b.length ? a : b;
+    const longer = a.length < b.length ? b : a;
+    if (longer.startsWith(shorter)) return shorter.length;
+  }
+  return 0;
+}
+
+/**
+ * When exact slug misses (e.g. DB "Pets Bulaluhan" vs file `pets-bulaluha-and-sisigan.jpg`).
+ */
+function slugProximityMatchRestaurant(restaurantName, index) {
+  const words = nameWords(restaurantName).filter((w) => w.length >= 2);
+  if (!words.length || !index.size) return null;
+  let bestFile = null;
+  let bestScore = 0;
+  for (const file of index.values()) {
+    const stem = file.replace(/\.[^.]+$/, '').toLowerCase();
+    const tokens = stem.split(/[-_+]+/).filter((t) => t.length >= 2);
+    if (tokens.length === 0) continue;
+    let score = 0;
+    for (const w of words) {
+      let bestTok = 0;
+      for (const tok of tokens) {
+        const add = wordTokenRoughMatch(w, tok);
+        if (add > bestTok) bestTok = add;
+      }
+      score += bestTok;
+    }
+    if (score > bestScore) {
+      bestScore = score;
+      bestFile = file;
+    }
+  }
+  return bestScore >= 9 ? bestFile : null;
+}
+
 /** Collect slug strings from one word list (legacy DB filename hints). */
 function emitSlugVariantsToList(words) {
   const slugs = new Set();
@@ -245,6 +296,9 @@ function resolveMerchantLogoFileBasename(dbLogo, restaurantName, merchantsDir) {
     const hit = tryStem(slug);
     if (hit) return hit;
   }
+
+  const prox = slugProximityMatchRestaurant(restaurantName, index);
+  if (prox) return prox;
 
   return fuzzyMatchRestaurantToFile(restaurantName, index);
 }
