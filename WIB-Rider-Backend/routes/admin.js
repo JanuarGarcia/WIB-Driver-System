@@ -60,6 +60,7 @@ const {
 } = require('../lib/customerOrderPushDispatch');
 const { updateMtOrderStatusIfDeliveryComplete } = require('../lib/mtOrderStatusSync');
 const { sendCustomerTaskNotify } = require('../lib/sendCustomerTaskMessage');
+const { resolveMerchantLogoForApi } = require('../lib/merchantUploadsLogo');
 
 const ADMIN_SECRET = process.env.ADMIN_SECRET || '';
 
@@ -79,7 +80,9 @@ const storageFcm = multer.diskStorage({
   filename: (_req, _file, cb) => cb(null, `service_account_${Date.now()}.json`),
 });
 const profileDir = path.join(uploadsBase, 'profiles');
+const merchantLogoDir = path.join(uploadsBase, 'merchants');
 if (!fs.existsSync(profileDir)) fs.mkdirSync(profileDir, { recursive: true });
+if (!fs.existsSync(merchantLogoDir)) fs.mkdirSync(merchantLogoDir, { recursive: true });
 const storageProfile = multer.diskStorage({
   destination: (_req, _file, cb) => cb(null, profileDir),
   filename: (_req, file, cb) => cb(null, `driver_${Date.now()}${path.extname(file.originalname || '') || '.jpg'}`),
@@ -1489,10 +1492,15 @@ router.get('/drivers/locations', async (req, res) => {
 
 // ---- List merchants (mt_merchant) with logo for table display ----
 router.get('/merchants', async (req, res) => {
+  const attachResolvedLogos = (rows) =>
+    (rows || []).map((r) => ({
+      ...r,
+      logo: resolveMerchantLogoForApi(r, merchantLogoDir),
+    }));
   const run = async (sql) => {
     try {
       const [rows] = await pool.query(sql);
-      res.json(rows || []);
+      res.json(attachResolvedLogos(rows));
       return true;
     } catch (err) {
       if (err.code === 'ER_BAD_FIELD_ERROR' || err.code === 'ER_NO_SUCH_TABLE') return false;
@@ -1506,13 +1514,17 @@ router.get('/merchants', async (req, res) => {
 
 // ---- Merchant locations for map (mt_merchant: latitude, lontitude or longitude; optional logo for marker image) ----
 router.get('/merchants/locations', async (req, res) => {
-  const shape = (rows) => (rows || []).map((r) => ({
-    merchant_id: r.merchant_id,
-    restaurant_name: r.restaurant_name || null,
-    lat: Number(r.lat),
-    lng: Number(r.lng),
-    logo_url: r.logo_url || r.logo || r.image_url || null,
-  }));
+  const shape = (rows) =>
+    (rows || []).map((r) => ({
+      merchant_id: r.merchant_id,
+      restaurant_name: r.restaurant_name || null,
+      lat: Number(r.lat),
+      lng: Number(r.lng),
+      logo_url: resolveMerchantLogoForApi(
+        { logo: r.logo, logo_url: r.logo_url, image_url: r.image_url, restaurant_name: r.restaurant_name },
+        merchantLogoDir
+      ),
+    }));
   const queryWithLogo = (latCol, lngCol) =>
     `SELECT merchant_id, restaurant_name, ${latCol} AS lat, ${lngCol} AS lng, logo FROM mt_merchant WHERE ${latCol} IS NOT NULL AND ${lngCol} IS NOT NULL AND (${latCol} != 0 OR ${lngCol} != 0) ORDER BY merchant_id`;
   const queryNoLogo = (latCol, lngCol) =>
@@ -1920,8 +1932,13 @@ function timelineNotifyPayloadFromCategory(taskId, taskDescription, orderId, cat
   } else if (category === 'ready_for_pickup') {
     // Ensure dispatcher bell/inbox receives ready-for-pickup every time.
     payload = { title: 'Ready for pickup', message: messageBase, type: 'ready_pickup' };
-  }
-  else if (category === 'created') {
+  } else if (category === 'preparing') {
+    payload = {
+      title: errandOpts != null ? 'Mangan preparing' : 'Order preparing',
+      message: messageBase,
+      type: 'new_task',
+    };
+  } else if (category === 'created') {
     payload = {
       title: errandOpts != null ? 'New Mangan order' : 'New task order',
       message: messageBase,
@@ -2046,6 +2063,7 @@ function orderHistoryFeedEventToClassifierRow(ev) {
   if (!ev || typeof ev !== 'object') return {};
   return {
     status: ev.status,
+    description: ev.description != null ? ev.description : null,
     remarks: ev.remarks,
     reason: ev.reason != null ? ev.reason : null,
     notes: ev.notes != null ? ev.notes : null,

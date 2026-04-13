@@ -1,5 +1,4 @@
-import { useState, useEffect, useRef, useCallback, useMemo, createElement } from 'react';
-import { toast } from 'react-toastify';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { isAuthenticated } from '../auth';
 import { fetchRiderNotifications, markRiderNotificationsViewed } from '../services/notificationApi';
 import {
@@ -9,6 +8,7 @@ import {
   notificationIdsSharingDedupeKeysWith,
 } from '../utils/riderNotificationNavigate';
 import { shouldSuppressRiderNotificationToast } from '../utils/notificationToastDedupe';
+import { showRiderSystemToast } from '../utils/riderSystemToast';
 
 /** `public/fb-alert.mp3` — Vite serves `public/` at `import.meta.env.BASE_URL`. */
 const alertSoundUrl = `${import.meta.env.BASE_URL}fb-alert.mp3`;
@@ -30,6 +30,8 @@ let pollInFlight = false;
 const NOTIF_SESSION_BASELINE_MS_KEY = 'wib_dashboard_notif_baseline_ms';
 const CRITICAL_TOAST_TYPES = new Set(['ready_pickup']);
 const FIRST_POLL_CRITICAL_WINDOW_MS = 120000;
+/** Allow server/client clock skew so real-time rows are not dropped from the first post-baseline poll. */
+const BASELINE_EVENT_SLACK_MS = 2500;
 
 function hasActorName(notification) {
   const msg = notification?.message != null ? String(notification.message) : '';
@@ -60,7 +62,9 @@ function dedupeNotificationsPreferActor(list) {
   return Array.from(kept.values());
 }
 
-/** Short beep when <audio> play() is blocked (common in background tabs). */
+/**
+ * Last-resort tone only if every `fb-alert.mp3` path failed (never substitute chime before the file).
+ */
 function playWebAudioChime() {
   try {
     const Ctx = window.AudioContext || window.webkitAudioContext;
@@ -80,6 +84,24 @@ function playWebAudioChime() {
   } catch (_) {
     /* ignore */
   }
+}
+
+/** Play decoded `fb-alert` via shared context (same samples as the mp3 file). */
+function playDecodedAlertBuffer(audioContext, buffer, volume) {
+  if (!audioContext || !buffer) return Promise.reject(new Error('no decoded alert'));
+  const run = async () => {
+    if (audioContext.state === 'suspended') {
+      await audioContext.resume().catch(() => {});
+    }
+    const src = audioContext.createBufferSource();
+    const gain = audioContext.createGain();
+    src.buffer = buffer;
+    gain.gain.setValueAtTime(volume, audioContext.currentTime);
+    src.connect(gain);
+    gain.connect(audioContext.destination);
+    src.start(0);
+  };
+  return run();
 }
 
 /**
@@ -171,10 +193,38 @@ export function useNotifications() {
   const [items, setItems] = useState([]);
   const [pollError, setPollError] = useState(null);
   const audioRef = useRef(null);
+  /** Shared Web Audio context + decoded `fb-alert.mp3` (unlocked via user gestures). */
+  const alertAudioCtxRef = useRef(null);
+  const alertDecodedBufferRef = useRef(null);
+  const alertDecodePromiseRef = useRef(null);
+  const documentHtmlPrimedRef = useRef(false);
   const mountedRef = useRef(true);
   const pollErrorLoggedRef = useRef(false);
   const firstPollDoneRef = useRef(false);
   const baselineMsRef = useRef(null);
+
+  const beginDecodeAlertBuffer = useCallback(() => {
+    if (typeof window === 'undefined') return;
+    if (alertDecodedBufferRef.current) return;
+    if (alertDecodePromiseRef.current) return;
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return;
+    const url = alertSoundUrl;
+    alertDecodePromiseRef.current = (async () => {
+      try {
+        const ctx = new Ctx();
+        alertAudioCtxRef.current = ctx;
+        const res = await fetch(url);
+        if (!res.ok) throw new Error('alert fetch failed');
+        const raw = await res.arrayBuffer();
+        const copy = raw.slice(0);
+        const buffer = await ctx.decodeAudioData(copy);
+        alertDecodedBufferRef.current = buffer;
+      } catch {
+        alertDecodePromiseRef.current = null;
+      }
+    })();
+  }, []);
 
   const emitToastSoundAndDesktop = useCallback((fresh) => {
     if (!Array.isArray(fresh) || fresh.length === 0) return;
@@ -186,20 +236,11 @@ export function useNotifications() {
       const message = (n.message || '').toString().trim();
       const actor = message ? parseActorFromNotificationMessage(message) : '';
       const messageMain = message ? formatNotificationMessageForDisplay(message) : '';
-      const body = createElement(
-        'div',
-        { className: 'rider-notif-toast-stacked' },
-        createElement('div', { className: 'rider-notif-toast-line1' }, title),
-        actor ? createElement('div', { className: 'rider-notif-toast-line-by' }, `By ${actor}`) : null,
-        messageMain ? createElement('div', { className: 'rider-notif-toast-line2' }, messageMain) : null
-      );
-      toast.info(body, {
+      showRiderSystemToast({
         toastId: `rider-notif-${n.id}`,
-        autoClose: 12500,
-        className: 'rider-notif-toast',
-        bodyClassName: 'rider-notif-toast-body',
-        progressClassName: 'rider-notif-toast-progress',
-        pauseOnHover: true,
+        title,
+        byLabel: actor,
+        tertiary: messageMain,
       });
     } else if (toastFresh.length > 1) {
       const count = toastFresh.length;
@@ -208,56 +249,67 @@ export function useNotifications() {
       const m1 = (first?.message || '').toString().trim();
       const actor1 = m1 ? parseActorFromNotificationMessage(m1) : '';
       const msg1 = m1 ? formatNotificationMessageForDisplay(m1) : '';
-      const body = createElement(
-        'div',
-        { className: 'rider-notif-toast-stacked' },
-        createElement('div', { className: 'rider-notif-toast-line1' }, `${count} new notifications`),
-        actor1 ? createElement('div', { className: 'rider-notif-toast-line-by' }, `Latest: By ${actor1}`) : null,
-        createElement('div', { className: 'rider-notif-toast-line2' }, `${t1}${msg1 ? ` — ${msg1}` : ''}`)
-      );
-      toast.info(body, {
+      showRiderSystemToast({
         toastId: `rider-notif-batch-${String(toastFresh[0]?.id ?? 'x')}`,
-        autoClose: 12500,
-        className: 'rider-notif-toast',
-        bodyClassName: 'rider-notif-toast-body',
-        progressClassName: 'rider-notif-toast-progress',
-        pauseOnHover: true,
+        title: `${count} new notifications`,
+        byLine: actor1 ? `Latest: By ${actor1}` : '',
+        tertiary: `${t1}${msg1 ? ` — ${msg1}` : ''}`,
       });
     }
 
-    if (toastFresh.length > 0) {
-      const hasCritical = toastFresh.some((n) =>
-        CRITICAL_TOAST_TYPES.has(String(n?.type || '').trim().toLowerCase())
-      );
-      if (hasCritical) showDesktopNotificationsForEach(toastFresh);
-      else showDesktopNotificationSummary(toastFresh);
-    }
+    if (toastFresh.length === 0) return;
 
-    if (toastFresh.length > 0 && isSoundOn()) {
-      const playOne = async () => {
+    const hasCritical = toastFresh.some((n) =>
+      CRITICAL_TOAST_TYPES.has(String(n?.type || '').trim().toLowerCase())
+    );
+
+    /** `fb-alert.mp3` before OS notifications; try every mp3 route before the synthetic chime. */
+    void (async () => {
+      if (isSoundOn()) {
+        if (alertDecodePromiseRef.current) {
+          await alertDecodePromiseRef.current.catch(() => {});
+        }
+        const vol = 0.72;
+        let played = false;
         const el = audioRef.current;
         if (el) {
           try {
-            el.volume = 0.72;
+            el.volume = vol;
             el.currentTime = 0;
             await el.play();
-            return;
+            played = true;
           } catch {
-            /* Autoplay / background tab policy — try a fresh element (sometimes succeeds after unlock). */
-            try {
-              const a2 = new Audio(alertSoundUrl);
-              a2.volume = 0.72;
-              await a2.play();
-              return;
-            } catch {
-              /* fall through */
-            }
+            /* autoplay / background — try decoded file, then a fresh Audio() */
           }
         }
-        playWebAudioChime();
-      };
-      void playOne();
-    }
+        if (!played) {
+          try {
+            const ctx = alertAudioCtxRef.current;
+            const buf = alertDecodedBufferRef.current;
+            if (ctx && buf) {
+              await playDecodedAlertBuffer(ctx, buf, vol);
+              played = true;
+            }
+          } catch {
+            /* fall through */
+          }
+        }
+        if (!played) {
+          try {
+            const a2 = new Audio(alertSoundUrl);
+            a2.volume = vol;
+            await a2.play();
+            played = true;
+          } catch {
+            /* fall through */
+          }
+        }
+        if (!played) playWebAudioChime();
+      }
+
+      if (hasCritical) showDesktopNotificationsForEach(toastFresh);
+      else showDesktopNotificationSummary(toastFresh);
+    })();
   }, []);
 
   /** Bell badge: items not yet acknowledged (panel opened) or cleared. */
@@ -274,6 +326,12 @@ export function useNotifications() {
     const a = new Audio(alertSoundUrl);
     a.preload = 'auto';
     a.volume = 0.62;
+    try {
+      a.playsInline = true;
+      a.setAttribute('playsinline', '');
+    } catch {
+      /* ignore */
+    }
     audioRef.current = a;
     return () => {
       audioRef.current = null;
@@ -285,9 +343,7 @@ export function useNotifications() {
     setItems((prev) => prev.map((p) => ({ ...p, localRead: true })));
   }, []);
 
-  /** Browsers often block autoplay; a click on the bell counts as a gesture so later poll sounds can play. */
-  const primeNotificationSound = useCallback(() => {
-    requestDesktopNotifyPermissionOnce();
+  const primeHtmlAudioUnlock = useCallback(() => {
     if (!isSoundOn() || !audioRef.current) return;
     const el = audioRef.current;
     try {
@@ -310,20 +366,45 @@ export function useNotifications() {
     }
   }, []);
 
-  /** Unlock audio + offer desktop notifications (OS alert/sound when tab is in background). */
+  /** Browsers often block autoplay; a click on the bell counts as a gesture so later poll sounds can play. */
+  const primeNotificationSound = useCallback(() => {
+    requestDesktopNotifyPermissionOnce();
+    beginDecodeAlertBuffer();
+    void alertAudioCtxRef.current?.resume?.().catch(() => {});
+    primeHtmlAudioUnlock();
+  }, [beginDecodeAlertBuffer, primeHtmlAudioUnlock]);
+
+  /** Unlock audio on gestures (repeat `resume` helps background tabs); prime HTML audio once from document. */
   useEffect(() => {
     if (typeof document === 'undefined') return undefined;
     const unlock = () => {
-      primeNotificationSound();
+      beginDecodeAlertBuffer();
+      void alertAudioCtxRef.current?.resume?.().catch(() => {});
+      if (!documentHtmlPrimedRef.current) {
+        documentHtmlPrimedRef.current = true;
+        primeHtmlAudioUnlock();
+      }
       requestDesktopNotifyPermissionOnce();
     };
-    document.addEventListener('pointerdown', unlock, { capture: true, passive: true, once: true });
-    document.addEventListener('touchstart', unlock, { capture: true, passive: true, once: true });
+    document.addEventListener('pointerdown', unlock, { capture: true, passive: true });
+    document.addEventListener('touchstart', unlock, { capture: true, passive: true });
     return () => {
       document.removeEventListener('pointerdown', unlock, { capture: true });
       document.removeEventListener('touchstart', unlock, { capture: true });
     };
-  }, [primeNotificationSound]);
+  }, [beginDecodeAlertBuffer, primeHtmlAudioUnlock]);
+
+  /** Background tabs suspend Web Audio; resume when the tab is foregrounded again. */
+  useEffect(() => {
+    if (typeof document === 'undefined') return undefined;
+    const onVis = () => {
+      if (document.visibilityState === 'visible') {
+        void alertAudioCtxRef.current?.resume?.().catch(() => {});
+      }
+    };
+    document.addEventListener('visibilitychange', onVis);
+    return () => document.removeEventListener('visibilitychange', onVis);
+  }, []);
 
   const pollTick = useCallback(async () => {
     if (!mountedRef.current) return;
@@ -381,6 +462,11 @@ export function useNotifications() {
           }
           for (const n of firstPollCritical) processedIdsGlobal.add(String(n.id));
         }
+        setItems(() =>
+          dedupeNotificationsPreferActor(
+            list.filter((n) => n && n.id != null).map((n) => ({ ...n, localRead: false }))
+          )
+        );
         // Mark existing backlog as "seen for this session" (but DO NOT mark viewed in DB).
         for (const n of list) {
           if (n && n.id != null) processedIdsGlobal.add(String(n.id));
@@ -404,9 +490,12 @@ export function useNotifications() {
             })();
 
       const fresh = freshAll.filter((n) => {
-        const d = n?.createdAt ? new Date(n.createdAt) : null;
-        const ms = d && !Number.isNaN(d.getTime()) ? d.getTime() : Date.now();
-        return ms >= baselineMs;
+        let ms = notificationEventMs(n);
+        if (!(ms > 0)) {
+          const d = n?.createdAt ? new Date(n.createdAt) : null;
+          ms = d && !Number.isNaN(d.getTime()) ? d.getTime() : Date.now();
+        }
+        return ms >= baselineMs - BASELINE_EVENT_SLACK_MS;
       });
       if (fresh.length === 0) {
         for (const n of rawNew) processedIdsGlobal.add(String(n.id));

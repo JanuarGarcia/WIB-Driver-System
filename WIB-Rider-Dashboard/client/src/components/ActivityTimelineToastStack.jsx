@@ -1,12 +1,12 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
-import { createPortal } from 'react-dom';
+import { useEffect, useRef, useCallback } from 'react';
 import { useLocation } from 'react-router-dom';
-import { api, statusLabel, statusDisplayClass } from '../api';
+import { api, statusLabel } from '../api';
 import { RIDER_NOTIFICATIONS_POLL_EVENT } from '../hooks/useNotifications';
 import {
   markNotificationToastSuppressedFromErrandFeedEvent,
   markNotificationToastSuppressedFromMtFeedEvent,
 } from '../utils/notificationToastDedupe';
+import { showRiderSystemToast } from '../utils/riderSystemToast';
 
 const SOUND_MUTED_KEY = 'wib_dashboard_sound_muted';
 
@@ -49,25 +49,17 @@ function feedEventSubtitle(ev) {
   return st || 'Activity updated';
 }
 
-let toastKeySeq = 0;
-
 /**
- * Polls order-history feed on the home dashboard and shows teal toasts when the activity timeline changes.
+ * Polls order-history feeds on the home dashboard and shows the same system toast as rider notifications.
  */
 export default function ActivityTimelineToastStack({ dateStr, onOpenTaskTimeline }) {
   const location = useLocation();
-  const [toasts, setToasts] = useState([]);
   const cursorRef = useRef(null);
   const initDoneRef = useRef(false);
   const seenIdsRef = useRef(new Set());
-  const removeTimersRef = useRef(new Map());
-
-  const removeToast = useCallback((key) => {
-    const t = removeTimersRef.current.get(key);
-    if (t) clearTimeout(t);
-    removeTimersRef.current.delete(key);
-    setToasts((prev) => prev.filter((x) => x.key !== key));
-  }, []);
+  const errandCursorRef = useRef(null);
+  const errandInitDoneRef = useRef(false);
+  const errandSeenIdsRef = useRef(new Set());
 
   const pushToast = useCallback(
     (ev) => {
@@ -83,23 +75,33 @@ export default function ActivityTimelineToastStack({ dateStr, onOpenTaskTimeline
         kind = 'mangan';
       }
       if (!Number.isFinite(openId) || openId === 0) return;
-      const key = `tl-${++toastKeySeq}`;
+      const hid = ev && ev.id != null ? Number(ev.id) : NaN;
+      const toastId = Number.isFinite(hid) ? `timeline-${hid}` : `timeline-${Date.now()}`;
+
       const statusRaw = (ev.status || '').trim();
-      const line2 = feedEventSubtitle(ev);
-      setToasts((prev) => {
-        const next = [...prev, { key, taskId: openId, kind, line2, statusRaw, id: ev.id }];
-        return next.slice(-5);
+      const title = statusLabel(statusRaw) || 'Activity update';
+      const byName = (ev.update_by_name || '').trim();
+      const byType = (ev.update_by_type || '').trim();
+      const byActor = byName || byType;
+      const sub = feedEventSubtitle(ev).trim();
+      const orderLine =
+        kind === 'mangan' ? `Mangan #${Math.abs(openId)}` : `Order #${Math.abs(openId)}`;
+      let tertiary = orderLine;
+      if (sub && !sub.includes(orderLine) && sub.toLowerCase() !== statusRaw.toLowerCase()) {
+        tertiary = `${orderLine} · ${sub}`;
+      }
+
+      showRiderSystemToast({
+        toastId,
+        title,
+        byLabel: byActor,
+        tertiary,
+        onOpen: () => onOpenTaskTimeline?.(openId),
       });
       playTimelineChime();
-      const tid = setTimeout(() => removeToast(key), 9000);
-      removeTimersRef.current.set(key, tid);
     },
-    [removeToast]
+    [onOpenTaskTimeline]
   );
-
-  const errandCursorRef = useRef(null);
-  const errandInitDoneRef = useRef(false);
-  const errandSeenIdsRef = useRef(new Set());
 
   useEffect(() => {
     initDoneRef.current = false;
@@ -219,49 +221,5 @@ export default function ActivityTimelineToastStack({ dateStr, onOpenTaskTimeline
     };
   }, [location.pathname, dateStr, pushToast]);
 
-  useEffect(() => {
-    return () => {
-      removeTimersRef.current.forEach((t) => clearTimeout(t));
-      removeTimersRef.current.clear();
-    };
-  }, []);
-
-  if (location.pathname !== '/' || toasts.length === 0) return null;
-
-  return createPortal(
-    <div className="dashboard-timeline-toast-stack" aria-live="polite" aria-relevant="additions">
-      {toasts.map((t) => {
-        const sc = statusDisplayClass(t.statusRaw);
-        return (
-          <button
-            key={t.key}
-            type="button"
-            className="dashboard-timeline-toast"
-            onClick={() => {
-              onOpenTaskTimeline?.(t.taskId);
-              removeToast(t.key);
-            }}
-          >
-            <span className="dashboard-timeline-toast-icon" aria-hidden="true">
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
-                <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" />
-                <path d="M12 16v-1M12 8v4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-              </svg>
-            </span>
-            <span className="dashboard-timeline-toast-body">
-              <span className="dashboard-timeline-toast-line1">
-                <span className={`dashboard-timeline-toast-status tag ${sc}`}>{statusLabel(t.statusRaw)}</span>
-                <span className="dashboard-timeline-toast-taskid">
-                  {t.kind === 'mangan' ? `Mangan #${Math.abs(t.taskId)}` : `Task ID:${t.taskId}`}
-                </span>
-              </span>
-              <span className="dashboard-timeline-toast-line2">{t.line2}</span>
-            </span>
-            <span className="dashboard-timeline-toast-hint">Open timeline</span>
-          </button>
-        );
-      })}
-    </div>,
-    document.body
-  );
+  return null;
 }

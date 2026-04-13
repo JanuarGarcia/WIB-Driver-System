@@ -53,6 +53,12 @@ function normalizedBlobImpliesInProgress(blob) {
   return false;
 }
 
+function normalizedBlobImpliesPreparing(blob) {
+  if (!blob) return false;
+  if (blob.includes('notpreparing') || blob.includes('unpreparing')) return false;
+  return blob === 'preparing' || blob.includes('preparing');
+}
+
 function historyRowIsRiderAcceptance(row) {
   if (!row || typeof row !== 'object') return false;
   const parts = [row.status, row.description, row.remarks, row.reason, row.notes];
@@ -83,6 +89,7 @@ export function classifyHistoryRowForNotifyMilestone(row) {
   if (keys.some((k) => k === 'readyforpickup' || k === 'readypickup' || normalizedBlobImpliesReadyForPickup(k))) {
     return 'ready_for_pickup';
   }
+  if (keys.some((k) => k === 'preparing' || normalizedBlobImpliesPreparing(k))) return 'preparing';
   if (keys.some((k) => k === 'inprogress' || normalizedBlobImpliesInProgress(k))) return 'inprogress';
   if (keys.some((k) => k === 'started')) return 'started';
   if (keys.some((k) => k === 'new' || k === 'created' || k === 'unassigned' || k === 'queued')) return 'created';
@@ -99,13 +106,13 @@ export function classifyHistoryRowForNotifyMilestone(row) {
 function milestoneCategoryToNotificationType(category, row, isMangan) {
   if (!category) return null;
   if (category === 'created') return 'new_task';
-  if (category === 'ready_for_pickup') return null;
+  if (category === 'ready_for_pickup') return 'ready_pickup';
   if (category === 'accepted') {
     if (isMangan && normalizeTimelineStatusKey(row?.status) === 'assigned') return 'task_assigned';
     return 'task_accepted';
   }
   if (category === 'successful') return 'task_done';
-  if (category === 'started' || category === 'inprogress') return 'new_task';
+  if (category === 'started' || category === 'inprogress' || category === 'preparing') return 'new_task';
   return null;
 }
 

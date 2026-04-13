@@ -193,6 +193,12 @@ function normalizedBlobImpliesInProgress(blob) {
   return false;
 }
 
+function normalizedBlobImpliesPreparing(blob) {
+  if (!blob) return false;
+  if (blob.includes('notpreparing') || blob.includes('unpreparing')) return false;
+  return blob === 'preparing' || blob.includes('preparing');
+}
+
 const TIMELINE_MAP_LINK_STATUSES = new Set([
   'assigned',
   'acknowledged',
@@ -268,7 +274,7 @@ function historyRowIsRiderAcceptance(row) {
   return false;
 }
 
-/** Timeline poll / toast: accepted, started, in progress, successful (matches server fan-out). */
+/** Timeline poll / toast: milestones aligned with server classifyTimelineHistoryForDashboardNotify. */
 function classifyHistoryRowForTimelineNotify(row) {
   if (!row || typeof row !== 'object') return null;
   const keys = [
@@ -282,8 +288,10 @@ function classifyHistoryRowForTimelineNotify(row) {
   if (keys.some((k) => k === 'readyforpickup' || k === 'readypickup' || normalizedBlobImpliesReadyForPickup(k))) {
     return 'ready_for_pickup';
   }
+  if (keys.some((k) => k === 'preparing' || normalizedBlobImpliesPreparing(k))) return 'preparing';
   if (keys.some((k) => k === 'inprogress' || normalizedBlobImpliesInProgress(k))) return 'inprogress';
   if (keys.some((k) => k === 'started')) return 'started';
+  if (keys.some((k) => k === 'new' || k === 'created' || k === 'unassigned' || k === 'queued')) return 'created';
   if (historyRowIsRiderAcceptance(row)) return 'accepted';
   if (keys.some((k) => k === 'acknowledged' || k === 'accepted' || k === 'accept')) return 'accepted';
   if (keys.some((k) => normalizedBlobImpliesTaskAccepted(k))) return 'accepted';

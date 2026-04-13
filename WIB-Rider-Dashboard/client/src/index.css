@@ -1849,13 +1849,18 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
   background: var(--border-soft, rgba(255, 255, 255, 0.22));
   border-radius: 3px;
 }
+/* System toast (rider + timeline): one dark card, olive accent + timer bar, blue info mark */
 .rider-notif-toast.Toastify__toast {
+  --rider-toast-olive: #8f9f5c;
+  --rider-toast-bg: #2c3138;
   border-radius: 12px;
-  border: 1px solid var(--border-soft);
-  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.2);
-  min-height: 3.25rem;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 10px 32px rgba(0, 0, 0, 0.35);
+  min-height: 3.35rem;
   padding: 0;
   overflow: hidden;
+  background: var(--rider-toast-bg) !important;
+  color: #f4f5f7;
 }
 .rider-notif-toast.Toastify__toast::before {
   content: '';
@@ -1864,58 +1869,87 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
   top: 0;
   bottom: 0;
   width: 4px;
-  background: var(--color-primary);
+  background: var(--rider-toast-olive);
+  border-radius: 12px 0 0 12px;
 }
 .rider-notif-toast-body.Toastify__toast-body {
-  padding: 0.85rem 2.25rem 0.85rem 1.1rem;
+  display: flex;
+  align-items: flex-start;
+  padding: 0.8rem 2.35rem 0.85rem 0.95rem;
   margin: 0;
   font-size: 0.875rem;
   line-height: 1.45;
-  color: var(--text-dark);
+  color: #f4f5f7;
   white-space: normal;
+}
+.rider-notif-toast-inner {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.65rem;
+  width: 100%;
+  min-width: 0;
+}
+.rider-notif-toast-info-icon {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: #3b82f6;
+  color: #fff;
+  font-size: 0.95rem;
+  font-weight: 700;
+  font-style: italic;
+  line-height: 28px;
+  text-align: center;
+  margin-top: 0.05rem;
+  user-select: none;
 }
 .rider-notif-toast-stacked {
   display: flex;
   flex-direction: column;
-  gap: 0.35rem;
+  gap: 0.3rem;
   text-align: left;
+  flex: 1;
+  min-width: 0;
 }
 .rider-notif-toast-line1 {
-  font-weight: 600;
+  font-weight: 700;
   font-size: 0.9rem;
   line-height: 1.35;
-  color: var(--text-dark);
+  color: #fff;
 }
 .rider-notif-toast-line-by {
   font-weight: 600;
   font-size: 0.8125rem;
   line-height: 1.35;
-  color: var(--color-primary);
+  color: var(--rider-toast-olive);
 }
 .rider-notif-toast-line2 {
   font-weight: 400;
   font-size: 0.8125rem;
   line-height: 1.4;
-  color: var(--text-muted, #6b7280);
+  color: #a8b0ba;
   word-break: break-word;
 }
 .Toastify__toast-theme--dark.rider-notif-toast {
-  background: var(--bg-surface-2, #242a32);
+  background: var(--rider-toast-bg);
 }
 .Toastify__toast-theme--light.rider-notif-toast {
-  background: var(--bg-card, #fff);
-  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.12);
+  background: var(--rider-toast-bg);
+  box-shadow: 0 10px 32px rgba(0, 0, 0, 0.28);
 }
 .rider-notif-toast-progress.Toastify__progress-bar {
-  background: var(--color-primary);
+  background: var(--rider-toast-olive) !important;
 }
 .rider-notif-toast .Toastify__close-button {
-  opacity: 0.65;
+  opacity: 0.55;
+  color: #c5cad3;
   align-self: flex-start;
   margin-top: 0.35rem;
 }
 .rider-notif-toast .Toastify__close-button:hover {
   opacity: 1;
+  color: #fff;
 }
 
 /* Filter pills - like reference (All active = light green, others gray) */
@@ -2507,112 +2541,6 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
   min-height: 0;
   display: flex;
   flex-direction: column;
-}
-
-/* Activity timeline updates — teal toast (matches WIB Rider admin map/dashboard style) */
-.dashboard-timeline-toast-stack {
-  position: fixed;
-  right: 1rem;
-  bottom: 1rem;
-  z-index: 1080;
-  display: flex;
-  flex-direction: column;
-  gap: 0.65rem;
-  max-width: min(420px, calc(100vw - 2rem));
-  max-height: min(420px, calc(100vh - 4.5rem));
-  overflow-x: hidden;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  pointer-events: none;
-}
-
-.dashboard-timeline-toast-stack::-webkit-scrollbar {
-  width: 6px;
-}
-
-.dashboard-timeline-toast-stack::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.25);
-  border-radius: 3px;
-}
-.dashboard-timeline-toast {
-  pointer-events: auto;
-  display: flex;
-  align-items: flex-start;
-  gap: 0.75rem;
-  width: 100%;
-  margin: 0;
-  padding: 0.85rem 1rem 0.85rem 0.85rem;
-  text-align: left;
-  border: none;
-  border-radius: 10px;
-  cursor: pointer;
-  background: linear-gradient(135deg, #1abc9c 0%, #16a085 100%);
-  color: #fff;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
-  font-family: inherit;
-  transition: transform 0.15s ease, box-shadow 0.15s ease;
-}
-.dashboard-timeline-toast:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.24);
-}
-.dashboard-timeline-toast:focus-visible {
-  outline: 2px solid #fff;
-  outline-offset: 2px;
-}
-.dashboard-timeline-toast-icon {
-  flex-shrink: 0;
-  margin-top: 0.1rem;
-  opacity: 0.95;
-  color: #fff;
-}
-.dashboard-timeline-toast-body {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-}
-.dashboard-timeline-toast-line1 {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.4rem 0.5rem;
-  font-weight: 700;
-  font-size: 0.9375rem;
-  line-height: 1.3;
-}
-.dashboard-timeline-toast-taskid {
-  font-weight: 700;
-  letter-spacing: 0.01em;
-}
-.dashboard-timeline-toast .tag {
-  font-size: 0.7rem;
-  font-weight: 600;
-  padding: 0.2rem 0.5rem;
-  border-radius: 999px;
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-}
-.dashboard-timeline-toast-line2 {
-  font-size: 0.875rem;
-  font-weight: 400;
-  line-height: 1.4;
-  opacity: 0.98;
-  word-break: break-word;
-}
-.dashboard-timeline-toast-hint {
-  flex-shrink: 0;
-  align-self: center;
-  font-size: 0.65rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  opacity: 0.85;
-  writing-mode: vertical-rl;
-  transform: rotate(180deg);
-  max-height: 4.5rem;
-  padding-left: 0.15rem;
 }
 
 /* Merchant filter (Settings → Map settings; per admin account + local cache per account, drives dashboard map) */

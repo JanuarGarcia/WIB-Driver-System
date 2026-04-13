@@ -65,6 +65,13 @@ function normalizedBlobImpliesInProgress(blob) {
   return false;
 }
 
+/** Mangan / merchant timeline: "Preparing" (often only in status or embedded in remarks). */
+function normalizedBlobImpliesPreparing(blob) {
+  if (!blob) return false;
+  if (blob.includes('notpreparing') || blob.includes('unpreparing')) return false;
+  return blob === 'preparing' || blob.includes('preparing');
+}
+
 function historyRowIsRiderAcceptanceForNotify(row) {
   if (!row || typeof row !== 'object') return false;
   const parts = [row.status, row.remarks, row.reason, row.notes];
@@ -86,6 +93,7 @@ function classifyTimelineHistoryForDashboardNotify(row) {
   if (!row || typeof row !== 'object') return null;
   const keys = [
     normalizeTimelineNotifyKey(row.status),
+    normalizeTimelineNotifyKey(row.description),
     normalizeTimelineNotifyKey(row.remarks),
     normalizeTimelineNotifyKey(row.reason),
     normalizeTimelineNotifyKey(row.notes),
@@ -94,6 +102,7 @@ function classifyTimelineHistoryForDashboardNotify(row) {
   if (keys.some((k) => k === 'readyforpickup' || k === 'readypickup' || normalizedBlobImpliesReadyForPickup(k))) {
     return 'ready_for_pickup';
   }
+  if (keys.some((k) => k === 'preparing' || normalizedBlobImpliesPreparing(k))) return 'preparing';
   if (keys.some((k) => k === 'inprogress' || normalizedBlobImpliesInProgress(k))) return 'inprogress';
   if (keys.some((k) => k === 'started')) return 'started';
   if (keys.some((k) => k === 'new' || k === 'created' || k === 'unassigned' || k === 'queued')) return 'created';
