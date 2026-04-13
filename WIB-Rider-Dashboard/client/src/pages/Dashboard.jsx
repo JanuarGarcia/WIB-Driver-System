@@ -33,7 +33,7 @@ const MERCHANTS_REFRESH_MS = 60000;
 const ACTIVE_DRIVER_IDS_REFRESH_MS = 10000;
 const MAP_AUTO_REFRESH_MIN_MS = 15000;
 const MAP_AUTO_REFRESH_MAX_MS = 45000;
-const DASHBOARD_MAP_CACHE_PREFIX = 'wib-dashboard-map-cache-v1';
+const DASHBOARD_MAP_CACHE_PREFIX = 'wib-dashboard-map-cache-v2';
 import { useTeamFilter } from '../context/TeamFilterContext';
 import {
   DASHBOARD_TASKS_MAP_DATE_KEY,

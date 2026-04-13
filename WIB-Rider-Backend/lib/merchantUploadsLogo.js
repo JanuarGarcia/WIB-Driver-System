@@ -250,16 +250,15 @@ function resolveMerchantLogoFileBasename(dbLogo, restaurantName, merchantsDir) {
 }
 
 /**
- * Value for API `logo` / `logo_url`: external URL unchanged, else basename that exists in uploads/merchants.
- * Never return a legacy DB-only filename that is missing on disk (avoids 404 map pins).
- * @param {{ logo?: unknown, logo_url?: unknown, image_url?: unknown, restaurant_name?: unknown }} row
+ * Basename of a file in uploads/merchants (or sibling uploads/merchant) for dashboard map + merchant list.
+ * Does not use DB `logo` / `logo_url` / `image_url` — only on-disk files matched from `restaurant_name` (slug + fuzzy rules).
+ * @param {{ restaurant_name?: unknown, restaurantName?: unknown }} row
  * @param {string} merchantsDir
+ * @returns {string | null}
  */
 function resolveMerchantLogoForApi(row, merchantsDir) {
-  const raw = row.logo_url ?? row.logo ?? row.image_url;
-  const s = raw != null && String(raw).trim() ? String(raw).trim() : '';
-  if (/^https?:\/\//i.test(s)) return s;
-  return resolveMerchantLogoFileBasename(s, row.restaurant_name, merchantsDir);
+  const name = row?.restaurant_name ?? row?.restaurantName;
+  return resolveMerchantLogoFileBasename('', name, merchantsDir);
 }
 
 module.exports = {

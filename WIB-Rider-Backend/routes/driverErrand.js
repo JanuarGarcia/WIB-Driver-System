@@ -3,6 +3,7 @@ const path = require('path');
 const fs = require('fs');
 const multer = require('multer');
 const { pool, errandWibPool } = require('../config/db');
+const { getUploadsRoot } = require('../lib/uploadsRoot');
 const { success, error } = require('../lib/response');
 const { validateApiKey, resolveDriver } = require('../middleware/auth');
 const {
@@ -74,7 +75,7 @@ function errandOrderAllowsProofUpload(row) {
   return !blocked.includes(k);
 }
 
-const errandProofDir = path.join(__dirname, '..', 'uploads', 'errand');
+const errandProofDir = path.join(getUploadsRoot(), 'errand');
 if (!fs.existsSync(errandProofDir)) {
   fs.mkdirSync(errandProofDir, { recursive: true });
 }

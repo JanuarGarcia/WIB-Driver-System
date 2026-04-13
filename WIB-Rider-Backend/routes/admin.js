@@ -7,6 +7,7 @@ const multer = require('multer');
 const { v4: uuidv4 } = require('uuid');
 const bcrypt = require('bcryptjs');
 const { pool, errandWibPool } = require('../config/db');
+const { getUploadsRoot } = require('../lib/uploadsRoot');
 const {
   mapStOrderRowToTaskListRow,
   buildErrandTaskDetailPayload,
@@ -64,8 +65,8 @@ const { resolveMerchantLogoForApi, merchantLogoSearchDirs } = require('../lib/me
 
 const ADMIN_SECRET = process.env.ADMIN_SECRET || '';
 
-// Upload dirs for admin (certificate, profile photo, FCM JSON)
-const uploadsBase = path.join(__dirname, '..', 'uploads');
+// Upload dirs for admin (certificate, profile photo, FCM JSON). UPLOADS_DIR must match app.js static /uploads root.
+const uploadsBase = getUploadsRoot();
 const certDir = path.join(uploadsBase, 'certificates');
 const fcmDir = path.join(uploadsBase, 'fcm');
 [uploadsBase, certDir, fcmDir].forEach((dir) => {
@@ -80,9 +81,32 @@ const storageFcm = multer.diskStorage({
   filename: (_req, _file, cb) => cb(null, `service_account_${Date.now()}.json`),
 });
 const profileDir = path.join(uploadsBase, 'profiles');
-const merchantLogoDir = path.join(uploadsBase, 'merchants');
+const merchantLogoDir = process.env.MERCHANT_LOGOS_DIR
+  ? path.resolve(process.env.MERCHANT_LOGOS_DIR)
+  : path.join(uploadsBase, 'merchants');
 if (!fs.existsSync(profileDir)) fs.mkdirSync(profileDir, { recursive: true });
 if (!fs.existsSync(merchantLogoDir)) fs.mkdirSync(merchantLogoDir, { recursive: true });
+
+(function warnIfNoMerchantLogoFiles() {
+  try {
+    const dirs = merchantLogoSearchDirs(merchantLogoDir);
+    let n = 0;
+    for (const d of dirs) {
+      if (!fs.existsSync(d)) continue;
+      for (const name of fs.readdirSync(d)) {
+        if (/\.(jpe?g|png|gif|webp)$/i.test(name)) n += 1;
+      }
+    }
+    if (n === 0) {
+      console.warn(
+        `[WIB] Merchant map logos: no image files under ${dirs.join(' | ')}. ` +
+          'The repo gitignores uploads/ — copy uploads/merchants to the API server, or set UPLOADS_DIR / MERCHANT_LOGOS_DIR in .env.'
+      );
+    }
+  } catch (e) {
+    console.warn('[WIB] Merchant map logos: could not scan logo directories:', e.message || e);
+  }
+})();
 const storageProfile = multer.diskStorage({
   destination: (_req, _file, cb) => cb(null, profileDir),
   filename: (_req, file, cb) => cb(null, `driver_${Date.now()}${path.extname(file.originalname || '') || '.jpg'}`),

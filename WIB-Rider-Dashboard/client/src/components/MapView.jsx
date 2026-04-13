@@ -669,11 +669,11 @@ function LeafletMapView({
           </Marker>
         ))}
         {merchantMarkers.map((m, idx) => {
-          const logo = m.logo_url ?? m.logo ?? m.image_url;
+          const logo = m.logo_url;
           const logoImgUrl = showMerchantLogosOnMap ? merchantLogoUrl(logo) : null;
           return (
             <Marker
-              key={`merchant-${m.merchant_id ?? idx}`}
+              key={`merchant-${m.merchant_id ?? idx}-${logoImgUrl || 'nofile'}`}
               position={[Number(m.lat), Number(m.lng)]}
               icon={leafletPinIcon('merchant', logoImgUrl)}
             >
@@ -724,7 +724,7 @@ function LeafletMapboxMarkersLayer({ riderMarkers, merchantMarkers, taskMapMarke
       group.addLayer(marker);
     });
     (merchantMarkers || []).forEach((m, idx) => {
-      const logo = m.logo_url ?? m.logo ?? m.image_url;
+      const logo = m.logo_url;
       const logoImgUrl = showMerchantLogosOnMap ? merchantLogoUrl(logo) : null;
       const marker = L.marker([Number(m.lat), Number(m.lng)], { icon: leafletPinIcon('merchant', logoImgUrl) });
       marker.bindPopup(merchantLeafletPopupHtmlStyled(m.restaurant_name));
@@ -883,19 +883,20 @@ function MapboxMapView({
             <PinMarker type="rider" title={riderMarkerTitle(loc)} />
           </MapboxMarker>
         ))}
-        {merchantMarkers.map((m, idx) => (
-          <MapboxMarker key={`merchant-${m.merchant_id ?? idx}`} longitude={Number(m.lng)} latitude={Number(m.lat)} anchor="bottom">
-            <PinMarker
-              type="merchant"
-              imageUrl={
-                showMerchantLogosOnMap
-                  ? m.logo_url ?? m.logo ?? m.image_url ?? m.photo ?? m.merchant_image
-                  : null
-              }
-              title={merchantMapTitle(m.restaurant_name)}
-            />
-          </MapboxMarker>
-        ))}
+        {merchantMarkers.map((m, idx) => {
+          const logo = m.logo_url;
+          const logoImgUrl = showMerchantLogosOnMap ? merchantLogoUrl(logo) : null;
+          return (
+            <MapboxMarker
+              key={`merchant-${m.merchant_id ?? idx}-${logoImgUrl || 'nofile'}`}
+              longitude={Number(m.lng)}
+              latitude={Number(m.lat)}
+              anchor="bottom"
+            >
+              <PinMarker type="merchant" imageUrl={logoImgUrl} title={merchantMapTitle(m.restaurant_name)} />
+            </MapboxMarker>
+          );
+        })}
         {taskMapMarkers.map((t, idx) => (
           <MapboxMarker key={`task-${t.task_id ?? idx}`} longitude={Number(t.lng)} latitude={Number(t.lat)} anchor="bottom">
             <PinMarker type={taskMarkerPinType(t)} title={taskMapTitle(t)} />

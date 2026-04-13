@@ -4,6 +4,7 @@ const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
 const { databaseNames } = require('./config/db');
+const { getUploadsRoot } = require('./lib/uploadsRoot');
 const driverRoutes = require('./routes/driver');
 const adminRoutes = require('./routes/admin');
 
@@ -13,7 +14,7 @@ app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-const uploadsRoot = path.join(__dirname, 'uploads');
+const uploadsRoot = getUploadsRoot();
 // Proof-of-delivery: files referenced by mt_driver_task_photo.photo_name (old rider app + dashboard).
 // Newer rows often use uploads/task/; legacy filenames may live in uploads/task_photos/.
 const uploadsTaskDir = path.join(uploadsRoot, 'task');

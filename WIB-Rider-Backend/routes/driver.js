@@ -7,6 +7,7 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const { pool, errandWibPool } = require('../config/db');
+const { getUploadsRoot } = require('../lib/uploadsRoot');
 const { verifyStoredPassword, verifyRiderPasswordResult } = require('../lib/passwordVerify');
 const {
   persistPasswordBcryptSidecar,
@@ -38,7 +39,7 @@ const { updateMtOrderStatusIfDeliveryComplete } = require('../lib/mtOrderStatusS
 const { buildErrandOrderDetailPayloadForDriver } = require('../lib/errandOrders');
 const { fetchErrandProofsForOrder } = require('../lib/errandProof');
 
-const uploadDir = path.join(__dirname, '..', 'uploads', 'profiles');
+const uploadDir = path.join(getUploadsRoot(), 'profiles');
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
 }
@@ -55,7 +56,7 @@ const upload = multer({
   },
 });
 
-const taskProofDir = path.join(__dirname, '..', 'uploads', 'task');
+const taskProofDir = path.join(getUploadsRoot(), 'task');
 if (!fs.existsSync(taskProofDir)) {
   fs.mkdirSync(taskProofDir, { recursive: true });
 }
