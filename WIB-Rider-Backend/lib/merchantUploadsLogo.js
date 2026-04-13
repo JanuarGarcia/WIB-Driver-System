@@ -140,6 +140,7 @@ function pickRestaurantNameFromRow(row) {
 
 function nameWords(name) {
   return String(name || '')
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
     .toLowerCase()
     .replace(/\u2019/g, "'")
     .replace(/['`]/g, '')
