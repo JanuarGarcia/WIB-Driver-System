@@ -31,12 +31,12 @@ function logoUrl(logo) {
   if (!logo || !String(logo).trim()) return null;
   const s = String(logo).trim();
   if (s.startsWith('http://') || s.startsWith('https://')) return s;
-  if (s.startsWith('/uploads/merchants/')) {
-    const file = s.replace(/^\/uploads\/merchants\//i, '').split('/').pop();
+  if (s.startsWith('/uploads/merchants/') || s.startsWith('/uploads/merchant/')) {
+    const file = s.replace(/^\/uploads\/merchants?\//i, '').split('/').filter(Boolean).pop();
     return resolveMerchantPublicLogoUrl(file) || resolveUploadUrl(s);
   }
   if (s.startsWith('/uploads/')) return resolveUploadUrl(s);
-  const m = s.match(/uploads\/merchants\/([^#?]+)/i);
+  const m = s.match(/uploads\/merchants?\/([^#?]+)/i);
   if (m) {
     const file = m[1].replace(/\\/g, '/').split('/').filter(Boolean).pop();
     if (file) return resolveMerchantPublicLogoUrl(file) || resolveUploadUrl(`/uploads/merchants/${encodeURIComponent(file)}`);

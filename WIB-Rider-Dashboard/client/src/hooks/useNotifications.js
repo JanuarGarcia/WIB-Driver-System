@@ -9,7 +9,7 @@ import {
   notificationIdsSharingDedupeKeysWith,
 } from '../utils/riderNotificationNavigate';
 import { shouldSuppressRiderNotificationToast } from '../utils/notificationToastDedupe';
-import { showRiderSystemToast } from '../utils/riderSystemToast';
+import { showRiderSystemToast, inferNotificationOrderKind } from '../utils/riderSystemToast';
 
 /** `public/fb-alert.mp3` — Vite serves `public/` at `import.meta.env.BASE_URL`. */
 const alertSoundUrl = `${import.meta.env.BASE_URL}fb-alert.mp3`;
@@ -254,8 +254,10 @@ export function useNotifications() {
         showRiderSystemToast({
           toastId: tid,
           title,
+          message,
           byLabel: actor,
           tertiary: messageMain,
+          orderKind: inferNotificationOrderKind({ title, message }),
         });
       }
     } else if (toastFresh.length > 1) {
@@ -267,11 +269,16 @@ export function useNotifications() {
         const m1 = (first?.message || '').toString().trim();
         const actor1 = m1 ? parseActorFromNotificationMessage(m1) : '';
         const msg1 = m1 ? formatNotificationMessageForDisplay(m1) : '';
+        const kindSet = new Set(
+          toastFresh.map((n) => inferNotificationOrderKind({ title: n.title, message: n.message }))
+        );
+        const batchOrderKind = kindSet.size > 1 ? 'mixed' : [...kindSet][0];
         showRiderSystemToast({
           toastId: batchTid,
           title: `${count} new notifications`,
           byLine: actor1 ? `Latest: By ${actor1}` : '',
           tertiary: `${t1}${msg1 ? ` — ${msg1}` : ''}`,
+          orderKind: batchOrderKind,
         });
       }
     }

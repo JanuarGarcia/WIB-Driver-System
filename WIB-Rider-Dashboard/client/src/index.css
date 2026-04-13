@@ -1850,7 +1850,7 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
   background: var(--border-soft, rgba(255, 255, 255, 0.22));
   border-radius: 3px;
 }
-/* System toast (rider + timeline): one dark card, olive accent + timer bar, blue info mark */
+/* System toast (rider + timeline): one dark card, olive accent + timer bar; order type = small text chip */
 .rider-notif-toast.Toastify__toast {
   --rider-toast-olive: #8f9f5c;
   --rider-toast-bg: #2c3138;
@@ -1890,19 +1890,23 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
   width: 100%;
   min-width: 0;
 }
-.rider-notif-toast-info-icon {
+.rider-notif-toast-kind {
   flex-shrink: 0;
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  background: #3b82f6;
-  color: #fff;
-  font-size: 0.95rem;
-  font-weight: 700;
-  font-style: italic;
-  line-height: 28px;
+  align-self: flex-start;
+  min-width: 3.35rem;
+  padding: 0.32rem 0.5rem;
+  margin-top: 0.02rem;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.07);
+  color: #e8eaef;
+  font-size: 0.625rem;
+  font-weight: 800;
+  font-style: normal;
+  letter-spacing: 0.07em;
+  line-height: 1.2;
   text-align: center;
-  margin-top: 0.05rem;
+  text-transform: uppercase;
   user-select: none;
 }
 .rider-notif-toast-stacked {

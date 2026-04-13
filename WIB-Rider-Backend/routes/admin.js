@@ -60,7 +60,7 @@ const {
 } = require('../lib/customerOrderPushDispatch');
 const { updateMtOrderStatusIfDeliveryComplete } = require('../lib/mtOrderStatusSync');
 const { sendCustomerTaskNotify } = require('../lib/sendCustomerTaskMessage');
-const { resolveMerchantLogoForApi } = require('../lib/merchantUploadsLogo');
+const { resolveMerchantLogoForApi, merchantLogoSearchDirs } = require('../lib/merchantUploadsLogo');
 
 const ADMIN_SECRET = process.env.ADMIN_SECRET || '';
 
@@ -366,18 +366,21 @@ router.get('/merchants/public-logo/:filename', (req, res) => {
     } catch (_) {
       /* use raw */
     }
-    const base = path.basename(raw.replace(/\\/g, '/'));
+    const base = path.basename(String(raw).replace(/\\/g, '/').split('?')[0].split('#')[0]);
     if (!base || !MERCHANT_PUBLIC_LOGO_EXT.test(base)) return res.status(400).end();
-    const fp = path.join(merchantLogoDir, base);
-    const root = path.resolve(merchantLogoDir);
-    const resolved = path.resolve(fp);
-    if (!resolved.startsWith(root + path.sep) && resolved !== root) return res.status(400).end();
-    if (!fs.existsSync(resolved)) return res.status(404).end();
     const ext = path.extname(base).toLowerCase();
     const ct =
       ext === '.png' ? 'image/png' : ext === '.gif' ? 'image/gif' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
-    res.set('Cache-Control', 'public, max-age=86400');
-    res.type(ct).sendFile(resolved);
+    for (const dir of merchantLogoSearchDirs(merchantLogoDir)) {
+      const fp = path.join(dir, base);
+      const root = path.resolve(dir);
+      const resolved = path.resolve(fp);
+      if (!resolved.startsWith(root + path.sep) && resolved !== root) continue;
+      if (!fs.existsSync(resolved)) continue;
+      res.set('Cache-Control', 'public, max-age=86400');
+      return res.type(ct).sendFile(resolved);
+    }
+    return res.status(404).end();
   } catch (_) {
     res.status(500).end();
   }

@@ -3,7 +3,8 @@ const path = require('path');
 
 const IMAGE_EXT = /\.(jpe?g|png|gif|webp)$/i;
 
-let cache = { at: 0, stemToFile: /** @type {Map<string, string> | null} */ (null) };
+/** @type {{ at: number, key: string, stemToFile: Map<string, string> | null }} */
+let cache = { at: 0, key: '', stemToFile: null };
 const CACHE_MS = 45_000;
 
 function readStemIndex(dir) {
@@ -19,12 +20,45 @@ function readStemIndex(dir) {
 }
 
 /**
- * @param {string} merchantsDir absolute path to uploads/merchants
+ * Primary uploads/merchants dir plus legacy sibling uploads/merchant (singular), de-duped.
+ * @param {string} merchantsDir absolute path to uploads/merchants (canonical)
+ * @returns {string[]}
+ */
+function merchantLogoSearchDirs(merchantsDir) {
+  const p = merchantsDir != null ? String(merchantsDir).trim() : '';
+  if (!p) return [];
+  const dirs = [p];
+  const parent = path.dirname(p);
+  const base = path.basename(p).toLowerCase();
+  const altName = base === 'merchants' ? 'merchant' : base === 'merchant' ? 'merchants' : null;
+  if (altName) {
+    const alt = path.join(parent, altName);
+    if (alt.toLowerCase() !== p.toLowerCase()) dirs.push(alt);
+  }
+  return dirs;
+}
+
+function readStemIndexMerged(dirs) {
+  const merged = new Map();
+  for (const dir of dirs) {
+    const part = readStemIndex(dir);
+    for (const [stem, file] of part) {
+      if (!merged.has(stem)) merged.set(stem, file);
+    }
+  }
+  return merged;
+}
+
+/**
+ * @param {string} merchantsDir absolute path to uploads/merchants (also scans sibling uploads/merchant)
  */
 function getMerchantsStemIndex(merchantsDir) {
+  const dirs = merchantLogoSearchDirs(merchantsDir);
+  const key = dirs.join('\n');
   const now = Date.now();
-  if (!cache.stemToFile || now - cache.at > CACHE_MS) {
-    cache.stemToFile = readStemIndex(merchantsDir);
+  if (!cache.stemToFile || cache.key !== key || now - cache.at > CACHE_MS) {
+    cache.stemToFile = dirs.length ? readStemIndexMerged(dirs) : new Map();
+    cache.key = key;
     cache.at = now;
   }
   return cache.stemToFile;
@@ -85,19 +119,28 @@ function basenameOnly(logoRaw) {
   if (!s) return '';
   if (/^https?:\/\//i.test(s)) return s;
   s = s.replace(/\\/g, '/');
-  s = s.replace(/^.*\/uploads\/merchants\//i, '').replace(/^\/?uploads\/merchants\//i, '');
+  s = s
+    .replace(/^.*\/uploads\/merchants\//i, '')
+    .replace(/^\/?uploads\/merchants\//i, '')
+    .replace(/^.*\/uploads\/merchant\//i, '')
+    .replace(/^\/?uploads\/merchant\//i, '');
   const parts = s.split('/').filter(Boolean);
   return parts.length ? parts[parts.length - 1] : s;
 }
 
-function fileExistsMerchants(merchantsDir, base) {
-  if (!base || !merchantsDir) return false;
-  const fp = path.join(merchantsDir, path.basename(base));
-  try {
-    return fs.existsSync(fp) && fs.statSync(fp).isFile();
-  } catch {
-    return false;
+function fileExistsInMerchantDirs(canonicalMerchantsDir, base) {
+  if (!base || !canonicalMerchantsDir) return false;
+  const bn = path.basename(base);
+  for (const dir of merchantLogoSearchDirs(canonicalMerchantsDir)) {
+    if (!dir) continue;
+    try {
+      const fp = path.join(dir, bn);
+      if (fs.existsSync(fp) && fs.statSync(fp).isFile()) return true;
+    } catch {
+      /* ignore */
+    }
   }
+  return false;
 }
 
 /**
@@ -148,7 +191,7 @@ function resolveMerchantLogoFileBasename(dbLogo, restaurantName, merchantsDir) {
   const tryFileOnDisk = (base) => {
     if (!base || !IMAGE_EXT.test(base)) return null;
     const bn = path.basename(base);
-    if (fileExistsMerchants(merchantsDir, bn)) return bn;
+    if (fileExistsInMerchantDirs(merchantsDir, bn)) return bn;
     for (const file of index.values()) {
       if (file.toLowerCase() === bn.toLowerCase()) return file;
     }
@@ -223,4 +266,5 @@ module.exports = {
   resolveMerchantLogoFileBasename,
   resolveMerchantLogoForApi,
   getMerchantsStemIndex,
+  merchantLogoSearchDirs,
 };

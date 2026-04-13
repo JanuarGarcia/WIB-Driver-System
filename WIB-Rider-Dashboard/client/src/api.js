@@ -105,7 +105,7 @@ export function resolveMerchantPublicLogoUrl(filename) {
   const raw = filename != null ? String(filename).trim() : '';
   if (!raw) return null;
   if (/^https?:\/\//i.test(raw)) return raw;
-  const baseName = raw.replace(/\\/g, '/').split('/').filter(Boolean).pop() || raw;
+  const baseName = (raw.replace(/\\/g, '/').split('/').filter(Boolean).pop() || raw).split('?')[0].split('#')[0];
   if (!/\.(jpe?g|png|gif|webp)$/i.test(baseName)) return null;
   const enc = encodeURIComponent(baseName);
   const base = String(API_BASE || '/api').replace(/\/$/, '');

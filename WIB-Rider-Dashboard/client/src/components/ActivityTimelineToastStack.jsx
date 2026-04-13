@@ -96,6 +96,7 @@ export default function ActivityTimelineToastStack({ dateStr, onOpenTaskTimeline
         title,
         byLabel: byActor,
         tertiary,
+        orderKind: kind === 'mangan' ? 'mangan' : 'task',
         onOpen: () => onOpenTaskTimeline?.(openId),
       });
       playTimelineChime();
