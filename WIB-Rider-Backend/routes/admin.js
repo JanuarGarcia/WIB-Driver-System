@@ -353,6 +353,36 @@ router.get('/health', (req, res) => {
   res.json({ ok: true });
 });
 
+/**
+ * Merchant map / table logos: <img> cannot send x-dashboard-token, and the dashboard may be on another
+ * host than /uploads static. Serve files from uploads/merchants by basename only (no path traversal).
+ */
+const MERCHANT_PUBLIC_LOGO_EXT = /\.(jpe?g|png|gif|webp)$/i;
+router.get('/merchants/public-logo/:filename', (req, res) => {
+  try {
+    let raw = req.params.filename != null ? String(req.params.filename) : '';
+    try {
+      raw = decodeURIComponent(raw);
+    } catch (_) {
+      /* use raw */
+    }
+    const base = path.basename(raw.replace(/\\/g, '/'));
+    if (!base || !MERCHANT_PUBLIC_LOGO_EXT.test(base)) return res.status(400).end();
+    const fp = path.join(merchantLogoDir, base);
+    const root = path.resolve(merchantLogoDir);
+    const resolved = path.resolve(fp);
+    if (!resolved.startsWith(root + path.sep) && resolved !== root) return res.status(400).end();
+    if (!fs.existsSync(resolved)) return res.status(404).end();
+    const ext = path.extname(base).toLowerCase();
+    const ct =
+      ext === '.png' ? 'image/png' : ext === '.gif' ? 'image/gif' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
+    res.set('Cache-Control', 'public, max-age=86400');
+    res.type(ct).sendFile(resolved);
+  } catch (_) {
+    res.status(500).end();
+  }
+});
+
 router.use(adminAuth);
 
 /**

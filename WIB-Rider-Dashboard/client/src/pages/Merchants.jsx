@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { api, resolveUploadUrl } from '../api';
+import { api, resolveUploadUrl, resolveMerchantPublicLogoUrl } from '../api';
 import { useTableAutoRefresh } from '../hooks/useTableAutoRefresh';
 import { useTablePagination, PAGE_SIZE_OPTIONS } from '../hooks/useTablePagination';
 import { useTableSort } from '../hooks/useTableSort';
@@ -31,13 +31,17 @@ function logoUrl(logo) {
   if (!logo || !String(logo).trim()) return null;
   const s = String(logo).trim();
   if (s.startsWith('http://') || s.startsWith('https://')) return s;
+  if (s.startsWith('/uploads/merchants/')) {
+    const file = s.replace(/^\/uploads\/merchants\//i, '').split('/').pop();
+    return resolveMerchantPublicLogoUrl(file) || resolveUploadUrl(s);
+  }
   if (s.startsWith('/uploads/')) return resolveUploadUrl(s);
   const m = s.match(/uploads\/merchants\/([^#?]+)/i);
   if (m) {
     const file = m[1].replace(/\\/g, '/').split('/').filter(Boolean).pop();
-    if (file) return resolveUploadUrl(`/uploads/merchants/${encodeURIComponent(file)}`);
+    if (file) return resolveMerchantPublicLogoUrl(file) || resolveUploadUrl(`/uploads/merchants/${encodeURIComponent(file)}`);
   }
-  return resolveUploadUrl(`/uploads/merchants/${encodeURIComponent(s)}`);
+  return resolveMerchantPublicLogoUrl(s) || resolveUploadUrl(`/uploads/merchants/${encodeURIComponent(s)}`);
 }
 
 export default function Merchants() {

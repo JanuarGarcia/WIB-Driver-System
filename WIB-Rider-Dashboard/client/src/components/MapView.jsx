@@ -13,7 +13,7 @@ import {
   DirectionsRenderer,
   useGoogleMap,
 } from '@react-google-maps/api';
-import { resolveUploadUrl } from '../api';
+import { resolveUploadUrl, resolveMerchantPublicLogoUrl } from '../api';
 import {
   MAP_MERCHANT_LOGOS_KEY,
   MAP_MERCHANT_LOGOS_CHANGED_EVENT,
@@ -317,13 +317,17 @@ function merchantLogoUrl(logo) {
   if (!logo || !String(logo).trim()) return null;
   const s = String(logo).trim();
   if (s.startsWith('http://') || s.startsWith('https://')) return s;
+  if (s.startsWith('/uploads/merchants/')) {
+    const file = s.replace(/^\/uploads\/merchants\//i, '').split('/').pop();
+    return resolveMerchantPublicLogoUrl(file) || resolveUploadUrl(s);
+  }
   if (s.startsWith('/uploads/')) return resolveUploadUrl(s);
   const m = s.match(/uploads\/merchants\/([^#?]+)/i);
   if (m) {
     const file = m[1].replace(/\\/g, '/').split('/').filter(Boolean).pop();
-    if (file) return resolveUploadUrl(`/uploads/merchants/${encodeURIComponent(file)}`);
+    if (file) return resolveMerchantPublicLogoUrl(file) || resolveUploadUrl(`/uploads/merchants/${encodeURIComponent(file)}`);
   }
-  return resolveUploadUrl(`/uploads/merchants/${encodeURIComponent(s)}`);
+  return resolveMerchantPublicLogoUrl(s) || resolveUploadUrl(`/uploads/merchants/${encodeURIComponent(s)}`);
 }
 
 /** Storefront glyph for merchant pins when logos are off (Mapbox GL path). */

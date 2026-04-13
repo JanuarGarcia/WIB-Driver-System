@@ -95,6 +95,27 @@ export function userFacingApiError(err) {
 export const API_BASE = import.meta.env.VITE_API_URL || '/api';
 const API = API_BASE;
 
+/**
+ * Map / Merchants table: logo <img> cannot send auth headers. This URL hits /admin/api/merchants/public-logo/…
+ * (same path shape as JSON APIs) so it works through the dashboard /api proxy even when /uploads is not exposed on the dashboard host.
+ * @param {string|null|undefined} filename basename only, e.g. rose-cafe.png
+ * @returns {string|null}
+ */
+export function resolveMerchantPublicLogoUrl(filename) {
+  const raw = filename != null ? String(filename).trim() : '';
+  if (!raw) return null;
+  if (/^https?:\/\//i.test(raw)) return raw;
+  const baseName = raw.replace(/\\/g, '/').split('/').filter(Boolean).pop() || raw;
+  if (!/\.(jpe?g|png|gif|webp)$/i.test(baseName)) return null;
+  const enc = encodeURIComponent(baseName);
+  const base = String(API_BASE || '/api').replace(/\/$/, '');
+  if (base.startsWith('http://') || base.startsWith('https://')) {
+    return `${base}/merchants/public-logo/${enc}`;
+  }
+  const prefix = base.startsWith('/') ? base : `/${base}`;
+  return `${prefix}/merchants/public-logo/${enc}`;
+}
+
 /** Covers the whole call (headers + body) — a slow `res.text()` was able to hang forever before. */
 const API_FETCH_TIMEOUT_MS = Math.min(
   600000,

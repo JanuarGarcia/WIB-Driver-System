@@ -115,6 +115,28 @@ app.get('/api/task-photos/:id/image', async (req, res) => {
   }
 });
 
+// Proxy: merchant map logos — must not use JSON /api/* handler (<img> has no auth; route is public on backend).
+app.get('/api/merchants/public-logo/:filename', async (req, res) => {
+  const raw = req.params.filename != null ? String(req.params.filename) : '';
+  const safe = encodeURIComponent(raw.split('/').pop() || raw);
+  const url = `${BACKEND_URL}/admin/api/merchants/public-logo/${safe}`;
+  try {
+    const response = await axios.get(url, {
+      responseType: 'arraybuffer',
+      timeout: 15000,
+      validateStatus: () => true,
+    });
+    if (response.status !== 200) {
+      return res.status(response.status).end();
+    }
+    const contentType = response.headers['content-type'] || 'image/jpeg';
+    res.set('Cache-Control', response.headers['cache-control'] || 'public, max-age=86400');
+    res.type(contentType).send(Buffer.from(response.data));
+  } catch (err) {
+    res.status(err.response?.status || 502).end();
+  }
+});
+
 // Proxy: POST /api/auth/login (no auth required)
 app.post('/api/auth/login', express.json(), async (req, res) => {
   setNoCache(res);
