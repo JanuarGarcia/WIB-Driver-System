@@ -317,6 +317,12 @@ function merchantLogoUrl(logo) {
   if (!logo || !String(logo).trim()) return null;
   const s = String(logo).trim();
   if (s.startsWith('http://') || s.startsWith('https://')) return s;
+  if (s.startsWith('/uploads/')) return resolveUploadUrl(s);
+  const m = s.match(/uploads\/merchants\/([^#?]+)/i);
+  if (m) {
+    const file = m[1].replace(/\\/g, '/').split('/').filter(Boolean).pop();
+    if (file) return resolveUploadUrl(`/uploads/merchants/${encodeURIComponent(file)}`);
+  }
   return resolveUploadUrl(`/uploads/merchants/${encodeURIComponent(s)}`);
 }
 
@@ -380,7 +386,7 @@ function leafletPinIcon(type, logoUrl) {
   const hasImage = type === 'merchant' && logoUrl && String(logoUrl).trim().length > 0;
   const merchantFallback = type === 'merchant' && !hasImage;
   const safeUrl = hasImage ? String(logoUrl).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;') : '';
-  const imgHtml = hasImage ? `<img src="${safeUrl}" alt="" class="leaflet-pin-img" loading="lazy" />` : '';
+  const imgHtml = hasImage ? `<img src="${safeUrl}" alt="" class="leaflet-pin-img" decoding="async" />` : '';
   const storeHtml = merchantFallback ? LEAFLET_MERCHANT_STORE_GLYPH_HTML : '';
   const taskInner =
     type === 'task'

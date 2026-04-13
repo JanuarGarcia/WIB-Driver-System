@@ -125,9 +125,22 @@ export function apiEventSourceUrl(path, queryString = '') {
 
 /** Origin where `/uploads/...` is served (matches API app in app.js). */
 export function uploadsOrigin() {
-  const raw = String(import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
+  const raw = String(import.meta.env.VITE_API_URL || '').trim().replace(/\/$/, '');
   if (raw.startsWith('http://') || raw.startsWith('https://')) {
-    return raw.replace(/\/admin\/api\/?$/i, '').replace(/\/$/, '');
+    try {
+      const u = new URL(raw);
+      let p = (u.pathname || '/').replace(/\/+$/, '');
+      if (p === '/') p = '';
+      if (p.endsWith('/admin/api')) p = p.slice(0, -'/admin/api'.length);
+      else if (p.endsWith('/api')) p = p.slice(0, -'/api'.length);
+      p = p.replace(/\/+$/, '');
+      return `${u.protocol}//${u.host}${p}`;
+    } catch {
+      return raw
+        .replace(/\/admin\/api\/?$/i, '')
+        .replace(/\/api\/?$/i, '')
+        .replace(/\/$/, '');
+    }
   }
   if (import.meta.env.DEV) return 'http://localhost:3000';
   return '';

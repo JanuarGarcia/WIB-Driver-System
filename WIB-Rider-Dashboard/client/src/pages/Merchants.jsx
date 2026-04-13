@@ -31,6 +31,12 @@ function logoUrl(logo) {
   if (!logo || !String(logo).trim()) return null;
   const s = String(logo).trim();
   if (s.startsWith('http://') || s.startsWith('https://')) return s;
+  if (s.startsWith('/uploads/')) return resolveUploadUrl(s);
+  const m = s.match(/uploads\/merchants\/([^#?]+)/i);
+  if (m) {
+    const file = m[1].replace(/\\/g, '/').split('/').filter(Boolean).pop();
+    if (file) return resolveUploadUrl(`/uploads/merchants/${encodeURIComponent(file)}`);
+  }
   return resolveUploadUrl(`/uploads/merchants/${encodeURIComponent(s)}`);
 }
 

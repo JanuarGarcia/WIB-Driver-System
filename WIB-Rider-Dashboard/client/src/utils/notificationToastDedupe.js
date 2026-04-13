@@ -5,7 +5,8 @@
 
 import { parseTaskIdFromNotificationMessage } from './riderNotificationNavigate';
 
-const TTL_MS = 25000;
+/** Long enough for the bell poller (10s) + network skew after a timeline toast. */
+const TTL_MS = 45000;
 const suppressionUntil = new Map();
 
 function pruneSuppression() {
@@ -59,14 +60,16 @@ function normalizedBlobImpliesPreparing(blob) {
   return blob === 'preparing' || blob.includes('preparing');
 }
 
+/** Match server `historyRowIsRiderAcceptanceForNotify` (dashboardTimelineNotifyClassify) — no `description` field. */
 function historyRowIsRiderAcceptance(row) {
   if (!row || typeof row !== 'object') return false;
-  const parts = [row.status, row.description, row.remarks, row.reason, row.notes];
+  const parts = [row.status, row.remarks, row.reason, row.notes];
   const by = String(row.update_by_type || '').toLowerCase();
   const assignedByDispatcher = by === 'admin' || by === 'merchant';
   for (const p of parts) {
     const key = normalizeTimelineStatusKey(p);
     if (!key) continue;
+    if (normalizedBlobImpliesTaskAccepted(key)) return true;
     if (key.includes('taskaccepted') || key.includes('orderaccepted')) return true;
     if (key === 'acknowledged' || key === 'accepted' || key === 'accept') return true;
     if (key === 'assigned' && !assignedByDispatcher) return true;
@@ -131,6 +134,7 @@ export function markNotificationToastSuppressedFromMtFeedEvent(ev) {
   if (!Number.isFinite(tid) || tid <= 0) return;
   const rowShape = {
     status: ev.status,
+    description: ev.description != null ? ev.description : null,
     remarks: ev.remarks,
     reason: ev.reason,
     notes: ev.notes,
@@ -152,6 +156,7 @@ export function markNotificationToastSuppressedFromErrandFeedEvent(ev) {
   const pseudoTaskId = -oid;
   const rowShape = {
     status: ev.status,
+    description: ev.description != null ? ev.description : null,
     remarks: ev.remarks,
     reason: ev.reason,
     notes: ev.notes,

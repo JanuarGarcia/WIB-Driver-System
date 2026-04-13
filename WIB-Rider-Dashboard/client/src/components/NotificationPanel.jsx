@@ -69,6 +69,7 @@ import {
   formatNotificationMessageForDisplay,
   parseTaskIdFromNotificationMessage,
   dispatchOpenTaskFromNotification,
+  buildNotificationDedupeKey,
 } from '../utils/riderNotificationNavigate';
 
 /**
@@ -123,9 +124,10 @@ export default function NotificationPanel({ items, pollError, onMarkAllRead, onC
               const messageMain = n.message ? formatNotificationMessageForDisplay(n.message) : '';
               const taskNavId = n.message ? parseTaskIdFromNotificationMessage(n.message) : null;
               const canOpenTask = taskNavId != null;
+              const rowKey = `${buildNotificationDedupeKey(n)}:${n.id ?? ''}`;
 
               return (
-                <li key={n.id}>
+                <li key={rowKey}>
                   <article
                     className={`rider-notif-card ${mod}${unread ? ' rider-notif-card--unread' : ''}${
                       canOpenTask ? ' rider-notif-card--clickable' : ''

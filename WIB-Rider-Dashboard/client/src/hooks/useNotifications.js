@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { toast } from 'react-toastify';
 import { isAuthenticated } from '../auth';
 import { fetchRiderNotifications, markRiderNotificationsViewed } from '../services/notificationApi';
 import {
@@ -42,6 +43,18 @@ function notificationEventMs(n) {
   const iso = n?.activityAt || n?.createdAt;
   const t = iso ? new Date(iso).getTime() : 0;
   return Number.isFinite(t) ? t : 0;
+}
+
+/** Stable toast id so duplicate DB rows / re-polls update one popup instead of stacking. */
+function toastIdForRiderNotification(n) {
+  const dk = buildNotificationDedupeKey(n);
+  return `rn-${dk.replace(/[^a-z0-9:|._-]/gi, '_').slice(0, 220)}`;
+}
+
+function toastIdForRiderNotificationBatch(list) {
+  const keys = list.map((x) => buildNotificationDedupeKey(x)).sort();
+  const joined = keys.join('__');
+  return `rn-batch-${joined.replace(/[^a-z0-9_|.-]/gi, '_').slice(0, 220)}`;
 }
 
 function dedupeNotificationsPreferActor(list) {
@@ -232,29 +245,35 @@ export function useNotifications() {
 
     if (toastFresh.length === 1) {
       const n = toastFresh[0];
-      const title = (n.title || 'Notification').toString();
-      const message = (n.message || '').toString().trim();
-      const actor = message ? parseActorFromNotificationMessage(message) : '';
-      const messageMain = message ? formatNotificationMessageForDisplay(message) : '';
-      showRiderSystemToast({
-        toastId: `rider-notif-${n.id}`,
-        title,
-        byLabel: actor,
-        tertiary: messageMain,
-      });
+      const tid = toastIdForRiderNotification(n);
+      if (!toast.isActive(tid)) {
+        const title = (n.title || 'Notification').toString();
+        const message = (n.message || '').toString().trim();
+        const actor = message ? parseActorFromNotificationMessage(message) : '';
+        const messageMain = message ? formatNotificationMessageForDisplay(message) : '';
+        showRiderSystemToast({
+          toastId: tid,
+          title,
+          byLabel: actor,
+          tertiary: messageMain,
+        });
+      }
     } else if (toastFresh.length > 1) {
       const count = toastFresh.length;
       const first = toastFresh[0];
-      const t1 = (first?.title || 'Notification').toString();
-      const m1 = (first?.message || '').toString().trim();
-      const actor1 = m1 ? parseActorFromNotificationMessage(m1) : '';
-      const msg1 = m1 ? formatNotificationMessageForDisplay(m1) : '';
-      showRiderSystemToast({
-        toastId: `rider-notif-batch-${String(toastFresh[0]?.id ?? 'x')}`,
-        title: `${count} new notifications`,
-        byLine: actor1 ? `Latest: By ${actor1}` : '',
-        tertiary: `${t1}${msg1 ? ` — ${msg1}` : ''}`,
-      });
+      const batchTid = toastIdForRiderNotificationBatch(toastFresh);
+      if (!toast.isActive(batchTid)) {
+        const t1 = (first?.title || 'Notification').toString();
+        const m1 = (first?.message || '').toString().trim();
+        const actor1 = m1 ? parseActorFromNotificationMessage(m1) : '';
+        const msg1 = m1 ? formatNotificationMessageForDisplay(m1) : '';
+        showRiderSystemToast({
+          toastId: batchTid,
+          title: `${count} new notifications`,
+          byLine: actor1 ? `Latest: By ${actor1}` : '',
+          tertiary: `${t1}${msg1 ? ` — ${msg1}` : ''}`,
+        });
+      }
     }
 
     if (toastFresh.length === 0) return;
@@ -509,9 +528,33 @@ export function useNotifications() {
       for (const n of rawNew) processedIdsGlobal.add(String(n.id));
 
       setItems((prev) => {
-        const byId = new Map(prev.map((p) => [String(p.id), { ...p }]));
-        for (const n of fresh) byId.set(String(n.id), { ...n, localRead: false });
-        const merged = Array.from(byId.values()).sort((a, b) => notificationEventMs(b) - notificationEventMs(a));
+        const byDedupe = new Map();
+        for (const p of prev) {
+          if (!p || p.id == null) continue;
+          const k = buildNotificationDedupeKey(p);
+          const prevRow = byDedupe.get(k);
+          if (!prevRow) {
+            byDedupe.set(k, { ...p });
+            continue;
+          }
+          const pick =
+            (hasActorName(p) && !hasActorName(prevRow)) || notificationEventMs(p) > notificationEventMs(prevRow);
+          byDedupe.set(k, pick ? { ...p } : { ...prevRow });
+        }
+        for (const n of fresh) {
+          if (!n || n.id == null) continue;
+          const k = buildNotificationDedupeKey(n);
+          const prevRow = byDedupe.get(k);
+          if (!prevRow) {
+            byDedupe.set(k, { ...n, localRead: false });
+            continue;
+          }
+          const pick =
+            (hasActorName(n) && !hasActorName(prevRow)) || notificationEventMs(n) > notificationEventMs(prevRow);
+          const base = pick ? { ...n } : { ...prevRow };
+          byDedupe.set(k, { ...base, localRead: false });
+        }
+        const merged = Array.from(byDedupe.values()).sort((a, b) => notificationEventMs(b) - notificationEventMs(a));
         return dedupeNotificationsPreferActor(merged);
       });
     } catch (err) {
