@@ -7,14 +7,43 @@ const IMAGE_EXT = /\.(jpe?g|png|gif|webp)$/i;
 let cache = { at: 0, key: '', stemToFile: null };
 const CACHE_MS = 45_000;
 
+/**
+ * Register multiple lookup keys per on-disk stem so `craft-burger` matches `Craft Burger.jpg`
+ * (slug uses hyphens; filename may use spaces or underscores).
+ * @param {string} rawStem filename without extension
+ * @returns {string[]}
+ */
+function stemAliasKeys(rawStem) {
+  const s = String(rawStem || '').toLowerCase().trim();
+  const out = new Set();
+  if (!s) return [];
+  const collapseHyphen = (t) =>
+    t
+      .replace(/-+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .trim();
+  const hyphenish = collapseHyphen(s.replace(/_/g, '-').replace(/\s+/g, '-'));
+  const underscored = s
+    .replace(/\s+/g, '_')
+    .replace(/-+/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_|_$/g, '');
+  out.add(s);
+  if (hyphenish) out.add(hyphenish);
+  if (underscored) out.add(underscored);
+  return [...out];
+}
+
 function readStemIndex(dir) {
   const stemToFile = new Map();
   if (!fs.existsSync(dir)) return stemToFile;
   const names = fs.readdirSync(dir);
   for (const n of names) {
     if (!IMAGE_EXT.test(n)) continue;
-    const stem = n.replace(/\.[^.]+$/, '');
-    stemToFile.set(stem.toLowerCase(), n);
+    const rawStem = n.replace(/\.[^.]+$/, '');
+    for (const key of stemAliasKeys(rawStem)) {
+      if (!stemToFile.has(key)) stemToFile.set(key, n);
+    }
   }
   return stemToFile;
 }
@@ -62,6 +91,51 @@ function getMerchantsStemIndex(merchantsDir) {
     cache.at = now;
   }
   return cache.stemToFile;
+}
+
+/** Strip invisible chars / basic HTML entities so DB oddities still match files. */
+function normalizeRestaurantNameForLogo(raw) {
+  if (raw == null) return '';
+  let s = String(raw);
+  if (typeof s.normalize === 'function') {
+    try {
+      s = s.normalize('NFKC');
+    } catch {
+      /* ignore */
+    }
+  }
+  s = s.replace(/\0/g, '').replace(/[\u200b\u200c\u200d\ufeff]/g, '');
+  s = s.replace(/\u00a0/g, ' ');
+  s = s
+    .replace(/&amp;/gi, '&')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&#(\d+);/g, (_, n) => {
+      const code = parseInt(n, 10);
+      return Number.isFinite(code) && code >= 0 && code <= 0x10ffff ? String.fromCharCode(code) : _;
+    })
+    .replace(/&#x([0-9a-f]+);/gi, (_, h) => {
+      const code = parseInt(h, 16);
+      return Number.isFinite(code) && code >= 0 && code <= 0x10ffff ? String.fromCharCode(code) : _;
+    });
+  return s.trim();
+}
+
+function pickRestaurantNameFromRow(row) {
+  if (!row || typeof row !== 'object') return '';
+  const keys = [
+    'restaurant_name',
+    'restaurantName',
+    'store_name',
+    'storeName',
+    'merchant_name',
+    'business_name',
+    'name',
+  ];
+  for (const k of keys) {
+    const v = row[k];
+    if (v != null && String(v).trim() !== '') return String(v);
+  }
+  return '';
 }
 
 function nameWords(name) {
@@ -197,7 +271,7 @@ function slugProximityMatchRestaurant(restaurantName, index) {
   let bestScore = 0;
   for (const file of index.values()) {
     const stem = file.replace(/\.[^.]+$/, '').toLowerCase();
-    const tokens = stem.split(/[-_+]+/).filter((t) => t.length >= 2);
+    const tokens = stem.split(/[-_+\s]+/).filter((t) => t.length >= 2);
     if (tokens.length === 0) continue;
     let score = 0;
     for (const w of words) {
@@ -312,7 +386,7 @@ function resolveMerchantLogoFileBasename(dbLogo, restaurantName, merchantsDir) {
  * @returns {string | null}
  */
 function resolveMerchantLogoForApi(row, merchantsDir) {
-  const name = row?.restaurant_name ?? row?.restaurantName;
+  const name = normalizeRestaurantNameForLogo(pickRestaurantNameFromRow(row));
   const fromName = resolveMerchantLogoFileBasename('', name, merchantsDir);
   if (fromName) return fromName;
   const midRaw = row?.merchant_id ?? row?.id;
