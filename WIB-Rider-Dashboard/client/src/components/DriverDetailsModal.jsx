@@ -78,10 +78,10 @@ export default function DriverDetailsModal({
   }, [driverId, summaryDriver]);
 
   const handleTaskClick = useCallback(
-    (taskId) => {
+    (taskId, listRow) => {
       if (taskId == null) return;
       if (typeof onOpenTaskDetails === 'function') {
-        onOpenTaskDetails(taskId);
+        onOpenTaskDetails(taskId, listRow);
       } else {
         navigate(`/tasks?highlight=${encodeURIComponent(taskId)}`);
       }
@@ -219,7 +219,7 @@ export default function DriverDetailsModal({
                               <button
                                 type="button"
                                 className="agent-driver-details-task-link"
-                                onClick={() => handleTaskClick(tid)}
+                                onClick={() => handleTaskClick(tid, t)}
                               >
                                 {tid}
                               </button>
@@ -254,7 +254,7 @@ export default function DriverDetailsModal({
                           <button
                             type="button"
                             className="agent-driver-task-card-id"
-                            onClick={() => handleTaskClick(tid)}
+                            onClick={() => handleTaskClick(tid, t)}
                           >
                             Task #{tid}
                           </button>

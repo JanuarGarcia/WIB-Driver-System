@@ -531,10 +531,10 @@ const AgentPanel = forwardRef(function AgentPanel(
   }, [queueAssignSubmitting]);
 
   const openAssignTaskDetailsFromQueue = useCallback(
-    (taskId) => {
+    (taskId, listRow) => {
       if (queueAssignSubmitting || taskId == null || !onOpenTaskDetails) return;
       closeQueueAssignModal();
-      onOpenTaskDetails(taskId);
+      onOpenTaskDetails(taskId, listRow);
     },
     [queueAssignSubmitting, onOpenTaskDetails, closeQueueAssignModal]
   );
@@ -1044,7 +1044,7 @@ const AgentPanel = forwardRef(function AgentPanel(
                             className="task-card-all-tasks-details"
                             onClick={(e) => {
                               e.stopPropagation();
-                              if (onOpenTaskDetails) onOpenTaskDetails(t.task_id);
+                              if (onOpenTaskDetails) onOpenTaskDetails(t.task_id, t);
                               else navigate(`/tasks?highlight=${t.task_id}`);
                             }}
                             aria-label={`View details for task ${t.task_id}${riderName !== '—' ? `, rider ${riderName}` : ''}`}
@@ -1525,7 +1525,7 @@ const AgentPanel = forwardRef(function AgentPanel(
                                   disabled={queueAssignSubmitting}
                                   onClick={(e) => {
                                     e.stopPropagation();
-                                    openAssignTaskDetailsFromQueue(t.task_id);
+                                    openAssignTaskDetailsFromQueue(t.task_id, t);
                                   }}
                                 >
                                   Details

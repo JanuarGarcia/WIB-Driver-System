@@ -73,6 +73,7 @@ function writeJsonSessionStorage(key, value) {
   }
 }
 import { buildActivePanelDriverIdSet } from '../utils/agentPanelRiders';
+import { listTaskSnapshotMatchesId } from '../utils/taskDetailsSnapshot';
 
 export default function Dashboard() {
   const location = useLocation();
@@ -101,7 +102,7 @@ export default function Dashboard() {
       opts && (opts.initialTab === 'timeline' || opts.initialTab === 'order') ? opts.initialTab : 'details';
     setTaskDetailsInitialTab(tab);
     const snap = opts?.listTaskSnapshot;
-    if (snap != null && typeof snap === 'object' && String(snap.task_id) === String(id)) {
+    if (snap != null && typeof snap === 'object' && listTaskSnapshotMatchesId(snap, id)) {
       setTaskDetailsListSnapshot(snap);
     } else {
       setTaskDetailsListSnapshot(null);

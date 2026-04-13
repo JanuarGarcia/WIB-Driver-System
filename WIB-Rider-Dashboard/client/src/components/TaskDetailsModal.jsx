@@ -17,6 +17,7 @@ import CustomerNotifyButton from './CustomerNotifyButton';
 import { CountryCodeDropdown, COUNTRY_CODES } from './NewTaskModal';
 import { taskDropoffLatLng } from '../utils/mapTasks';
 import { markNotificationToastSuppressedFromModalHistoryRow } from '../utils/notificationToastDedupe';
+import { listTaskSnapshotMatchesId } from '../utils/taskDetailsSnapshot';
 
 /** Split stored contact (e.g. +63917…) into dial code + national number for edit UI. */
 function splitContactCountry(full) {
@@ -668,8 +669,6 @@ export default function TaskDetailsModal({
   const [drivers, setDrivers] = useState([]);
   const [assignTeamId, setAssignTeamId] = useState('');
   const [assignDriverId, setAssignDriverId] = useState('');
-  /** 1 = team only, 2 = assign agent (after team chosen). */
-  const [assignModalStep, setAssignModalStep] = useState(1);
   const [changeStatusOpen, setChangeStatusOpen] = useState(false);
   const [changeStatusValue, setChangeStatusValue] = useState('');
   const [changeStatusReason, setChangeStatusReason] = useState('');
@@ -752,10 +751,7 @@ export default function TaskDetailsModal({
     setChangeStatusValue('');
     setChangeStatusReason('');
     const snap = listTaskSnapshotRef.current;
-    const snapshotMatches =
-      snap != null &&
-      typeof snap === 'object' &&
-      String(snap.task_id) === String(taskId);
+    const snapshotMatches = listTaskSnapshotMatchesId(snap, taskId);
     if (snapshotMatches) {
       setData({ task: snap, task_source: snap.task_source });
       setOrderHistory(Array.isArray(snap.order_history) ? snap.order_history : []);
@@ -769,15 +765,50 @@ export default function TaskDetailsModal({
     const errandOid = Number(taskId) < 0 ? Math.abs(Number(taskId)) : null;
     const loadUrl = errandOid != null ? `errand-orders/${errandOid}` : `tasks/${taskId}`;
     let cancelled = false;
-    api(loadUrl)
-      .then((res) => {
+
+    const applyHistoryFromParallel = (histRes) => {
+      if (!histRes || typeof histRes !== 'object') return;
+      if (Array.isArray(histRes)) {
+        if (histRes.length > 0) {
+          setOrderHistory(histRes);
+          setOrderHistoryProofImages([]);
+        }
+        return;
+      }
+      const list = Array.isArray(histRes.order_history)
+        ? histRes.order_history
+        : Array.isArray(histRes.data)
+          ? histRes.data
+          : [];
+      if (list.length > 0) {
+        setOrderHistory(list);
+        setOrderHistoryProofImages(Array.isArray(histRes.proof_images) ? histRes.proof_images : []);
+      }
+    };
+
+    const runLoad =
+      errandOid != null
+        ? api(loadUrl).then((res) => ({ res, hist: null }))
+        : Promise.all([api(loadUrl), api(`tasks/${taskId}/order-history`).catch(() => null)]).then(([res, hist]) => ({
+            res,
+            hist,
+          }));
+
+    runLoad
+      .then(({ res, hist }) => {
         if (cancelled) return;
         if (res && typeof res === 'object' && !res.error) {
           setData(res);
           setOrderHistoryProofImages([]);
-          const fromTask = Array.isArray(res.order_history) ? res.order_history : Array.isArray(res.mt_order_history) ? res.mt_order_history : [];
+          const fromTask = Array.isArray(res.order_history)
+            ? res.order_history
+            : Array.isArray(res.mt_order_history)
+              ? res.mt_order_history
+              : [];
           if (fromTask.length > 0) {
             setOrderHistory(fromTask);
+          } else if (hist) {
+            applyHistoryFromParallel(hist);
           }
         } else {
           setData(null);
@@ -852,8 +883,11 @@ export default function TaskDetailsModal({
     if (data.task_source === 'errand' || Number(taskId) < 0) return;
     const fromTask = Array.isArray(data.order_history) ? data.order_history : Array.isArray(data.mt_order_history) ? data.mt_order_history : [];
     if (fromTask.length > 0) return;
+    if (orderHistory.length > 0) return;
+    let cancelled = false;
     api(`tasks/${taskId}/order-history`)
       .then((list) => {
+        if (cancelled) return;
         if (Array.isArray(list)) {
           setOrderHistory(list);
           setOrderHistoryProofImages([]);
@@ -868,10 +902,14 @@ export default function TaskDetailsModal({
         }
       })
       .catch(() => {
+        if (cancelled) return;
         setOrderHistory([]);
         setOrderHistoryProofImages([]);
       });
-  }, [taskId, data?.task, data?.order_history, data?.mt_order_history]);
+    return () => {
+      cancelled = true;
+    };
+  }, [taskId, data?.task, data?.order_history, data?.mt_order_history, orderHistory.length]);
 
   useEffect(() => {
     if (!taskId || Number(taskId) < 0) return undefined;
@@ -1073,7 +1111,7 @@ export default function TaskDetailsModal({
     });
   };
 
-  /** Legacy-style assign dialog: Select Team + Assign Agent (opens as nested modal). */
+  /** Assign dialog: choose team, then driver on the same screen (matches edit-task pattern). */
   const openAssignModal = () => {
     const t = data?.task;
     const prefTeam =
@@ -1082,7 +1120,6 @@ export default function TaskDetailsModal({
         : '';
     setAssignTeamId(prefTeam);
     setAssignDriverId('');
-    setAssignModalStep(1);
     setAssignOpen(true);
     setChangeStatusOpen(false);
     setEditOpen(false);
@@ -1099,10 +1136,6 @@ export default function TaskDetailsModal({
     if (!assignOpen) return;
     api('teams').then((t) => setTeams(Array.isArray(t) ? t : (t?.teams || []))).catch(() => setTeams([]));
     api('drivers').then((d) => setDrivers(Array.isArray(d) ? d : (d?.drivers || []))).catch(() => setDrivers([]));
-  }, [assignOpen]);
-
-  useEffect(() => {
-    if (!assignOpen) setAssignModalStep(1);
   }, [assignOpen]);
 
   const prevAssignTeamRef = useRef('');
@@ -2055,48 +2088,26 @@ export default function TaskDetailsModal({
               </button>
             </div>
             <div className="modal-body">
-              <form
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  if (assignModalStep === 1) {
-                    setAssignModalStep(2);
-                    return;
-                  }
-                  doAssign(e);
-                }}
-                className="task-detail-assign-form"
-              >
-                {assignModalStep === 1 && (
+              <form onSubmit={doAssign} className="task-detail-assign-form">
+                <label className="modal-label" htmlFor="task-assign-team">Select team</label>
+                <select
+                  id="task-assign-team"
+                  className="form-control"
+                  value={assignTeamId}
+                  onChange={(e) => setAssignTeamId(e.target.value)}
+                  disabled={actionLoading}
+                  aria-label="Select team"
+                >
+                  <option value="">Select team</option>
+                  {(teams || []).map((t) => (
+                    <option key={t.team_id ?? t.id} value={String(t.team_id ?? t.id)}>
+                      {t.team_name ?? t.name ?? `Team ${t.team_id ?? t.id}`}
+                    </option>
+                  ))}
+                </select>
+                {!!assignTeamId && (
                   <>
-                    <label className="modal-label" htmlFor="task-assign-team">Select Team</label>
-                    <select
-                      id="task-assign-team"
-                      className="form-control"
-                      value={assignTeamId}
-                      onChange={(e) => setAssignTeamId(e.target.value)}
-                      disabled={actionLoading}
-                      aria-label="Select team"
-                    >
-                      <option value="">All teams</option>
-                      {(teams || []).map((t) => (
-                        <option key={t.team_id ?? t.id} value={String(t.team_id ?? t.id)}>
-                          {t.team_name ?? t.name ?? `Team ${t.team_id ?? t.id}`}
-                        </option>
-                      ))}
-                    </select>
-                    <div className="task-detail-assign-actions">
-                      <button type="submit" className="btn btn-primary" disabled={actionLoading}>
-                        Continue
-                      </button>
-                      <button type="button" className="btn" onClick={cancelAssignModal} disabled={actionLoading}>
-                        Cancel
-                      </button>
-                    </div>
-                  </>
-                )}
-                {assignModalStep === 2 && (
-                  <>
-                    <label className="modal-label" htmlFor="task-assign-driver">Assign Agent</label>
+                    <label className="modal-label" htmlFor="task-assign-driver">Select driver</label>
                     <select
                       id="task-assign-driver"
                       className="form-control"
@@ -2104,38 +2115,31 @@ export default function TaskDetailsModal({
                       onChange={(e) => setAssignDriverId(e.target.value)}
                       disabled={actionLoading}
                       required
-                      aria-label="Assign agent"
+                      aria-label="Select driver"
                     >
-                      <option value="">Please select agent</option>
+                      <option value="">Select driver</option>
                       {(drivers || [])
-                        .filter((d) => !assignTeamId || String(d.team_id ?? d.team) === String(assignTeamId))
+                        .filter((d) => String(d.team_id ?? d.team) === String(assignTeamId))
                         .map((d) => (
                           <option key={d.driver_id ?? d.id} value={String(d.driver_id ?? d.id)}>
                             {d.full_name || [d.first_name, d.last_name].filter(Boolean).join(' ') || d.username || d.email || `Driver ${d.driver_id ?? d.id}`}
                           </option>
                         ))}
                     </select>
-                    <div className="task-detail-assign-actions">
-                      <button type="submit" className="btn btn-primary" disabled={actionLoading || !assignDriverId}>
-                        {actionLoading ? 'Submitting…' : 'Submit'}
-                      </button>
-                      <button
-                        type="button"
-                        className="btn"
-                        onClick={() => {
-                          setAssignModalStep(1);
-                          setAssignDriverId('');
-                        }}
-                        disabled={actionLoading}
-                      >
-                        Back
-                      </button>
-                      <button type="button" className="btn" onClick={cancelAssignModal} disabled={actionLoading}>
-                        Cancel
-                      </button>
-                    </div>
                   </>
                 )}
+                <div className="task-detail-assign-actions">
+                  <button
+                    type="submit"
+                    className="btn btn-primary"
+                    disabled={actionLoading || !assignTeamId || !assignDriverId}
+                  >
+                    {actionLoading ? 'Submitting…' : 'Submit'}
+                  </button>
+                  <button type="button" className="btn" onClick={cancelAssignModal} disabled={actionLoading}>
+                    Cancel
+                  </button>
+                </div>
               </form>
             </div>
           </div>
@@ -2390,7 +2394,7 @@ export default function TaskDetailsModal({
                   <textarea className="new-task-input new-task-textarea" readOnly rows={2} value={editPickupAddrReadonly} tabIndex={-1} aria-readonly="true" />
                 </div>
                 <div className="new-task-field">
-                  <label className="new-task-label" htmlFor="edit-select-team">Select Team</label>
+                  <label className="new-task-label" htmlFor="edit-select-team">Select team</label>
                   <select
                     id="edit-select-team"
                     className="new-task-input new-task-select"
@@ -2409,14 +2413,14 @@ export default function TaskDetailsModal({
                 </div>
                 {!!editTeamId && (
                   <div className="new-task-field">
-                    <label className="new-task-label" htmlFor="edit-assign-agent">Assign Agent</label>
+                    <label className="new-task-label" htmlFor="edit-assign-agent">Select driver</label>
                     <select
                       id="edit-assign-agent"
                       className="new-task-input new-task-select"
                       value={editDriverId}
                       onChange={(e) => setEditDriverId(e.target.value)}
                       disabled={actionLoading}
-                      aria-label="Assign agent"
+                      aria-label="Select driver"
                     >
                       <option value="">Select driver</option>
                       {(editDrivers || [])
