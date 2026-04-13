@@ -70,6 +70,7 @@ import {
   parseTaskIdFromNotificationMessage,
   dispatchOpenTaskFromNotification,
   buildNotificationDedupeKey,
+  notificationOrderKind,
 } from '../utils/riderNotificationNavigate';
 
 /**
@@ -120,6 +121,8 @@ export default function NotificationPanel({ items, pollError, onMarkAllRead, onC
               const displayAt = n.activityAt || n.createdAt;
               const rel = formatRelative(displayAt);
               const unread = !n.localRead;
+              const orderKind = notificationOrderKind(n);
+              const orderKindLabel = orderKind === 'mangan' ? 'Mangan order' : orderKind === 'task' ? 'Task order' : null;
               const actor = n.message ? parseActorFromNotificationMessage(n.message) : '';
               const messageMain = n.message ? formatNotificationMessageForDisplay(n.message) : '';
               const taskNavId = n.message ? parseTaskIdFromNotificationMessage(n.message) : null;
@@ -145,7 +148,17 @@ export default function NotificationPanel({ items, pollError, onMarkAllRead, onC
                       >
                         <div className="rider-notif-card__top">
                           <span className="rider-notif-card__badge">{label}</span>
-                          {unread ? <span className="rider-notif-card__dot" title="Unread" /> : null}
+                          <div className="rider-notif-card__top-right">
+                            {orderKind ? (
+                              <span
+                                className={`rider-notif-card__order-kind rider-notif-card__order-kind--${orderKind}`}
+                                title={orderKindLabel}
+                              >
+                                {orderKindLabel}
+                              </span>
+                            ) : null}
+                            {unread ? <span className="rider-notif-card__dot" title="Unread" /> : null}
+                          </div>
                         </div>
                         <h3 className="rider-notif-card__title">{n.title || 'Notification'}</h3>
                         {actor ? (
@@ -162,7 +175,17 @@ export default function NotificationPanel({ items, pollError, onMarkAllRead, onC
                       <div className="rider-notif-card__hit rider-notif-card__hit--static">
                         <div className="rider-notif-card__top">
                           <span className="rider-notif-card__badge">{label}</span>
-                          {unread ? <span className="rider-notif-card__dot" title="Unread" /> : null}
+                          <div className="rider-notif-card__top-right">
+                            {orderKind ? (
+                              <span
+                                className={`rider-notif-card__order-kind rider-notif-card__order-kind--${orderKind}`}
+                                title={orderKindLabel}
+                              >
+                                {orderKindLabel}
+                              </span>
+                            ) : null}
+                            {unread ? <span className="rider-notif-card__dot" title="Unread" /> : null}
+                          </div>
                         </div>
                         <h3 className="rider-notif-card__title">{n.title || 'Notification'}</h3>
                         {actor ? (

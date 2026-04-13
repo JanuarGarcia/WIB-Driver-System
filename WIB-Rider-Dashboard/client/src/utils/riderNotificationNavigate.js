@@ -66,6 +66,29 @@ export function parseTaskIdFromNotificationMessage(message) {
 }
 
 /**
+ * Whether the inbox row refers to a food driver task or a Mangan / ErrandWib order (negative pseudo id in message).
+ * @param {{ title?: string, message?: string, type?: string }} notification
+ * @returns {'task' | 'mangan' | null}
+ */
+export function notificationOrderKind(notification) {
+  const msg = String(notification?.message || '');
+  const title = String(notification?.title || '');
+  const targetId = parseTaskIdFromNotificationMessage(msg);
+  if (targetId != null) {
+    return targetId < 0 ? 'mangan' : 'task';
+  }
+  if (/\bmangan\b/i.test(title) || /mangan\s+order/i.test(msg)) return 'mangan';
+  if (/\berrand\s+order/i.test(msg)) return 'mangan';
+  if (/\bnew\s+task\s+order\b/i.test(title) || /\btask\s+accepted\b/i.test(title)) return 'task';
+  if (/^successful delivery$/i.test(title.trim())) return 'task';
+  if (/\bproof of (delivery|receipt)\b/i.test(title)) {
+    if (/mangan\s+order/i.test(msg) || /\bmangan\b/i.test(msg)) return 'mangan';
+    return 'task';
+  }
+  return null;
+}
+
+/**
  * Mangan/errand deep links use negative pseudo task ids. Collapse legacy duplicate payloads
  * ("Errand accepted" vs "Task accepted" vs "Mangan accepted") to one inbox row.
  */

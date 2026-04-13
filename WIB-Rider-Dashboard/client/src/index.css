@@ -1720,10 +1720,46 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
 }
 .rider-notif-card__top {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 0.5rem;
   margin-bottom: 0.35rem;
+}
+.rider-notif-card__top-right {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+.rider-notif-card__order-kind {
+  display: inline-block;
+  max-width: 6.75rem;
+  font-size: 0.625rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  padding: 0.2rem 0.42rem;
+  border-radius: 4px;
+  line-height: 1.25;
+  text-align: center;
+  white-space: normal;
+  word-break: break-word;
+}
+.rider-notif-card__order-kind--task {
+  background: rgba(37, 99, 235, 0.16);
+  color: #1d4ed8;
+}
+[data-theme="dark"] .rider-notif-card__order-kind--task {
+  background: rgba(59, 130, 246, 0.22);
+  color: #bfdbfe;
+}
+.rider-notif-card__order-kind--mangan {
+  background: rgba(192, 38, 211, 0.16);
+  color: #86198f;
+}
+[data-theme="dark"] .rider-notif-card__order-kind--mangan {
+  background: rgba(217, 70, 239, 0.2);
+  color: #f0abfc;
 }
 .rider-notif-card__badge {
   display: inline-block;
