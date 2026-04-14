@@ -420,6 +420,7 @@ app.put('/api/*', express.json(), async (req, res) => {
 
 // Serve React build only (run "npm run build" from repo root first)
 const clientBuild = path.join(__dirname, 'client', 'dist');
+const indexHtmlPath = path.join(clientBuild, 'index.html');
 const fs = require('fs');
 
 /** Vite emits content-hashed files under /assets/ — safe to cache for a year. index.html must stay fresh so new deploy hashes load. */
@@ -438,7 +439,10 @@ function setDashboardDistCacheHeaders(res, filePath) {
   res.setHeader('Cache-Control', 'public, max-age=86400');
 }
 
-if (fs.existsSync(clientBuild)) {
+const distDirPresent = fs.existsSync(clientBuild);
+const spaReady = distDirPresent && fs.existsSync(indexHtmlPath);
+
+if (spaReady) {
   app.use(
     express.static(clientBuild, {
       setHeaders: setDashboardDistCacheHeaders,
@@ -448,12 +452,21 @@ if (fs.existsSync(clientBuild)) {
     if (req.path.startsWith('/api') || req.path.startsWith('/upload')) {
       return res.status(404).type('text').send('Not found');
     }
-    res.sendFile(path.join(clientBuild, 'index.html'));
+    res.sendFile(indexHtmlPath);
   });
 } else {
   app.get('*', (req, res) => {
     if (req.path.startsWith('/api') || req.path.startsWith('/upload')) {
       return res.status(404).type('text').send('Not found');
+    }
+    if (distDirPresent && !fs.existsSync(indexHtmlPath)) {
+      return res.status(503).type('html').send(`
+      <!DOCTYPE html><html><head><meta charset="utf-8"><title>WIB Rider Dashboard</title></head><body>
+      <h1>Incomplete build on server</h1>
+      <p><code>client/dist</code> exists but <strong>index.html</strong> is missing. The dashboard cannot load (uploading only <code>assets/</code> causes a blank or &quot;Not Found&quot; root).</p>
+      <p>On the machine you deploy from, run <code>npm run build</code> from the dashboard repo root, then upload the <strong>entire</strong> <code>client/dist</code> folder including <code>index.html</code> and <code>assets/</code>.</p>
+      </body></html>
+    `);
     }
     res.type('html').send(`
       <!DOCTYPE html><html><head><title>WIB Rider Dashboard</title></head><body>
