@@ -658,10 +658,7 @@ export default function Dashboard() {
       </div>
     </div>
     <Suspense fallback={null}>
-      <ActivityTimelineToastStack
-        dateStr={tasksMapDateStr}
-        onOpenTaskTimeline={(id) => openTaskDetails(id, { initialTab: 'timeline' })}
-      />
+      <ActivityTimelineToastStack dateStr={tasksMapDateStr} />
     </Suspense>
     </>
   );

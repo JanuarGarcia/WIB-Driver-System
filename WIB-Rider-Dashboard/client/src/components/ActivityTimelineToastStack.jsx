@@ -52,7 +52,7 @@ function feedEventSubtitle(ev) {
 /**
  * Polls order-history feeds on the home dashboard and shows the same system toast as rider notifications.
  */
-export default function ActivityTimelineToastStack({ dateStr, onOpenTaskTimeline }) {
+export default function ActivityTimelineToastStack({ dateStr }) {
   const location = useLocation();
   const cursorRef = useRef(null);
   const initDoneRef = useRef(false);
@@ -97,11 +97,10 @@ export default function ActivityTimelineToastStack({ dateStr, onOpenTaskTimeline
         byLabel: byActor,
         tertiary,
         orderKind: kind === 'mangan' ? 'mangan' : 'task',
-        onOpen: () => onOpenTaskTimeline?.(openId),
       });
       playTimelineChime();
     },
-    [onOpenTaskTimeline]
+    []
   );
 
   useEffect(() => {

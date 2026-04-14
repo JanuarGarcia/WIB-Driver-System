@@ -67,8 +67,6 @@ function typeMeta(type, title, message) {
 import {
   parseActorFromNotificationMessage,
   formatNotificationMessageForDisplay,
-  parseTaskIdFromNotificationMessage,
-  dispatchOpenTaskFromNotification,
   buildNotificationDedupeKey,
   notificationOrderKind,
 } from '../utils/riderNotificationNavigate';
@@ -76,7 +74,7 @@ import {
 /**
  * Dropdown list of session notifications — WIB dashboard styling.
  */
-export default function NotificationPanel({ items, pollError, onMarkAllRead, onClosePanel }) {
+export default function NotificationPanel({ items, pollError, onMarkAllRead }) {
   const count = items?.length ?? 0;
 
   return (
@@ -125,79 +123,39 @@ export default function NotificationPanel({ items, pollError, onMarkAllRead, onC
               const orderKindLabel = orderKind === 'mangan' ? 'Mangan order' : orderKind === 'task' ? 'Task order' : null;
               const actor = n.message ? parseActorFromNotificationMessage(n.message) : '';
               const messageMain = n.message ? formatNotificationMessageForDisplay(n.message) : '';
-              const taskNavId = n.message ? parseTaskIdFromNotificationMessage(n.message) : null;
-              const canOpenTask = taskNavId != null;
               const rowKey = `${buildNotificationDedupeKey(n)}:${n.id ?? ''}`;
 
               return (
                 <li key={rowKey}>
                   <article
-                    className={`rider-notif-card ${mod}${unread ? ' rider-notif-card--unread' : ''}${
-                      canOpenTask ? ' rider-notif-card--clickable' : ''
-                    }`}
+                    className={`rider-notif-card ${mod}${unread ? ' rider-notif-card--unread' : ''}`}
                     aria-label={`${label}: ${n.title || 'Notification'}`}
                   >
-                    {canOpenTask ? (
-                      <button
-                        type="button"
-                        className="rider-notif-card__hit"
-                        onClick={() => {
-                          dispatchOpenTaskFromNotification(taskNavId);
-                          onClosePanel?.();
-                        }}
-                      >
-                        <div className="rider-notif-card__top">
-                          <span className="rider-notif-card__badge">{label}</span>
-                          <div className="rider-notif-card__top-right">
-                            {orderKind ? (
-                              <span
-                                className={`rider-notif-card__order-kind rider-notif-card__order-kind--${orderKind}`}
-                                title={orderKindLabel}
-                              >
-                                {orderKindLabel}
-                              </span>
-                            ) : null}
-                            {unread ? <span className="rider-notif-card__dot" title="Unread" /> : null}
-                          </div>
+                    <div className="rider-notif-card__hit rider-notif-card__hit--static">
+                      <div className="rider-notif-card__top">
+                        <span className="rider-notif-card__badge">{label}</span>
+                        <div className="rider-notif-card__top-right">
+                          {orderKind ? (
+                            <span
+                              className={`rider-notif-card__order-kind rider-notif-card__order-kind--${orderKind}`}
+                              title={orderKindLabel}
+                            >
+                              {orderKindLabel}
+                            </span>
+                          ) : null}
+                          {unread ? <span className="rider-notif-card__dot" title="Unread" /> : null}
                         </div>
-                        <h3 className="rider-notif-card__title">{n.title || 'Notification'}</h3>
-                        {actor ? (
-                          <p className="rider-notif-card__actor">
-                            <span className="rider-notif-card__actor-label">By</span> {actor}
-                          </p>
-                        ) : null}
-                        {messageMain ? (
-                          <p className="rider-notif-card__message">{messageMain}</p>
-                        ) : null}
-                        <span className="rider-notif-card__open-hint">Open task</span>
-                      </button>
-                    ) : (
-                      <div className="rider-notif-card__hit rider-notif-card__hit--static">
-                        <div className="rider-notif-card__top">
-                          <span className="rider-notif-card__badge">{label}</span>
-                          <div className="rider-notif-card__top-right">
-                            {orderKind ? (
-                              <span
-                                className={`rider-notif-card__order-kind rider-notif-card__order-kind--${orderKind}`}
-                                title={orderKindLabel}
-                              >
-                                {orderKindLabel}
-                              </span>
-                            ) : null}
-                            {unread ? <span className="rider-notif-card__dot" title="Unread" /> : null}
-                          </div>
-                        </div>
-                        <h3 className="rider-notif-card__title">{n.title || 'Notification'}</h3>
-                        {actor ? (
-                          <p className="rider-notif-card__actor">
-                            <span className="rider-notif-card__actor-label">By</span> {actor}
-                          </p>
-                        ) : null}
-                        {messageMain ? (
-                          <p className="rider-notif-card__message">{messageMain}</p>
-                        ) : null}
                       </div>
-                    )}
+                      <h3 className="rider-notif-card__title">{n.title || 'Notification'}</h3>
+                      {actor ? (
+                        <p className="rider-notif-card__actor">
+                          <span className="rider-notif-card__actor-label">By</span> {actor}
+                        </p>
+                      ) : null}
+                      {messageMain ? (
+                        <p className="rider-notif-card__message">{messageMain}</p>
+                      ) : null}
+                    </div>
                     <footer className="rider-notif-card__footer">
                       <time className="rider-notif-card__time" dateTime={displayAt} title={rel.full || formatWhen(displayAt)}>
                         {rel.short}

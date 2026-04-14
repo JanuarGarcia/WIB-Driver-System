@@ -5,6 +5,7 @@
  */
 require('dotenv').config();
 const express = require('express');
+const fs = require('fs');
 const path = require('path');
 const axios = require('axios');
 
@@ -419,9 +420,30 @@ app.put('/api/*', express.json(), async (req, res) => {
 });
 
 // Serve React build only (run "npm run build" from repo root first)
-const clientBuild = path.join(__dirname, 'client', 'dist');
+function escapeHtmlForPage(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+/** Vite output: default client/dist; env override; else ./dist if zip was extracted next to server.js (common cPanel mistake). */
+function resolveDashboardClientDist() {
+  const raw = String(process.env.DASHBOARD_CLIENT_DIST || '').trim();
+  if (raw) {
+    return path.isAbsolute(raw) ? raw : path.resolve(__dirname, raw);
+  }
+  const standard = path.join(__dirname, 'client', 'dist');
+  if (fs.existsSync(path.join(standard, 'index.html'))) return standard;
+  const nextToServer = path.join(__dirname, 'dist');
+  if (fs.existsSync(path.join(nextToServer, 'index.html'))) {
+    console.warn(
+      `[wib-rider-dashboard] Serving static files from ${nextToServer} (found index.html). Prefer client/dist or set DASHBOARD_CLIENT_DIST.`
+    );
+    return nextToServer;
+  }
+  return standard;
+}
+
+const clientBuild = resolveDashboardClientDist();
 const indexHtmlPath = path.join(clientBuild, 'index.html');
-const fs = require('fs');
 
 /** Vite emits content-hashed files under /assets/ — safe to cache for a year. index.html must stay fresh so new deploy hashes load. */
 function setDashboardDistCacheHeaders(res, filePath) {
@@ -468,11 +490,16 @@ if (spaReady) {
       </body></html>
     `);
     }
+    const expected = path.join(__dirname, 'client', 'dist');
     res.type('html').send(`
-      <!DOCTYPE html><html><head><title>WIB Rider Dashboard</title></head><body>
+      <!DOCTYPE html><html><head><meta charset="utf-8"><title>WIB Rider Dashboard</title></head><body>
       <h1>React app not built</h1>
-      <p>Run from repo root: <code>npm run build</code> then <code>npm start</code>.</p>
-      <p>Or for development: <code>npm run dev:client</code> and open <a href="http://localhost:5173">http://localhost:5173</a>.</p>
+      <p>No production files found. The app looks for a folder that contains <strong>index.html</strong> (Vite <code>dist</code> output).</p>
+      <p><strong>Expected path on this server:</strong></p>
+      <pre style="white-space:pre-wrap;word-break:break-all">${escapeHtmlForPage(expected)}</pre>
+      <p>If you uploaded <code>rider-dashboard-dist.zip</code>: extract it <strong>inside</strong> the <code>client</code> folder (so you get <code>client/dist/index.html</code>). If you already have a <code>dist</code> folder next to <code>server.js</code>, either move it to <code>client/dist</code> or set <code>DASHBOARD_CLIENT_DIST</code> in <code>.env</code> to that folder’s full path.</p>
+      <p>On a machine with Node: from the dashboard repo root run <code>npm install</code> (builds client) or <code>npm run build</code>, then <code>npm start</code>.</p>
+      <p>Local dev: <code>npm run dev:client</code> → <a href="http://localhost:5173">http://localhost:5173</a></p>
       </body></html>
     `);
   });
@@ -481,4 +508,10 @@ if (spaReady) {
 app.listen(PORT, () => {
   console.log(`WIB Rider Dashboard: http://localhost:${PORT}`);
   console.log(`  Backend: ${BACKEND_URL}`);
+  if (!spaReady) {
+    console.warn(`  Static UI: NOT READY — missing ${indexHtmlPath}`);
+    console.warn(`  Fix: deploy client/dist (see DASHBOARD_CLIENT_DIST in .env.example) or run npm run build.`);
+  } else {
+    console.log(`  Static UI: ${clientBuild}`);
+  }
 });
