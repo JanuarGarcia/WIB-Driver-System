@@ -1,5 +1,5 @@
 /**
- * Server-to-server: tell the customer API to send FCM for order updates (same as ops POST /api/push/dispatch-order).
+ * Server-to-server: tell the customer API to send FCM for order updates (same as ops dispatch-order; URL from customerDispatchOrderUrl).
  * Env: CUSTOMER_API_BASE_URL (or WIBEATS_API_BASE_URL), PUSH_DISPATCH_SECRET
  */
 
@@ -76,11 +76,37 @@ async function fetchFoodOrderClientId(pool, orderId) {
   }
 }
 
+/** Strip one layer of surrounding quotes (some host panels store env values quoted). */
+function trimEnvSecret(raw) {
+  let v = String(raw || '').trim();
+  if (v.length >= 2) {
+    const a = v[0];
+    const b = v[v.length - 1];
+    if ((a === '"' && b === '"') || (a === "'" && b === "'")) {
+      v = v.slice(1, -1).trim();
+    }
+  }
+  return v;
+}
+
+/**
+ * Full URL for customer POST /api/push/dispatch-order (same contract as ops).
+ * If base already ends with /api (e.g. https://host/mobileappv2/api), append /push/dispatch-order only.
+ */
+function customerDispatchOrderUrl(baseUrl) {
+  const base = String(baseUrl || '').trim().replace(/\/+$/, '');
+  if (!base) return '';
+  if (base.toLowerCase().endsWith('/api')) {
+    return `${base}/push/dispatch-order`;
+  }
+  return `${base}/api/push/dispatch-order`;
+}
+
 function getCustomerDispatchConfig() {
   const baseUrl = String(process.env.CUSTOMER_API_BASE_URL || process.env.WIBEATS_API_BASE_URL || '')
     .trim()
     .replace(/\/+$/, '');
-  const secret = String(process.env.PUSH_DISPATCH_SECRET || '').trim();
+  const secret = trimEnvSecret(process.env.PUSH_DISPATCH_SECRET);
   return { baseUrl, secret, ok: Boolean(baseUrl && secret) };
 }
 
@@ -98,7 +124,7 @@ async function postCustomerDispatchOrder({ clientId, orderId, title, message }) 
     return { skipped: 'invalid_ids' };
   }
 
-  const url = `${baseUrl}/api/push/dispatch-order`;
+  const url = customerDispatchOrderUrl(baseUrl);
   const body = JSON.stringify({
     client_id: String(cid),
     order_id: String(oid),
@@ -307,6 +333,7 @@ function notifyCustomerFoodTaskStatusPushFireAndForget(pool, ctx) {
 module.exports = {
   isEffectivelyUnassignedDriverId,
   fetchFoodOrderClientId,
+  customerDispatchOrderUrl,
   postCustomerDispatchOrder,
   notifyCustomerRiderAssignedForFoodTaskFireAndForget,
   notifyCustomerFoodTaskStatusPushFireAndForget,
