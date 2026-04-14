@@ -421,8 +421,29 @@ app.put('/api/*', express.json(), async (req, res) => {
 // Serve React build only (run "npm run build" from repo root first)
 const clientBuild = path.join(__dirname, 'client', 'dist');
 const fs = require('fs');
+
+/** Vite emits content-hashed files under /assets/ — safe to cache for a year. index.html must stay fresh so new deploy hashes load. */
+function setDashboardDistCacheHeaders(res, filePath) {
+  const normalized = String(filePath || '').replace(/\\/g, '/');
+  if (/\/index\.html$/i.test(normalized)) {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    return;
+  }
+  if (/\/assets\//.test(normalized)) {
+    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    return;
+  }
+  res.setHeader('Cache-Control', 'public, max-age=86400');
+}
+
 if (fs.existsSync(clientBuild)) {
-  app.use(express.static(clientBuild));
+  app.use(
+    express.static(clientBuild, {
+      setHeaders: setDashboardDistCacheHeaders,
+    })
+  );
   app.get('*', (req, res) => {
     if (req.path.startsWith('/api') || req.path.startsWith('/upload')) {
       return res.status(404).type('text').send('Not found');

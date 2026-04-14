@@ -11,9 +11,23 @@ export default defineConfig({
           if (id.includes('leaflet') || id.includes('react-leaflet')) return 'vendor-leaflet';
           if (id.includes('@react-google-maps/api')) return 'vendor-google-maps';
           if (id.includes('react-router-dom')) return 'vendor-router';
-          if (id.includes('react-dom')) return 'vendor-react-dom';
-          if (/node_modules[/\\]react[/\\]/.test(id)) return 'vendor-react';
           if (id.includes('react-toastify')) return 'vendor-toast';
+          /*
+           * Keep `react`, `react-dom`, and `scheduler` in ONE chunk. Splitting `react` vs `react-dom`
+           * produced a tiny `vendor-react` (~8kB) and broke runtime pairing → blank white screen in production.
+           */
+          if (id.includes('node_modules/react-dom') || id.includes('node_modules/scheduler')) {
+            return 'vendor-react';
+          }
+          if (
+            /node_modules[/\\]react[/\\]/.test(id) &&
+            !id.includes('react-router') &&
+            !id.includes('react-toastify') &&
+            !id.includes('react-leaflet') &&
+            !id.includes('@react-google-maps')
+          ) {
+            return 'vendor-react';
+          }
           return 'vendor';
         },
       },
