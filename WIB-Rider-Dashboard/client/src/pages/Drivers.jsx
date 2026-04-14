@@ -250,7 +250,7 @@ export default function Drivers() {
     }
   };
   const openBulkPush = () => {
-    setBulkPushTitle('Notification');
+    setBulkPushTitle('');
     setBulkPushMessage('');
     setBulkPushOpen(true);
   };
@@ -261,9 +261,17 @@ export default function Drivers() {
       alert(bulkPushMode === 'all' ? 'No drivers to send to.' : 'Select at least one driver.');
       return;
     }
+    const title = bulkPushTitle.trim();
+    const message = bulkPushMessage.trim();
+    if (!title) {
+      alert('Please enter a push title.');
+      return;
+    }
+    if (!message) {
+      alert('Please enter a push message.');
+      return;
+    }
     setBulkPushSending(true);
-    const title = bulkPushTitle.trim() || 'Notification';
-    const message = bulkPushMessage.trim() || 'You have a new notification.';
     let failed = 0;
     for (const id of ids) {
       try {
@@ -668,25 +676,25 @@ export default function Drivers() {
                 </div>
               </div>
               <div className="send-push-field">
-                <label className="modal-label" htmlFor="bulk-push-title">Title</label>
+                <label className="modal-label" htmlFor="bulk-push-title">Push Title</label>
                 <input
                   type="text"
                   id="bulk-push-title"
                   className="form-control send-push-input"
                   value={bulkPushTitle}
                   onChange={(e) => setBulkPushTitle(e.target.value)}
-                  placeholder="Notification title"
+                  placeholder="Push Title"
                 />
               </div>
               <div className="send-push-field">
-                <label className="modal-label" htmlFor="bulk-push-message">Message</label>
+                <label className="modal-label" htmlFor="bulk-push-message">Push Message</label>
                 <textarea
                   id="bulk-push-message"
                   className="form-control send-push-textarea"
                   rows={4}
                   value={bulkPushMessage}
                   onChange={(e) => setBulkPushMessage(e.target.value)}
-                  placeholder="Message body"
+                  placeholder="Push Message"
                 />
               </div>
               <div className="modal-actions send-push-modal-actions">

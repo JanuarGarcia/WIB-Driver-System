@@ -25,6 +25,56 @@ async function resetFirebase() {
   app = null;
 }
 
+/**
+ * FCM token for admin/driver pushes: prefer `mt_driver.device_id`, else latest eligible row in `mt_rider_device_reg`
+ * (Flutter rider app registers here; `mt_driver.device_id` is often empty).
+ * @param {import('mysql2/promise').Pool} pool
+ * @param {number} driverId
+ * @returns {Promise<string>}
+ */
+async function resolveDriverFcmToken(pool, driverId) {
+  const did = parseInt(String(driverId), 10);
+  if (!Number.isFinite(did) || did <= 0) return '';
+
+  const [[d]] = await pool.query('SELECT device_id FROM mt_driver WHERE driver_id = ?', [did]);
+  const fromDriver = d?.device_id != null && String(d.device_id).trim() ? String(d.device_id).trim() : '';
+  if (fromDriver) return fromDriver;
+
+  const loadFromReg = async (withPushEnabled) => {
+    const pushClause = withPushEnabled
+      ? ` AND (push_enabled IS NULL OR push_enabled = 1 OR push_enabled = '1' OR LOWER(TRIM(CAST(push_enabled AS CHAR))) = 'true')`
+      : '';
+    const [rows] = await pool.query(
+      `SELECT device_id FROM mt_rider_device_reg
+       WHERE driver_id = ?
+         AND device_id IS NOT NULL AND TRIM(device_id) <> ''${pushClause}
+       ORDER BY id DESC
+       LIMIT 1`,
+      [did]
+    );
+    const r = rows && rows[0];
+    return r?.device_id != null && String(r.device_id).trim() ? String(r.device_id).trim() : '';
+  };
+
+  try {
+    let t = await loadFromReg(true);
+    if (t) return t;
+    t = await loadFromReg(false);
+    return t || '';
+  } catch (e) {
+    if (e.code === 'ER_NO_SUCH_TABLE') return '';
+    if (e.code === 'ER_BAD_FIELD_ERROR') {
+      try {
+        return (await loadFromReg(false)) || '';
+      } catch (e2) {
+        if (e2.code === 'ER_NO_SUCH_TABLE') return '';
+        throw e2;
+      }
+    }
+    throw e;
+  }
+}
+
 async function initFirebase() {
   if (app) return app;
   const { pool } = require('../config/db');
@@ -48,23 +98,10 @@ async function initFirebase() {
 }
 
 async function sendPushToDriver(driverId, title, body, data = {}) {
-  const app = await initFirebase();
-  if (!app) return { success: false, error: 'FCM not configured' };
   const { pool } = require('../config/db');
-  const [[d]] = await pool.query('SELECT device_id FROM mt_driver WHERE driver_id = ?', [driverId]);
-  if (!d?.device_id) return { success: false, error: 'No device token' };
-  try {
-    const result = await app.messaging().send({
-      token: d.device_id,
-      notification: { title, body },
-      data: stringifyDataPayload(data),
-      android: { priority: 'high' },
-      apns: { payload: { aps: { sound: 'default' } } },
-    });
-    return { success: true, messageId: result };
-  } catch (e) {
-    return { success: false, error: e.message };
-  }
+  const token = await resolveDriverFcmToken(pool, driverId);
+  if (!token) return { success: false, error: 'No device token' };
+  return sendPushToFcmToken(token, title, body, data);
 }
 
 async function sendPushToAllDrivers(title, body, data = {}) {

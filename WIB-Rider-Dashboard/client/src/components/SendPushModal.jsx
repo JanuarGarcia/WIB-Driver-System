@@ -7,13 +7,13 @@ import { api } from '../api';
  * Matches legacy WIB Rider “Send Push Notification” flow; styling uses dashboard send-push-* classes.
  */
 export default function SendPushModal({ open, driverId, driverLabel = '', onClose, onSent }) {
-  const [title, setTitle] = useState('Notification');
+  const [title, setTitle] = useState('');
   const [message, setMessage] = useState('');
   const [sending, setSending] = useState(false);
 
   useEffect(() => {
     if (!open) return;
-    setTitle('Notification');
+    setTitle('');
     setMessage('');
     setSending(false);
   }, [open, driverId]);
@@ -40,13 +40,23 @@ export default function SendPushModal({ open, driverId, driverLabel = '', onClos
       alert('Cannot send push: invalid driver ID.');
       return;
     }
+    const pushTitle = title.trim();
+    const pushMessage = message.trim();
+    if (!pushTitle) {
+      alert('Please enter a push title.');
+      return;
+    }
+    if (!pushMessage) {
+      alert('Please enter a push message.');
+      return;
+    }
     setSending(true);
     try {
       await api(`drivers/${id}/send-push`, {
         method: 'POST',
         body: JSON.stringify({
-          title: title.trim() || 'Notification',
-          message: message.trim() || 'You have a new notification.',
+          title: pushTitle,
+          message: pushMessage,
         }),
       });
       onSent?.();

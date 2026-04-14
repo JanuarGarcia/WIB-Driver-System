@@ -16,12 +16,17 @@ const { normalizeFoodTaskStatusKey } = require('./dashboardRiderNotify');
 
 const COPY_RIDER_ASSIGNED = {
   title: 'DELIVERY REQUEST RECEIVED',
-  message: 'Our rider has accepted your order. Mapanen idjay restaurant',
+  message: 'Your order has been matched with a rider. Mapanen idjay restaurant to prepare your pickup.',
 };
 
 const COPY_DRIVER_STARTED = {
   title: 'DELIVERY DRIVER STARTED',
-  message: 'Our rider has picked up your food and is now traveling towards your location. Konting pasensya lang kabsa.',
+  message: 'Our rider has picked up your food and is now traveling towards your location. Konting pasensya lang kabsat.',
+};
+
+const COPY_DRIVER_IN_PROGRESS = {
+  title: 'DELIVERY IN PROGRESS',
+  message: 'Your rider is en route with your order. You can follow updates anytime in the app.',
 };
 
 const COPY_DRIVER_ARRIVED = {
@@ -57,7 +62,12 @@ function compactStatusKey(raw) {
 
 function statusImpliesInProgress(raw) {
   const c = compactStatusKey(raw);
-  return c === 'started' || c === 'inprogress';
+  return c === 'inprogress';
+}
+
+function statusImpliesStarted(raw) {
+  const c = compactStatusKey(raw);
+  return c === 'started';
 }
 
 function statusImpliesAcknowledged(raw) {
@@ -71,9 +81,11 @@ function statusImpliesComplete(raw) {
 }
 
 /**
- * Finer state ladder so customer can get both "started" and "arrived" updates.
+ * Stages for old customer app pushes: `started` and `inprogress` are separate (distinct notifications).
+ * ready_for_pickup / picked up / en-route phrases do not reuse started or inprogress copy (return `other`).
+ *
  * @param {unknown} raw
- * @returns {'prep'|'underway_started'|'underway_arrived'|'complete'|'negative'|'other'}
+ * @returns {'prep'|'started_only'|'in_progress_only'|'underway_arrived'|'complete'|'negative'|'other'}
  */
 function stageForCustomerFoodStatusPush(raw) {
   const norm = normalizeFoodTaskStatusKey(raw);
@@ -94,11 +106,8 @@ function stageForCustomerFoodStatusPush(raw) {
   if (n === 'acknowledged' || n === 'assigned' || n === 'new') return 'prep';
   if (c === 'verification' || c === 'pendingverification') return 'underway_arrived';
   if (c.includes('arrived') || (c.includes('reached') && c.includes('destination'))) return 'underway_arrived';
-  if (n === 'started' || n === 'inprogress' || n === 'in_progress') return 'underway_started';
-  if (n === 'ready_for_pickup' || n === 'readyforpickup' || n === 'readypickup') return 'underway_started';
-  if (c.includes('pickedup') || (c.includes('picked') && c.includes('up'))) return 'underway_started';
-  if (c.includes('outfor') || c.includes('outfordelivery')) return 'underway_started';
-  if (c.includes('heading') && (c.includes('customer') || c.includes('dropoff'))) return 'underway_started';
+  if (n === 'started') return 'started_only';
+  if (n === 'inprogress' || n === 'in_progress') return 'in_progress_only';
   return 'other';
 }
 
@@ -422,7 +431,7 @@ function notifyCustomerRiderAssignedForFoodTaskFireAndForget(pool, ctx) {
 }
 
 /**
- * In-progress (started / in progress) and completion pushes — once per transition into each bucket.
+ * Customer order pushes: prep, started-only, inprogress-only, arrived, complete — one dispatch per transition into each stage.
  *
  * @param {import('mysql2/promise').Pool} pool
  * @param {{ taskId: number, orderId: unknown, prevStatusRaw: unknown, newStatusRaw: unknown }} ctx
@@ -438,14 +447,15 @@ function notifyCustomerFoodTaskStatusPushFireAndForget(pool, ctx) {
   let pushKind = null;
   if (nextS === 'prep' && prevS !== 'prep' && prevS !== 'negative') {
     pushKind = 'acknowledged';
+  } else if (nextS === 'started_only' && prevS !== 'started_only' && prevS !== 'complete' && prevS !== 'negative') {
+    pushKind = 'driver_started';
   } else if (
-    nextS === 'underway_started' &&
-    prevS !== 'underway_started' &&
-    prevS !== 'underway_arrived' &&
+    nextS === 'in_progress_only' &&
+    prevS !== 'in_progress_only' &&
     prevS !== 'complete' &&
     prevS !== 'negative'
   ) {
-    pushKind = 'driver_started';
+    pushKind = 'in_progress';
   } else if (nextS === 'underway_arrived' && prevS !== 'underway_arrived' && prevS !== 'complete' && prevS !== 'negative') {
     pushKind = 'driver_arrived';
   } else if (nextS === 'complete' && prevS !== 'complete' && prevS !== 'negative') {
@@ -463,9 +473,11 @@ function notifyCustomerFoodTaskStatusPushFireAndForget(pool, ctx) {
       ? COPY_ACKNOWLEDGED
       : pushKind === 'driver_started'
         ? COPY_DRIVER_STARTED
-        : pushKind === 'driver_arrived'
-          ? COPY_DRIVER_ARRIVED
-        : COPY_COMPLETE;
+        : pushKind === 'in_progress'
+          ? COPY_DRIVER_IN_PROGRESS
+          : pushKind === 'driver_arrived'
+            ? COPY_DRIVER_ARRIVED
+            : COPY_COMPLETE;
 
   (async () => {
     const logBase = { task_id: taskId, order_id: oid, push: pushKind };
@@ -506,6 +518,7 @@ module.exports = {
   notifyCustomerRiderAssignedForFoodTaskFireAndForget,
   notifyCustomerFoodTaskStatusPushFireAndForget,
   statusImpliesAcknowledged,
+  statusImpliesStarted,
   statusImpliesInProgress,
   statusImpliesComplete,
 };
