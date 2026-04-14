@@ -32,7 +32,7 @@ function requireMobile2CustomerAuth(req, res, next) {
   validateApiKey(req, res, async () => {
     try {
       const token = getCustomerTokenFromRequest(req);
-      if (!token) return error(res, 'Token required', 2);
+      if (!token) return error(res, 'Invalid token', 2);
 
       const tokenCol = await resolveMtClientTokenColumn();
       if (!tokenCol) return error(res, 'Customer token auth is not configured', 2);

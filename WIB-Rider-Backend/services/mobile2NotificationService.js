@@ -87,7 +87,7 @@ async function listNotifications(clientId, paging) {
       l.json_response
     FROM mt_mobile2_push_logs l
     WHERE l.client_id = ?
-    ORDER BY l.date_created DESC, l.id DESC
+    ORDER BY l.id DESC
     LIMIT ? OFFSET ?`,
     [cid, limit, offset]
   );

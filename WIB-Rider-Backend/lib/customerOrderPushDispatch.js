@@ -15,23 +15,30 @@ const {
 const { normalizeFoodTaskStatusKey } = require('./dashboardRiderNotify');
 
 const COPY_RIDER_ASSIGNED = {
-  title: 'Rider assigned',
-  message: 'Your order now has a dedicated rider and will be on its way shortly.',
+  title: 'DELIVERY REQUEST RECEIVED',
+  message: 'Our rider has accepted your order. Mapanen idjay restaurant',
 };
 
-const COPY_IN_PROGRESS = {
-  title: 'Delivery in progress',
-  message: 'Your rider is en route with your order. You can follow updates anytime in the app.',
+const COPY_DRIVER_STARTED = {
+  title: 'DELIVERY DRIVER STARTED',
+  message: 'Our rider has picked up your food and is now traveling towards your location. Konting pasensya lang kabsa.',
+};
+
+const COPY_DRIVER_ARRIVED = {
+  title: 'DELIVERY DRIVER ARRIVED',
+  message:
+    'Our rider is near your location. Konting kembot nalang kakain na, para ready nalang po ng cash or proof of online payment. Labyu!',
 };
 
 const COPY_ACKNOWLEDGED = {
-  title: 'Order acknowledged',
-  message: 'Your order has been acknowledged and is now being prepared for delivery.',
+  title: 'DELIVERY REQUEST RECEIVED',
+  message: 'Our rider has accepted your order. Mapanen idjay restaurant',
 };
 
 const COPY_COMPLETE = {
-  title: 'Order complete',
-  message: 'Your delivery has been completed. Thank you for choosing us—we hope you enjoy your meal.',
+  title: 'DELIVERY SUCCESSFUL',
+  message:
+    "Thank you for supporting our rider via WhenInBaguio app. Each order contributes significantly to the welfare of our rider's family.",
 };
 
 function isEffectivelyUnassignedDriverId(driverId) {
@@ -61,6 +68,38 @@ function statusImpliesAcknowledged(raw) {
 function statusImpliesComplete(raw) {
   const c = compactStatusKey(raw);
   return c === 'successful' || c === 'delivered' || c === 'completed';
+}
+
+/**
+ * Finer state ladder so customer can get both "started" and "arrived" updates.
+ * @param {unknown} raw
+ * @returns {'prep'|'underway_started'|'underway_arrived'|'complete'|'negative'|'other'}
+ */
+function stageForCustomerFoodStatusPush(raw) {
+  const norm = normalizeFoodTaskStatusKey(raw);
+  const n = String(norm || '').toLowerCase().trim();
+  const c = compactStatusKey(raw);
+  if (!n) return 'other';
+  if (n === 'successful' || n === 'delivered' || n === 'completed' || n === 'complete') return 'complete';
+  if (
+    n === 'cancelled' ||
+    n === 'canceled' ||
+    n === 'unassigned' ||
+    n === 'declined' ||
+    n === 'failed' ||
+    n === 'rejected'
+  ) {
+    return 'negative';
+  }
+  if (n === 'acknowledged' || n === 'assigned' || n === 'new') return 'prep';
+  if (c === 'verification' || c === 'pendingverification') return 'underway_arrived';
+  if (c.includes('arrived') || (c.includes('reached') && c.includes('destination'))) return 'underway_arrived';
+  if (n === 'started' || n === 'inprogress' || n === 'in_progress') return 'underway_started';
+  if (n === 'ready_for_pickup' || n === 'readyforpickup' || n === 'readypickup') return 'underway_started';
+  if (c.includes('pickedup') || (c.includes('picked') && c.includes('up'))) return 'underway_started';
+  if (c.includes('outfor') || c.includes('outfordelivery')) return 'underway_started';
+  if (c.includes('heading') && (c.includes('customer') || c.includes('dropoff'))) return 'underway_started';
+  return 'other';
 }
 
 /**
@@ -393,15 +432,23 @@ function notifyCustomerFoodTaskStatusPushFireAndForget(pool, ctx) {
   const prev = ctx.prevStatusRaw;
   const next = ctx.newStatusRaw;
 
-  const prevB = bucketForCustomerFoodStatusPush(prev);
-  const nextB = bucketForCustomerFoodStatusPush(next);
+  const prevS = stageForCustomerFoodStatusPush(prev);
+  const nextS = stageForCustomerFoodStatusPush(next);
 
   let pushKind = null;
-  if (nextB === 'prep' && prevB !== 'prep' && prevB !== 'negative') {
+  if (nextS === 'prep' && prevS !== 'prep' && prevS !== 'negative') {
     pushKind = 'acknowledged';
-  } else if (nextB === 'underway' && prevB !== 'underway' && prevB !== 'complete' && prevB !== 'negative') {
-    pushKind = 'in_progress';
-  } else if (nextB === 'complete' && prevB !== 'complete' && prevB !== 'negative') {
+  } else if (
+    nextS === 'underway_started' &&
+    prevS !== 'underway_started' &&
+    prevS !== 'underway_arrived' &&
+    prevS !== 'complete' &&
+    prevS !== 'negative'
+  ) {
+    pushKind = 'driver_started';
+  } else if (nextS === 'underway_arrived' && prevS !== 'underway_arrived' && prevS !== 'complete' && prevS !== 'negative') {
+    pushKind = 'driver_arrived';
+  } else if (nextS === 'complete' && prevS !== 'complete' && prevS !== 'negative') {
     pushKind = 'complete';
   }
   if (!pushKind) return;
@@ -414,8 +461,10 @@ function notifyCustomerFoodTaskStatusPushFireAndForget(pool, ctx) {
   const copy =
     pushKind === 'acknowledged'
       ? COPY_ACKNOWLEDGED
-      : pushKind === 'in_progress'
-        ? COPY_IN_PROGRESS
+      : pushKind === 'driver_started'
+        ? COPY_DRIVER_STARTED
+        : pushKind === 'driver_arrived'
+          ? COPY_DRIVER_ARRIVED
         : COPY_COMPLETE;
 
   (async () => {

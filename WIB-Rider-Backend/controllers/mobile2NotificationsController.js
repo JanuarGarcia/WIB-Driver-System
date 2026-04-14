@@ -22,7 +22,7 @@ async function list(req, res) {
     return res.json({ code: 1, msg: 'ok', details });
   } catch (e) {
     console.error('[mobile2.notifications.list] failed', e);
-    return error(res, e.message || 'Failed to fetch notifications');
+    return error(res, 'Failed to fetch notifications');
   }
 }
 
@@ -32,13 +32,13 @@ async function markRead(req, res) {
     if (!clientId) return error(res, 'Invalid token', 2);
 
     const pushId = parseInt(String(req.body?.push_id ?? ''), 10);
-    if (!Number.isFinite(pushId) || pushId <= 0) return error(res, 'push_id required');
+    if (!Number.isFinite(pushId) || pushId <= 0) return error(res, 'push_id is required');
 
     await notificationService.markNotificationRead(clientId, pushId);
-    return res.json({ code: 1, msg: 'ok' });
+    return res.json({ code: 1, msg: 'ok', details: null });
   } catch (e) {
     console.error('[mobile2.notifications.read] failed', e);
-    return error(res, e.message || 'Failed to mark notification read');
+    return error(res, 'Failed to mark notification read');
   }
 }
 
@@ -51,7 +51,7 @@ async function markReadAll(req, res) {
     return res.json({ code: 1, msg: 'ok', details });
   } catch (e) {
     console.error('[mobile2.notifications.readAll] failed', e);
-    return error(res, e.message || 'Failed to mark notifications read');
+    return error(res, 'Failed to mark notifications read');
   }
 }
 
