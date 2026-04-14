@@ -7,6 +7,11 @@
 
 const { insertMtMobile2PushLog } = require('./mtMobile2PushLogs');
 const { fetchClientFcmTokenAndDeviceRef } = require('./customerFcmToken');
+const {
+  fetchMobile2DeviceRegContextForClient,
+  fetchMtClientDisplayName,
+  resolvePushLogTriggerId,
+} = require('./mobile2DeviceRegLookup');
 const { normalizeFoodTaskStatusKey } = require('./dashboardRiderNotify');
 
 const COPY_RIDER_ASSIGNED = {
@@ -145,8 +150,49 @@ function getCustomerDispatchConfig() {
 }
 
 /**
+ * Customer dispatch-order often returns HTTP 200 with JSON like
+ * `{ success:true, sent:0, skipped:"no_fcm_tokens" }` — treat as non-delivery for logging / warnings.
+ *
+ * @param {string} text
+ * @returns {{ deliveryOk: boolean, fcmSent: number|null, customerSkipped: string|null }}
+ */
+function interpretCustomerDispatchResponseBody(text) {
+  const raw = String(text || '').trim();
+  if (!raw) return { deliveryOk: true, fcmSent: null, customerSkipped: null };
+  try {
+    const j = JSON.parse(raw);
+    if (j && typeof j === 'object' && j.success === false) {
+      return { deliveryOk: false, fcmSent: 0, customerSkipped: j.skipped != null ? String(j.skipped) : 'success_false' };
+    }
+    const sent = j.sent;
+    const tokensTried = j.tokens_tried;
+    let sentN = null;
+    if (typeof sent === 'number' && Number.isFinite(sent)) sentN = sent;
+    else if (sent != null && String(sent).trim() !== '' && Number.isFinite(Number(sent))) sentN = Number(sent);
+    if (sentN !== null) {
+      return {
+        deliveryOk: sentN > 0,
+        fcmSent: sentN,
+        customerSkipped: j.skipped != null ? String(j.skipped) : null,
+      };
+    }
+    let triedN = null;
+    if (typeof tokensTried === 'number' && Number.isFinite(tokensTried)) triedN = tokensTried;
+    else if (tokensTried != null && String(tokensTried).trim() !== '' && Number.isFinite(Number(tokensTried))) {
+      triedN = Number(tokensTried);
+    }
+    if (triedN !== null && triedN === 0 && j.skipped) {
+      return { deliveryOk: false, fcmSent: 0, customerSkipped: String(j.skipped) };
+    }
+    return { deliveryOk: true, fcmSent: null, customerSkipped: j.skipped != null ? String(j.skipped) : null };
+  } catch (_) {
+    return { deliveryOk: true, fcmSent: null, customerSkipped: null };
+  }
+}
+
+/**
  * @param {{ clientId: number, orderId: number, title: string, message: string }} args
- * @returns {Promise<{ ok?: boolean, skipped?: string, status?: number, body?: string, error?: string }>}
+ * @returns {Promise<{ ok?: boolean, skipped?: string, status?: number, body?: string, error?: string, httpOk?: boolean, fcmSent?: number|null, customerSkipped?: string|null }>}
  */
 async function postCustomerDispatchOrder({ clientId, orderId, title, message }) {
   const { baseUrl, secret, ok } = getCustomerDispatchConfig();
@@ -181,9 +227,17 @@ async function postCustomerDispatchOrder({ clientId, orderId, title, message }) 
     });
     const text = await res.text();
     if (!res.ok) {
-      return { ok: false, status: res.status, body: text };
+      return { ok: false, status: res.status, body: text, httpOk: false };
     }
-    return { ok: true, status: res.status, body: text };
+    const interp = interpretCustomerDispatchResponseBody(text);
+    return {
+      ok: interp.deliveryOk,
+      status: res.status,
+      body: text,
+      httpOk: true,
+      fcmSent: interp.fcmSent,
+      customerSkipped: interp.customerSkipped,
+    };
   } catch (e) {
     const msg = e && e.name === 'AbortError' ? 'timeout' : e.message || String(e);
     return { ok: false, error: msg };
@@ -203,6 +257,9 @@ function logDispatchFailure(logBase, clientId, result) {
     ...logBase,
     client_id: clientId,
     http_status: result.status,
+    http_ok: result.httpOk === true,
+    fcm_sent: result.fcmSent != null ? result.fcmSent : undefined,
+    customer_skipped: result.customerSkipped || undefined,
     detail: snippet,
   });
 }
@@ -218,13 +275,30 @@ function logDispatchFailure(logBase, clientId, result) {
  *   pushKind: string,
  *   title: string,
  *   message: string,
- *   dispatchResult: { ok?: boolean, status?: number, body?: string, error?: string },
+ *   dispatchResult: { ok?: boolean, status?: number, body?: string, error?: string, httpOk?: boolean, fcmSent?: number|null, customerSkipped?: string|null },
  * }} meta
  */
 async function recordDispatchOrderPushLog(pool, meta) {
   const { clientId, orderId, taskId, pushKind, title, message, dispatchResult } = meta;
   try {
-    const { token, deviceRef } = await fetchClientFcmTokenAndDeviceRef(pool, 'mt_client', clientId);
+    const [m2, triggerIdRaw, nameFallback] = await Promise.all([
+      fetchMobile2DeviceRegContextForClient(pool, clientId),
+      resolvePushLogTriggerId(pool, orderId, taskId),
+      fetchMtClientDisplayName(pool, clientId),
+    ]);
+    const legacy = await fetchClientFcmTokenAndDeviceRef(pool, 'mt_client', clientId);
+    const token =
+      (m2.deviceId && String(m2.deviceId).trim()) || (legacy.token && String(legacy.token).trim()) || null;
+    const deviceRef =
+      (m2.installUuid && String(m2.installUuid).trim()) ||
+      (legacy.deviceRef && String(legacy.deviceRef).trim()) ||
+      null;
+    const devicePlatform = m2.devicePlatform && String(m2.devicePlatform).trim() ? m2.devicePlatform : null;
+    const clientName =
+      (m2.clientFullName && String(m2.clientFullName).trim()) ||
+      (nameFallback && String(nameFallback).trim()) ||
+      null;
+
     const ok = dispatchResult.ok === true;
     const jsonResponse = JSON.stringify({
       source: 'rider_backend_dispatch_order',
@@ -232,7 +306,10 @@ async function recordDispatchOrderPushLog(pool, meta) {
       task_id: taskId,
       push: pushKind,
       http_status: dispatchResult.status ?? null,
+      http_ok: dispatchResult.httpOk === true,
       ok,
+      fcm_sent: dispatchResult.fcmSent != null ? dispatchResult.fcmSent : null,
+      customer_skipped: dispatchResult.customerSkipped ?? null,
       error: dispatchResult.error || null,
       body_snippet:
         dispatchResult.body != null ? String(dispatchResult.body).slice(0, 2000) : null,
@@ -241,6 +318,9 @@ async function recordDispatchOrderPushLog(pool, meta) {
       clientId,
       deviceId: token ? token.slice(0, 512) : null,
       deviceUiid: deviceRef ? deviceRef.slice(0, 255) : null,
+      clientName,
+      devicePlatform,
+      triggerId: triggerIdRaw,
       title,
       body: message,
       pushType: 'order',
@@ -371,6 +451,7 @@ module.exports = {
   isEffectivelyUnassignedDriverId,
   fetchFoodOrderClientId,
   customerDispatchOrderUrl,
+  interpretCustomerDispatchResponseBody,
   bucketForCustomerFoodStatusPush,
   postCustomerDispatchOrder,
   notifyCustomerRiderAssignedForFoodTaskFireAndForget,

@@ -8,7 +8,6 @@ export default defineConfig({
       output: {
         manualChunks(id) {
           if (!id.includes('node_modules')) return;
-          if (id.includes('mapbox-gl')) return 'vendor-mapbox';
           if (id.includes('leaflet') || id.includes('react-leaflet')) return 'vendor-leaflet';
           if (id.includes('react-router-dom')) return 'vendor-router';
           if (id.includes('react-toastify')) return 'vendor-toast';

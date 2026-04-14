@@ -3,8 +3,6 @@ import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 if (typeof window !== 'undefined') window.L = L;
-import Map, { Marker as MapboxMarker, Source, Layer } from 'react-map-gl/mapbox';
-import 'mapbox-gl/dist/mapbox-gl.css';
 import {
   LoadScript,
   GoogleMap,
@@ -209,7 +207,6 @@ const GOOGLE_MERCHANT_PIN_ICON = (() => {
 
 const BAGUIO_CENTER = [16.4023, 120.596];
 const BAGUIO_LATLNG = { lat: 16.4023, lng: 120.596 };
-const BAGUIO_VIEW = { longitude: 120.596, latitude: 16.4023, zoom: 13 };
 const MAP_STYLE = { width: '100%', height: '100%', minHeight: 400 };
 /** Metro framing for a lone pin (matches typical Baguio dashboard load). */
 const DASHBOARD_SINGLE_MARKER_ZOOM = 14;
@@ -819,7 +816,6 @@ function LeafletMapboxView({
   taskMarkers = [],
   center,
   zoom,
-  routeGeojson,
   showLegend = false,
   driverQueueCount = 0,
   onViewDriverQueue,
@@ -883,86 +879,6 @@ function LeafletMapboxView({
         driverQueueCount={driverQueueCount}
         onViewDriverQueue={onViewDriverQueue}
       />
-    </div>
-  );
-}
-
-function MapboxMapView({
-  mapboxToken,
-  locations,
-  merchants,
-  taskMarkers = [],
-  center,
-  zoom,
-  showMerchantLogosOnMap = true,
-}) {
-  const { riderMarkers, merchantMarkers, taskMapMarkers } = useDashboardMapMarkers(locations, merchants, taskMarkers);
-  const [loadError, setLoadError] = useState(null);
-  const [mounted, setMounted] = useState(false);
-  const initialView = useMemo(() => {
-    if (center != null && zoom != null && Array.isArray(center) && center.length >= 2) {
-      return { longitude: center[1], latitude: center[0], zoom };
-    }
-    return BAGUIO_VIEW;
-  }, [center, zoom]);
-  useEffect(() => {
-    const t = requestAnimationFrame(() => setMounted(true));
-    return () => cancelAnimationFrame(t);
-  }, []);
-  return (
-    <div className="map-container mapbox-map-wrap" style={{ position: 'relative', minHeight: 200 }}>
-      {loadError && (
-        <div className="mapbox-error-banner" style={{ position: 'absolute', top: 8, left: 8, right: 8, zIndex: 1000, background: '#fff3cd', padding: '8px 12px', borderRadius: 6, fontSize: '0.9rem' }}>
-          {loadError} Allow this site&apos;s URL in <a href="https://account.mapbox.com/access-tokens/" target="_blank" rel="noopener noreferrer">Mapbox Studio</a> if the token is valid.
-        </div>
-      )}
-      {!mounted ? (
-        <div style={{ width: '100%', height: '100%', minHeight: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#e8eaed' }}>Loading map…</div>
-      ) : (
-      <Map
-        mapboxAccessToken={mapboxToken}
-        initialViewState={initialView}
-        style={MAP_STYLE}
-        mapStyle="mapbox://styles/mapbox/streets-v12"
-        className="mapbox-map"
-        onError={(e) => setLoadError(e.error?.message || 'Mapbox failed to load. Check your access token.')}
-      >
-        {routeGeojson && routeGeojson.type === 'Feature' && routeGeojson.geometry && (
-          <Source id="wib-route" type="geojson" data={routeGeojson}>
-            <Layer
-              id="wib-route-line"
-              type="line"
-              layout={{ 'line-join': 'round', 'line-cap': 'round' }}
-              paint={{ 'line-color': '#1d4ed8', 'line-width': 5, 'line-opacity': 0.85 }}
-            />
-          </Source>
-        )}
-        {riderMarkers.map((loc, idx) => (
-          <MapboxMarker key={`rider-${loc.driver_id ?? idx}`} longitude={Number(loc.lng)} latitude={Number(loc.lat)} anchor="bottom">
-            <PinMarker type="rider" title={riderMarkerTitle(loc)} />
-          </MapboxMarker>
-        ))}
-        {merchantMarkers.map((m, idx) => {
-          const logo = m.logo_url;
-          const logoImgUrl = showMerchantLogosOnMap ? merchantLogoUrl(logo) : null;
-          return (
-            <MapboxMarker
-              key={`merchant-${m.merchant_id ?? idx}-${logoImgUrl || 'nofile'}`}
-              longitude={Number(m.lng)}
-              latitude={Number(m.lat)}
-              anchor="bottom"
-            >
-              <PinMarker type="merchant" imageUrl={logoImgUrl} title={merchantMapTitle(m.restaurant_name)} />
-            </MapboxMarker>
-          );
-        })}
-        {taskMapMarkers.map((t, idx) => (
-          <MapboxMarker key={`task-${t.task_id ?? idx}`} longitude={Number(t.lng)} latitude={Number(t.lat)} anchor="bottom">
-            <PinMarker type={taskMarkerPinType(t)} title={taskMapTitle(t)} />
-          </MapboxMarker>
-        ))}
-      </Map>
-      )}
     </div>
   );
 }
@@ -1326,7 +1242,6 @@ export default function MapView({
   zoom,
   googleMapStyle,
   directionsRequest,
-  mapboxRouteGeojson,
   onGoogleDirections,
   showLegend = false,
   /** Driver queue size for map “View queue” badge (dashboard). */
@@ -1385,7 +1300,6 @@ export default function MapView({
         taskMarkers={taskMarkers}
         center={center}
         zoom={zoom}
-        routeGeojson={mapboxRouteGeojson}
         showLegend={showLegend}
         driverQueueCount={driverQueueCount}
         onViewDriverQueue={onViewDriverQueue}

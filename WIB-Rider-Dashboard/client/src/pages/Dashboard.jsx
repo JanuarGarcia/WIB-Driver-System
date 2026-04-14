@@ -154,12 +154,16 @@ export default function Dashboard() {
   const [googleMapStyle, setGoogleMapStyle] = useState('');
   const [tasksMapDateStr, setTasksMapDateStr] = useState(() => readEffectiveDashboardTaskDate());
   const [rawMapTasks, setRawMapTasks] = useState([]);
+  /** Bumped after long idle / bfcache restore so EventSource reconnects (stale SSE after sleep). */
+  const [realtimeReconnectNonce, setRealtimeReconnectNonce] = useState(0);
   const realtimeRefreshAtRef = useRef(0);
   const mapDataInFlightRef = useRef(null);
   const lastMapDataRefreshAtRef = useRef(0);
   const lastMerchantsRefreshAtRef = useRef(0);
   const activeIdsInFlightRef = useRef(null);
   const lastActiveIdsRefreshAtRef = useRef(0);
+  const wakeDebounceRef = useRef(null);
+  const lastWakeRefreshAtRef = useRef(0);
   /** null = agent roster still loading (map shows all rider GPS pins); then filtered to Active panel roster. */
   const [activePanelDriverIdSet, setActivePanelDriverIdSet] = useState(null);
   const mapDataCacheKey = useMemo(
@@ -185,7 +189,12 @@ export default function Dashboard() {
 
   useEffect(() => {
     const cached = readJsonSessionStorage(mapDataCacheKey, null);
-    if (!cached || typeof cached !== 'object') return;
+    if (!cached || typeof cached !== 'object') {
+      /* New team/date key: do not keep another key’s pins (e.g. after midnight or team switch). */
+      setLocations([]);
+      setRawMapTasks([]);
+      return;
+    }
     const loc = Array.isArray(cached.locations) ? cached.locations : null;
     const mer = Array.isArray(cached.merchants) ? cached.merchants : null;
     const tasks = Array.isArray(cached.tasks) ? cached.tasks : null;
@@ -279,9 +288,7 @@ export default function Dashboard() {
             });
           }
         } catch {
-          setLocations([]);
-          setRawMapTasks([]);
-          if (refreshMerchants) setMerchants([]);
+          /* Keep last good map data on unexpected errors — per-request fallbacks already return []. */
         }
       })();
       mapDataInFlightRef.current = request;
@@ -350,9 +357,24 @@ export default function Dashboard() {
     return () => window.removeEventListener(DASHBOARD_TASKS_MAP_DATE_EVENT, sync);
   }, []);
 
-  /** Tab left overnight: roll stale session date to local today so map + task panel match without manual refresh. */
+  /** Tab left overnight: roll date; after idle, refetch map data, nudge map layout, reconnect SSE. */
   useEffect(() => {
-    const onVis = () => {
+    const flushWake = () => {
+      if (location.pathname !== '/') return;
+      if (wakeDebounceRef.current) {
+        clearTimeout(wakeDebounceRef.current);
+        wakeDebounceRef.current = null;
+      }
+      const now = Date.now();
+      if (now - lastWakeRefreshAtRef.current < 900) return;
+      lastWakeRefreshAtRef.current = now;
+      refreshMapData({ force: true });
+      refreshActivePanelDriverIds({ force: true });
+      setMapResizeTrigger((n) => n + 1);
+      setRealtimeReconnectNonce((n) => n + 1);
+    };
+    const scheduleWake = () => {
+      if (location.pathname !== '/') return;
       if (document.visibilityState !== 'visible') return;
       const today = todayDateStrLocal();
       const stored = readDashboardTasksMapDateFromStorage();
@@ -362,10 +384,23 @@ export default function Dashboard() {
         } catch (_) {}
         notifyDashboardTasksMapDateChanged();
       }
+      if (wakeDebounceRef.current) clearTimeout(wakeDebounceRef.current);
+      wakeDebounceRef.current = setTimeout(() => {
+        wakeDebounceRef.current = null;
+        flushWake();
+      }, 320);
     };
-    document.addEventListener('visibilitychange', onVis);
-    return () => document.removeEventListener('visibilitychange', onVis);
-  }, []);
+    const onPageShow = (e) => {
+      if (e && e.persisted) scheduleWake();
+    };
+    document.addEventListener('visibilitychange', scheduleWake);
+    window.addEventListener('pageshow', onPageShow);
+    return () => {
+      document.removeEventListener('visibilitychange', scheduleWake);
+      window.removeEventListener('pageshow', onPageShow);
+      if (wakeDebounceRef.current) clearTimeout(wakeDebounceRef.current);
+    };
+  }, [location.pathname, refreshMapData, refreshActivePanelDriverIds]);
 
   const mapShowsNoMarkers =
     filteredLocationsForMap.length === 0 && filteredMerchantsForMap.length === 0 && filteredMapTasks.length === 0;
@@ -467,7 +502,7 @@ export default function Dashboard() {
         es.close();
       } catch (_) {}
     };
-  }, [location.pathname, tasksMapDateStr, bumpTaskLists, refreshMapData, refreshActivePanelDriverIds]);
+  }, [location.pathname, tasksMapDateStr, realtimeReconnectNonce, bumpTaskLists, refreshMapData, refreshActivePanelDriverIds]);
 
   useEffect(() => {
     if (location.pathname !== '/') return undefined;

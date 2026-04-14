@@ -1277,11 +1277,26 @@ async function buildAgentDashboardDetails(transactionDate, trackingType, filters
       for (const tr of taskRows || []) taskCountByDriver[tr.driver_id] = tr.cnt;
     } catch (_) {}
   }
+  /* Same driver_id on mt_driver can have Mangan rows in ErrandWib st_ordernew — add to food task count. */
+  if (errandWibPool && mtDriverIds.length > 0) {
+    try {
+      const ecMt = await fetchErrandOrderTaskCountsByDriver(errandWibPool, mtDriverIds, dateOnly);
+      for (const [k, v] of Object.entries(ecMt)) {
+        const id = Number(k);
+        const add = Number(v) || 0;
+        if (!Number.isFinite(id) || id <= 0) continue;
+        taskCountByDriver[id] = (Number(taskCountByDriver[id]) || 0) + add;
+      }
+    } catch (_) {}
+  }
   if (errandWibPool && errDriverIds.length > 0) {
     try {
       const ec = await fetchErrandOrderTaskCountsByDriver(errandWibPool, errDriverIds, dateOnly);
       for (const [k, v] of Object.entries(ec)) {
-        taskCountByDriver[Number(k)] = v;
+        const id = Number(k);
+        const add = Number(v) || 0;
+        if (!Number.isFinite(id) || id <= 0) continue;
+        taskCountByDriver[id] = (Number(taskCountByDriver[id]) || 0) + add;
       }
     } catch (_) {}
   }
@@ -1393,6 +1408,17 @@ router.get('/driver-queue', async (req, res) => {
         );
         for (const tr of taskRows || []) taskCountByDriver[tr.driver_id] = tr.cnt;
       } catch (_) {}
+      if (errandWibPool) {
+        try {
+          const ec = await fetchErrandOrderTaskCountsByDriver(errandWibPool, driverIds, dateOnly);
+          for (const [k, v] of Object.entries(ec)) {
+            const id = Number(k);
+            const add = Number(v) || 0;
+            if (!Number.isFinite(id) || id <= 0) continue;
+            taskCountByDriver[id] = (Number(taskCountByDriver[id]) || 0) + add;
+          }
+        } catch (_) {}
+      }
     }
 
     const queue = (rows || []).map((r, index) => {

@@ -460,14 +460,18 @@ export default function TaskPanel({ onOpenTaskDetails, onFocusTaskOnMap, listRev
           });
         }
       })
-      .catch(() => {
+      .catch((err) => {
         if (taskCacheKeyRef.current !== cacheKeyAtRequest) return;
-        setTasks([]);
-        if (taskMode === 'active') {
-          setCounts({ unassigned: 0, assigned: 0, completed: 0 });
-        } else {
-          setProblemCounts({ cancelled: 0, declined: 0, failed: 0 });
+        const code = err && typeof err === 'object' ? String(err.code || '') : '';
+        if (code === 'AUTH_REQUIRED' || code === 'HTML_RESPONSE') {
+          setTasks([]);
+          if (taskMode === 'active') {
+            setCounts({ unassigned: 0, assigned: 0, completed: 0 });
+          } else {
+            setProblemCounts({ cancelled: 0, declined: 0, failed: 0 });
+          }
         }
+        /* Timeouts / network blips: keep last good list so the panel does not flash empty. */
       })
       .finally(() => {
         if (taskCacheKeyRef.current !== cacheKeyAtRequest) return;
@@ -515,7 +519,7 @@ export default function TaskPanel({ onOpenTaskDetails, onFocusTaskOnMap, listRev
   }, [listRevision, fetchTasks]);
 
   useEffect(() => {
-    const id = setInterval(() => setPanelTimeTick((n) => n + 1), 30000);
+    const id = setInterval(() => setPanelTimeTick((n) => n + 1), 60000);
     return () => clearInterval(id);
   }, []);
 
