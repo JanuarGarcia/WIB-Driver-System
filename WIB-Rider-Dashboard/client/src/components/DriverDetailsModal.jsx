@@ -15,6 +15,31 @@ function taskFieldDisplay(raw) {
   return sanitizeLocationDisplayName(s) || '—';
 }
 
+/** Food task vs Mangan (ErrandWib), for admin driver-details table. */
+function driverDetailsOrderTypeLabel(t) {
+  let kind =
+    t?.order_kind ?? (t?.task_source === 'errand' ? 'mangan' : t?.task_source === 'food' ? 'task' : null);
+  if (kind == null) {
+    const tidn = parseInt(String(t?.task_id ?? ''), 10);
+    if (Number.isFinite(tidn) && tidn > 0) kind = 'task';
+    else if (Number.isFinite(tidn) && tidn < 0) kind = 'mangan';
+  }
+  const trans = t?.trans_type != null && String(t.trans_type).trim() ? String(t.trans_type).trim() : '';
+  if (kind === 'mangan') return 'Mangan order';
+  if (kind === 'task') {
+    if (trans) return `Task order (${trans})`;
+    return 'Task order';
+  }
+  if (trans) return taskFieldDisplay(trans);
+  return '—';
+}
+
+function driverDetailsTaskRowKey(t) {
+  const tid = t?.task_id ?? t?.id ?? '';
+  const src = t?.task_source ?? t?.order_kind ?? 'row';
+  return `${src}-${tid}`;
+}
+
 /** Read-only driver details + today's tasks (same UX as Agent panel "Details"). */
 export default function DriverDetailsModal({
   driverId,
@@ -212,9 +237,9 @@ export default function DriverDetailsModal({
                       state.tasks.map((t) => {
                         const tid = t.task_id ?? t.id;
                         const nameRaw = t.customer_name ?? t.task_description;
-                        const typeRaw = t.trans_type ?? t.task_type ?? t.type;
+                        const typeLabel = driverDetailsOrderTypeLabel(t);
                         return (
-                          <tr key={tid}>
+                          <tr key={driverDetailsTaskRowKey(t)}>
                             <td>
                               <button
                                 type="button"
@@ -225,7 +250,7 @@ export default function DriverDetailsModal({
                               </button>
                             </td>
                             <td>{taskFieldDisplay(nameRaw)}</td>
-                            <td>{taskFieldDisplay(typeRaw)}</td>
+                            <td>{typeLabel}</td>
                             <td>{taskFieldDisplay(t.delivery_address)}</td>
                             <td>
                               <span className={`agent-driver-details-task-status ${statusClass(t.status)}`}>
@@ -247,9 +272,9 @@ export default function DriverDetailsModal({
                   state.tasks.map((t) => {
                     const tid = t.task_id ?? t.id;
                     const nameRaw = t.customer_name ?? t.task_description;
-                    const typeRaw = t.trans_type ?? t.task_type ?? t.type;
+                    const typeLabel = driverDetailsOrderTypeLabel(t);
                     return (
-                      <li key={tid} className="agent-driver-task-card">
+                      <li key={driverDetailsTaskRowKey(t)} className="agent-driver-task-card">
                         <div className="agent-driver-task-card-top">
                           <button
                             type="button"
@@ -268,7 +293,7 @@ export default function DriverDetailsModal({
                         </div>
                         <div className="agent-driver-task-card-row">
                           <span className="agent-driver-task-card-label">Type</span>
-                          <span className="agent-driver-task-card-value">{taskFieldDisplay(typeRaw)}</span>
+                          <span className="agent-driver-task-card-value">{typeLabel}</span>
                         </div>
                         <div className="agent-driver-task-card-row agent-driver-task-card-row--address">
                           <span className="agent-driver-task-card-label">Address</span>

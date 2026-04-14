@@ -283,7 +283,7 @@ async function recordDispatchOrderPushLog(pool, meta) {
   try {
     const [m2, triggerIdRaw, nameFallback] = await Promise.all([
       fetchMobile2DeviceRegContextForClient(pool, clientId),
-      resolvePushLogTriggerId(pool, orderId, taskId),
+      resolvePushLogTriggerId(pool, orderId),
       fetchMtClientDisplayName(pool, clientId),
     ]);
     const legacy = await fetchClientFcmTokenAndDeviceRef(pool, 'mt_client', clientId);

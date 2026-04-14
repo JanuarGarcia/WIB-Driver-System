@@ -2293,6 +2293,112 @@ async function fetchErrandOrderTaskCountsByDriver(errandPool, driverIds, dateOnl
 }
 
 /**
+ * Mangan (ErrandWib `st_ordernew`) rows for one driver on a calendar day, in the same list shape as
+ * `GET /admin/tasks` with `include_errand` (negative `task_id`, `task_source: 'errand'`).
+ * Used by admin driver-details so food tasks and Mangan orders appear together.
+ *
+ * @param {import('mysql2/promise').Pool} errandPool
+ * @param {import('mysql2/promise').Pool} mainPool
+ * @param {number} driverId
+ * @param {string} dateOnly YYYY-MM-DD
+ * @returns {Promise<Record<string, unknown>[]>}
+ */
+async function fetchErrandMappedOrdersForDriverDate(errandPool, mainPool, driverId, dateOnly) {
+  /** @type {Record<string, unknown>[]} */
+  const out = [];
+  if (!errandPool || !mainPool) return out;
+  const did = parseInt(String(driverId), 10);
+  if (!Number.isFinite(did) || did <= 0) return out;
+  const d = String(dateOnly || '').trim().slice(0, 10);
+  if (d.length < 10) return out;
+
+  /** @type {Record<string, unknown>[]|null} */
+  let list = null;
+  try {
+    const [eRows] = await errandPool.query(
+      `SELECT * FROM st_ordernew
+       WHERE driver_id = ?
+         AND DATE(COALESCE(delivery_date, created_at, date_created, date_modified)) = ?
+         ${ST_ORDERNEW_EXCLUDE_ADMIN_DELETED_SQL}
+       ORDER BY order_id DESC`,
+      [did, d]
+    );
+    list = eRows || [];
+  } catch (e) {
+    if (e.code === 'ER_NO_SUCH_TABLE' || e.code === 'ER_BAD_FIELD_ERROR') return out;
+    throw e;
+  }
+  if (!list.length) return out;
+
+  const driverIds = [did];
+  const errandDriverById = await fetchErrandStDriversByIds(errandPool, driverIds);
+  await attachErrandDriverGroups(errandPool, errandDriverById);
+  const needMtNames = driverIds.filter(
+    (id) => !errandDriverById.has(String(id)) || !errandDriverById.get(String(id))?.full_name
+  );
+  /** @type {Map<string, string|null>} */
+  const mtDriverNameById = new Map();
+  if (needMtNames.length) {
+    const ph = needMtNames.map(() => '?').join(',');
+    try {
+      const [drows] = await mainPool.query(
+        `SELECT driver_id, CONCAT(COALESCE(first_name,''), ' ', COALESCE(last_name,'')) AS full_name
+         FROM mt_driver WHERE driver_id IN (${ph})`,
+        needMtNames
+      );
+      for (const row of drows || []) {
+        mtDriverNameById.set(String(row.driver_id), String(row.full_name || '').trim() || null);
+      }
+    } catch (_) {
+      /* optional */
+    }
+  }
+  const teamIdsForErrand = [
+    ...new Set(
+      [...errandDriverById.values()]
+        .map((v) => v.team_id)
+        .filter((tid) => tid != null && Number.isFinite(tid) && tid > 0)
+    ),
+  ];
+  const teamNameById = await fetchMtDriverTeamNamesByIds(mainPool, teamIdsForErrand);
+  const merchantIds = list
+    .map((r) => r.merchant_id)
+    .filter((id) => id != null && String(id).trim() !== '')
+    .map((id) => parseInt(String(id), 10))
+    .filter((n) => Number.isFinite(n) && n > 0);
+  const merchantById = await fetchErrandMerchantsByIds(errandPool, merchantIds);
+  const clientIds = list
+    .map((r) => r.client_id)
+    .filter((id) => id != null && String(id).trim() !== '')
+    .map((id) => parseInt(String(id), 10))
+    .filter((n) => Number.isFinite(n) && n > 0);
+  const clientById = await fetchErrandClientsByIds(errandPool, clientIds);
+  const clientAddressesByClientId = await fetchErrandClientAddressesByClientIds(errandPool, clientIds);
+  const orderIds = list
+    .map((r) => r.order_id)
+    .filter((id) => id != null && String(id).trim() !== '')
+    .map((id) => parseInt(String(id), 10))
+    .filter((n) => Number.isFinite(n) && n > 0);
+  const latestHistoryStatusByOrderId = await fetchErrandLatestHistoryStatusByOrderIds(errandPool, orderIds);
+
+  for (const r of list) {
+    out.push(
+      mapStOrderRowToTaskListRow(
+        r,
+        errandDriverById,
+        mtDriverNameById,
+        merchantById,
+        clientById,
+        clientAddressesByClientId,
+        latestHistoryStatusByOrderId,
+        teamNameById
+      )
+    );
+  }
+  return out;
+}
+
+/**
  * GPS pins for ErrandWib riders (`st_driver.latitude` / `lontitude`), same shape as `GET /drivers/locations` rows.
  * @param {import('mysql2/promise').Pool} errandPool
  * @param {boolean} includeOffline
@@ -2449,6 +2555,7 @@ module.exports = {
   resolveErrandDriverDetail,
   buildErrandPseudoRowsForAgentDashboard,
   fetchErrandOrderTaskCountsByDriver,
+  fetchErrandMappedOrdersForDriverDate,
   fetchErrandDriverLocationsForMap,
   ST_ORDERNEW_EXCLUDE_ADMIN_DELETED_SQL,
 };

@@ -215,6 +215,7 @@ export default function MainHeader({ onMenuClick, onOpenNewTask }) {
               items={riderNotifications}
               pollError={pollError}
               onMarkAllRead={handleMarkAllRead}
+              onClosePanel={() => setNotificationsOpen(false)}
             />
           ) : null}
         </div>

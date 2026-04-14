@@ -99,29 +99,50 @@ async function fetchMtClientDisplayName(pool, clientId) {
 }
 
 /**
- * Prefer mt_mobile2_order_trigger.id for this order; else use rider task_id for correlation.
+ * `mt_mobile2_push_logs.trigger_id` should reference `mt_mobile2_order_trigger.trigger_id`
+ * (incrementing PK — not driver task_id). Schema: trigger_id, trigger_type, order_id, order_status, …
  *
  * @param {import('mysql2/promise').Pool} pool
  * @param {number} orderId
- * @param {number} taskId
  * @returns {Promise<number|null>}
  */
-async function resolvePushLogTriggerId(pool, orderId, taskId) {
+async function resolvePushLogTriggerId(pool, orderId) {
   const oid = parseInt(String(orderId), 10);
+  if (!Number.isFinite(oid) || oid <= 0) return null;
+
+  const readTid = (rows) => {
+    const r = rows && rows[0];
+    if (!r) return null;
+    const v = r.tid != null ? parseInt(String(r.tid), 10) : NaN;
+    return Number.isFinite(v) && v > 0 ? v : null;
+  };
+
   try {
-    if (Number.isFinite(oid) && oid > 0) {
-      const [rows] = await pool.query(
-        'SELECT id FROM mt_mobile2_order_trigger WHERE order_id = ? ORDER BY id DESC LIMIT 1',
+    const [rows] = await pool.query(
+      `SELECT trigger_id AS tid
+       FROM mt_mobile2_order_trigger
+       WHERE order_id = ?
+       ORDER BY trigger_id DESC
+       LIMIT 1`,
+      [oid]
+    );
+    const tid = readTid(rows);
+    if (tid != null) return tid;
+  } catch (e) {
+    const badCol =
+      e && (e.code === 'ER_BAD_FIELD_ERROR' || Number(e.errno) === 1054 || /Unknown column/i.test(String(e.message || '')));
+    if (!badCol) return null;
+    try {
+      const [rows2] = await pool.query(
+        'SELECT id AS tid FROM mt_mobile2_order_trigger WHERE order_id = ? ORDER BY id DESC LIMIT 1',
         [oid]
       );
-      const id = rows && rows[0] && rows[0].id != null ? parseInt(String(rows[0].id), 10) : NaN;
-      if (Number.isFinite(id) && id > 0) return id;
+      const legacy = readTid(rows2);
+      if (legacy != null) return legacy;
+    } catch (_) {
+      /* table missing */
     }
-  } catch (_) {
-    /* table missing */
   }
-  const tid = parseInt(String(taskId), 10);
-  if (Number.isFinite(tid) && tid > 0) return tid;
   return null;
 }
 

@@ -24,6 +24,7 @@ const {
   resolveErrandDriverDetail,
   buildErrandPseudoRowsForAgentDashboard,
   fetchErrandOrderTaskCountsByDriver,
+  fetchErrandMappedOrdersForDriverDate,
   fetchErrandDriverLocationsForMap,
   resolveErrandHistoryRemarks,
   ST_ORDERNEW_EXCLUDE_ADMIN_DELETED_SQL,
@@ -4474,7 +4475,7 @@ router.post('/drivers/:id/send-push', async (req, res) => {
 router.get('/drivers/:id/details', async (req, res) => {
   // Debug/version marker so we can verify which server code is running in production.
   // Safe to leave in place; it does not expose sensitive data.
-  res.set('X-Driver-Details-Version', '2026-03-18');
+  res.set('X-Driver-Details-Version', '2026-04-14');
   const driverId = parseInt(req.params.id, 10);
   const dateStr = (req.query.date || '').toString().trim() || new Date().toISOString().slice(0, 10);
   if (!Number.isFinite(driverId)) return res.status(400).json({ error: 'Invalid driver id' });
@@ -4543,16 +4544,62 @@ router.get('/drivers/:id/details', async (req, res) => {
       last_seen: d.last_seen,
     };
     let tasks = [];
+    const taskSelectAttempts = [
+      `SELECT t.task_id, t.task_description, t.status, t.delivery_date, t.delivery_address, t.customer_name,
+              t.trans_type, t.date_created
+       FROM mt_driver_task t
+       WHERE t.driver_id = ? AND (t.delivery_date = ? OR DATE(t.delivery_date) = ?)
+       ORDER BY t.task_id DESC`,
+      `SELECT t.task_id, t.task_description, t.status, t.delivery_date, t.delivery_address, t.customer_name, t.trans_type
+       FROM mt_driver_task t
+       WHERE t.driver_id = ? AND (t.delivery_date = ? OR DATE(t.delivery_date) = ?)
+       ORDER BY t.task_id DESC`,
+      `SELECT t.task_id, t.task_description, t.status, t.delivery_date, t.delivery_address, t.customer_name
+       FROM mt_driver_task t
+       WHERE t.driver_id = ? AND (t.delivery_date = ? OR DATE(t.delivery_date) = ?)
+       ORDER BY t.task_id DESC`,
+    ];
     try {
-      const [taskRows] = await pool.query(
-        `SELECT t.task_id, t.task_description, t.status, t.delivery_date, t.delivery_address, t.customer_name
-         FROM mt_driver_task t WHERE t.driver_id = ? AND (t.delivery_date = ? OR DATE(t.delivery_date) = ?) ORDER BY t.task_id DESC`,
-        [driverId, dateStr, dateStr]
-      );
-      tasks = taskRows || [];
+      for (const sql of taskSelectAttempts) {
+        try {
+          const [taskRows] = await pool.query(sql, [driverId, dateStr, dateStr]);
+          tasks = (taskRows || []).map((r) => ({
+            ...r,
+            task_source: 'food',
+            order_kind: 'task',
+          }));
+          break;
+        } catch (e) {
+          if (e.code !== 'ER_BAD_FIELD_ERROR') throw e;
+        }
+      }
     } catch (_) {
       // Some deployments may not have mt_driver_task or these columns; still return driver info.
       tasks = [];
+    }
+
+    if (errandWibPool) {
+      try {
+        const errandMapped = await fetchErrandMappedOrdersForDriverDate(errandWibPool, pool, driverId, dateStr);
+        const errandWithKind = (errandMapped || []).map((r) => ({ ...r, order_kind: 'mangan' }));
+        const rowTime = (row) => {
+          const t1 = row?.date_created != null ? new Date(row.date_created).getTime() : NaN;
+          if (Number.isFinite(t1)) return t1;
+          const t2 = row?.delivery_date != null ? new Date(row.delivery_date).getTime() : NaN;
+          return Number.isFinite(t2) ? t2 : 0;
+        };
+        const merged = [...tasks, ...errandWithKind].sort((a, b) => {
+          const tb = rowTime(b);
+          const ta = rowTime(a);
+          if (tb !== ta) return tb - ta;
+          const idb = Math.abs(parseInt(String(b.task_id ?? b.id ?? 0), 10)) || 0;
+          const ida = Math.abs(parseInt(String(a.task_id ?? a.id ?? 0), 10)) || 0;
+          return idb - ida;
+        });
+        tasks = merged;
+      } catch (e) {
+        if (e.code !== 'ER_NO_SUCH_TABLE' && e.code !== 'ER_BAD_FIELD_ERROR') throw e;
+      }
     }
 
     return res.json({ driver, tasks });
