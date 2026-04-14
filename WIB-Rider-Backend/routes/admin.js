@@ -4048,6 +4048,35 @@ router.delete('/tasks/:id', async (req, res) => {
   const taskId = parseInt(req.params.id, 10);
   if (!Number.isFinite(taskId)) return res.status(400).json({ error: 'Invalid task id' });
   try {
+    const [[taskBefore]] = await pool.query(
+      'SELECT order_id FROM mt_driver_task WHERE task_id = ? LIMIT 1',
+      [taskId]
+    );
+    if (!taskBefore) return res.status(404).json({ error: 'Task not found' });
+
+    const oid =
+      taskBefore.order_id != null ? parseInt(String(taskBefore.order_id), 10) : NaN;
+    if (Number.isFinite(oid) && oid > 0) {
+      try {
+        await updateMtOrderStatusIfDeliveryComplete(pool, oid, 'declined');
+      } catch (_) {
+        /* mt_order.status optional */
+      }
+      try {
+        await insertMtOrderHistoryRow(pool, {
+          orderId: oid,
+          taskId,
+          status: 'declined',
+          remarks: 'Task deleted',
+          updateByType: 'admin',
+          actorId: req.adminUser?.admin_id ?? null,
+          actorDisplayName: formatActorFromAdminUser(req.adminUser),
+        });
+      } catch (_) {
+        /* mt_order_history optional */
+      }
+    }
+
     const [result] = await pool.query('DELETE FROM mt_driver_task WHERE task_id = ?', [taskId]);
     if (result.affectedRows === 0) return res.status(404).json({ error: 'Task not found' });
     return res.json({ ok: true });

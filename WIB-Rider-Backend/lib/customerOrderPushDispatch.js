@@ -7,6 +7,7 @@
 
 const { insertMtMobile2PushLog } = require('./mtMobile2PushLogs');
 const { fetchClientFcmTokenAndDeviceRef } = require('./customerFcmToken');
+const { normalizeFoodTaskStatusKey } = require('./dashboardRiderNotify');
 
 const COPY_RIDER_ASSIGNED = {
   title: 'Rider assigned',
@@ -55,6 +56,39 @@ function statusImpliesAcknowledged(raw) {
 function statusImpliesComplete(raw) {
   const c = compactStatusKey(raw);
   return c === 'successful' || c === 'delivered' || c === 'completed';
+}
+
+/**
+ * Buckets aligned with {@link normalizeFoodTaskStatusKey} so rider milestones like
+ * ready_for_pickup / en-route phrases trigger customer dispatch (mobile v2), not only started/inprogress.
+ *
+ * @param {unknown} raw
+ * @returns {'prep'|'underway'|'complete'|'negative'|'other'}
+ */
+function bucketForCustomerFoodStatusPush(raw) {
+  const norm = normalizeFoodTaskStatusKey(raw);
+  const n = String(norm || '').toLowerCase().trim();
+  if (!n) return 'other';
+  if (n === 'successful' || n === 'delivered' || n === 'completed' || n === 'complete') return 'complete';
+  if (
+    n === 'cancelled' ||
+    n === 'canceled' ||
+    n === 'unassigned' ||
+    n === 'declined' ||
+    n === 'failed' ||
+    n === 'rejected'
+  ) {
+    return 'negative';
+  }
+  if (n === 'acknowledged' || n === 'assigned' || n === 'new') return 'prep';
+  if (n === 'started' || n === 'inprogress' || n === 'in_progress') return 'underway';
+  if (n === 'ready_for_pickup' || n === 'readyforpickup' || n === 'readypickup') return 'underway';
+  if (n === 'verification' || n === 'pending_verification') return 'underway';
+  const c = n.replace(/_/g, '');
+  if (c.includes('pickedup') || (c.includes('picked') && c.includes('up'))) return 'underway';
+  if (c.includes('outfor') || c.includes('outfordelivery')) return 'underway';
+  if (c.includes('heading') && (c.includes('customer') || c.includes('dropoff'))) return 'underway';
+  return 'other';
 }
 
 /**
@@ -279,12 +313,15 @@ function notifyCustomerFoodTaskStatusPushFireAndForget(pool, ctx) {
   const prev = ctx.prevStatusRaw;
   const next = ctx.newStatusRaw;
 
+  const prevB = bucketForCustomerFoodStatusPush(prev);
+  const nextB = bucketForCustomerFoodStatusPush(next);
+
   let pushKind = null;
-  if (statusImpliesAcknowledged(next) && !statusImpliesAcknowledged(prev)) {
+  if (nextB === 'prep' && prevB !== 'prep' && prevB !== 'negative') {
     pushKind = 'acknowledged';
-  } else if (statusImpliesInProgress(next) && !statusImpliesInProgress(prev)) {
+  } else if (nextB === 'underway' && prevB !== 'underway' && prevB !== 'complete' && prevB !== 'negative') {
     pushKind = 'in_progress';
-  } else if (statusImpliesComplete(next) && !statusImpliesComplete(prev)) {
+  } else if (nextB === 'complete' && prevB !== 'complete' && prevB !== 'negative') {
     pushKind = 'complete';
   }
   if (!pushKind) return;
@@ -334,6 +371,7 @@ module.exports = {
   isEffectivelyUnassignedDriverId,
   fetchFoodOrderClientId,
   customerDispatchOrderUrl,
+  bucketForCustomerFoodStatusPush,
   postCustomerDispatchOrder,
   notifyCustomerRiderAssignedForFoodTaskFireAndForget,
   notifyCustomerFoodTaskStatusPushFireAndForget,

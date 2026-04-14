@@ -5,6 +5,8 @@
 
 'use strict';
 
+const { appendMtOrderStatusForLegacyAdmin } = require('./mtOrderLegacyStatsSync');
+
 function compactTaskStatus(raw) {
   return String(raw || '')
     .toLowerCase()
@@ -30,6 +32,15 @@ function mapTaskStatusToMtOrderStatus(raw) {
       'Successful'
     );
   }
+  if (c === 'declined' || c === 'rejected' || c === 'reject') {
+    return String(process.env.MT_ORDER_STATUS_DECLINED || 'Declined').trim() || 'Declined';
+  }
+  if (c === 'cancelled' || c === 'canceled') {
+    return String(process.env.MT_ORDER_STATUS_CANCELLED || 'Cancel').trim() || 'Cancel';
+  }
+  if (c === 'failed') {
+    return String(process.env.MT_ORDER_STATUS_FAILED || 'Failed').trim() || 'Failed';
+  }
   return null;
 }
 
@@ -53,9 +64,15 @@ async function updateMtOrderStatusIfDeliveryComplete(pool, orderId, taskStatusRa
       (e.message && /Data truncated|Incorrect.*enum/i.test(String(e.message)))
     ) {
       console.warn('[mt_order] status column update skipped:', e.message || String(e));
-      return;
+    } else {
+      throw e;
     }
-    throw e;
+  }
+
+  try {
+    await appendMtOrderStatusForLegacyAdmin(pool, orderId, status);
+  } catch (e) {
+    console.warn('[mt_order_status] legacy stats_id sync skipped:', e.message || String(e));
   }
 }
 
