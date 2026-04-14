@@ -2,6 +2,8 @@ import { createElement } from 'react';
 import { toast } from 'react-toastify';
 
 const DEFAULT_AUTO_MS = 12500;
+const SEMANTIC_DEDUPE_WINDOW_MS = 9000;
+const recentSemanticToastUntil = new Map();
 
 /** @typedef {'mangan' | 'task' | 'mixed'} RiderNotifOrderKind */
 
@@ -17,6 +19,52 @@ export function inferNotificationOrderKind(parts) {
     .join(' ');
   if (/\bmangan\b/.test(blob) || /\b(errand|mangan)\s+order\b/.test(blob)) return 'mangan';
   return 'task';
+}
+
+function pruneSemanticToastCache(now = Date.now()) {
+  for (const [k, exp] of recentSemanticToastUntil) {
+    if (!(exp > now)) recentSemanticToastUntil.delete(k);
+  }
+}
+
+function inferToastMilestone(parts) {
+  const blob = [parts?.title, parts?.message, parts?.tertiary, parts?.byLine, parts?.byLabel]
+    .filter((x) => x != null && String(x).trim() !== '')
+    .map((x) => String(x).toLowerCase())
+    .join(' ');
+  if (/\b(accepted|acknowledged)\b/.test(blob)) return 'accepted';
+  if (/\bassigned\b/.test(blob)) return 'assigned';
+  if (/\bready\s*for\s*pickup\b|\bready[_\s-]*pickup\b/.test(blob)) return 'ready_pickup';
+  if (/\b(successful|completed|delivered|done)\b/.test(blob)) return 'done';
+  if (/\b(new\s+task|new\s+order|broadcast)\b/.test(blob)) return 'new';
+  return 'update';
+}
+
+function extractToastOrderRef(parts) {
+  const blob = [parts?.title, parts?.message, parts?.tertiary, parts?.byLine, parts?.byLabel]
+    .filter((x) => x != null && String(x).trim() !== '')
+    .map((x) => String(x))
+    .join(' | ');
+  const mangan = blob.match(/\b(?:mangan|errand)\s*(?:order)?\s*#?\s*(\d+)\b/i);
+  if (mangan) return `mangan:${mangan[1]}`;
+  const order = blob.match(/\border\s*#\s*(\d+)\b/i);
+  if (order) return `task:${order[1]}`;
+  const task = blob.match(/\btask\s*#\s*(\d+)\b/i);
+  if (task) return `task:${task[1]}`;
+  return null;
+}
+
+function shouldSkipSemanticDuplicate(parts, kind) {
+  const ref = extractToastOrderRef(parts);
+  if (!ref) return false;
+  const milestone = inferToastMilestone(parts);
+  const key = `${kind}|${milestone}|${ref}`;
+  const now = Date.now();
+  pruneSemanticToastCache(now);
+  const exp = recentSemanticToastUntil.get(key);
+  if (exp != null && exp > now) return true;
+  recentSemanticToastUntil.set(key, now + SEMANTIC_DEDUPE_WINDOW_MS);
+  return false;
 }
 
 function orderKindLabel(kind) {
@@ -80,6 +128,21 @@ export function showRiderSystemToast(opts) {
     typeof o.autoCloseMs === 'number' && Number.isFinite(o.autoCloseMs) && o.autoCloseMs > 0
       ? o.autoCloseMs
       : DEFAULT_AUTO_MS;
+
+  if (
+    shouldSkipSemanticDuplicate(
+      {
+        title,
+        message: o.message,
+        tertiary,
+        byLine: fullByLine,
+        byLabel: rawBy,
+      },
+      kind
+    )
+  ) {
+    return;
+  }
 
   const body = createElement(
     'div',
