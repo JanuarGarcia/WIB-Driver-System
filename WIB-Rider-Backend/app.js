@@ -8,6 +8,7 @@ const { getUploadsRoot } = require('./lib/uploadsRoot');
 const driverRoutes = require('./routes/driver');
 const adminRoutes = require('./routes/admin');
 const riderDevicesRoutes = require('./routes/riderDevicesRoutes');
+const mobile2NotificationsRoutes = require('./routes/mobile2Notifications');
 
 const app = express();
 
@@ -39,6 +40,7 @@ app.use('/driver/api', driverRoutes);
 
 // Rider FCM device registry (Flutter → same auth as /driver/api)
 app.use('/api/riders', riderDevicesRoutes);
+app.use('/api/mobile2', mobile2NotificationsRoutes);
 
 // Admin API
 app.use('/admin/api', adminRoutes);
