@@ -7,6 +7,8 @@
     "start": "node server.js",
     "dev": "concurrently -n api,vite \"node server.js\" \"npm run dev:client\"",
     "build": "cd client && npm install --include=dev && npm run build",
+    "postinstall": "node scripts/postinstall-build.js",
+    "dist:zip": "npm run build && node scripts/zip-dist.js",
     "dev:client": "cd client && npm run dev"
   },
   "dependencies": {
