@@ -3,23 +3,12 @@ import { createPortal } from 'react-dom';
 import { useLocation, useNavigate } from 'react-router-dom';
 import TaskPanel from '../components/TaskPanel';
 import MapErrorBoundary from '../components/MapErrorBoundary';
-
-const MapView = lazy(() => import('../components/MapView'));
+/** Eager map avoids a second network chunk + “Loading map…” after Dashboard paints. */
+import MapView from '../components/MapView';
 import TaskDetailsModal from '../components/TaskDetailsModal';
 import TaskDetailsModalErrorBoundary from '../components/TaskDetailsModalErrorBoundary';
 const ActivityTimelineToastStack = lazy(() => import('../components/ActivityTimelineToastStack'));
 
-/** Matches MapView MAP_STYLE so layout does not jump while the map chunk loads. */
-const MAP_CHUNK_FALLBACK_STYLE = {
-  width: '100%',
-  height: '100%',
-  minHeight: 400,
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  background: '#e8e8e8',
-  color: '#666',
-};
 import AgentPanel from '../components/AgentPanel';
 import { useMapMerchantFilterSelection } from '../components/MapMerchantFilter';
 import { hydrateMapMerchantFilterFromServer } from '../utils/mapMerchantFilterPrefs';
@@ -306,12 +295,19 @@ export default function Dashboard() {
   }, [refreshMapData, taskListRevision]);
 
   useEffect(() => {
-    refreshActivePanelDriverIds({ force: true });
+    /* Defer agent roster slightly so map + tasks GETs run first (same-tab perceived speed). */
+    const id = window.setTimeout(() => {
+      refreshActivePanelDriverIds({ force: true });
+    }, 0);
+    return () => window.clearTimeout(id);
   }, [refreshActivePanelDriverIds]);
 
   useEffect(() => {
     if (taskListRevision < 1) return;
-    refreshActivePanelDriverIds({ force: true });
+    const id = window.setTimeout(() => {
+      refreshActivePanelDriverIds({ force: true });
+    }, 0);
+    return () => window.clearTimeout(id);
   }, [taskListRevision, refreshActivePanelDriverIds]);
 
   const filteredMerchantsForMap = useMemo(() => {
@@ -433,15 +429,6 @@ export default function Dashboard() {
   useEffect(() => {
     if (location.pathname !== '/') return;
     refreshMapSettings();
-  }, [location.pathname]);
-
-  useEffect(() => {
-    if (location.pathname !== '/') return;
-    const id = window.setTimeout(() => {
-      // Warm the lazy map chunk during idle time to reduce first-open wait.
-      import('../components/MapView').catch(() => {});
-    }, 250);
-    return () => window.clearTimeout(id);
   }, [location.pathname]);
 
   const lastWindowFocusRefreshRef = useRef(0);
@@ -636,31 +623,23 @@ export default function Dashboard() {
               </div>
             )}
           >
-            <Suspense
-              fallback={
-                <div className="map-container" style={MAP_CHUNK_FALLBACK_STYLE} aria-busy="true">
-                  Loading map…
-                </div>
-              }
-            >
-              <MapView
-                locations={filteredLocationsForMap}
-                merchants={filteredMerchantsForMap}
-                taskMarkers={filteredMapTasks}
-                showLegend
-                driverQueueCount={driverQueueCount}
-                onViewDriverQueue={handleViewDriverQueueFromMap}
-                mapProvider={mapProvider}
-                apiKey={googleApiKey}
-                mapboxToken={mapboxToken}
-                center={mapShowsNoMarkers ? defaultMapCenter : undefined}
-                zoom={mapShowsNoMarkers ? defaultMapZoom : undefined}
-                googleMapStyle={googleMapStyle}
-                mapResizeTrigger={mapResizeTrigger}
-                focusTaskRequest={mapTaskFocusRequest}
-                onResetMapView={handleResetMapView}
-              />
-            </Suspense>
+            <MapView
+              locations={filteredLocationsForMap}
+              merchants={filteredMerchantsForMap}
+              taskMarkers={filteredMapTasks}
+              showLegend
+              driverQueueCount={driverQueueCount}
+              onViewDriverQueue={handleViewDriverQueueFromMap}
+              mapProvider={mapProvider}
+              apiKey={googleApiKey}
+              mapboxToken={mapboxToken}
+              center={mapShowsNoMarkers ? defaultMapCenter : undefined}
+              zoom={mapShowsNoMarkers ? defaultMapZoom : undefined}
+              googleMapStyle={googleMapStyle}
+              mapResizeTrigger={mapResizeTrigger}
+              focusTaskRequest={mapTaskFocusRequest}
+              onResetMapView={handleResetMapView}
+            />
           </MapErrorBoundary>
         </div>
       </div>

@@ -9,9 +9,11 @@ export default defineConfig({
         manualChunks(id) {
           if (!id.includes('node_modules')) return;
           if (id.includes('leaflet') || id.includes('react-leaflet')) return 'vendor-leaflet';
-          if (id.includes('react-router-dom')) return 'vendor-router';
-          if (id.includes('react-toastify')) return 'vendor-toast';
           if (id.includes('@react-google-maps/api')) return 'vendor-google-maps';
+          if (id.includes('react-router-dom')) return 'vendor-router';
+          if (id.includes('react-dom')) return 'vendor-react-dom';
+          if (/node_modules[/\\]react[/\\]/.test(id)) return 'vendor-react';
+          if (id.includes('react-toastify')) return 'vendor-toast';
           return 'vendor';
         },
       },

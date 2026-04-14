@@ -95,6 +95,9 @@ export function userFacingApiError(err) {
 export const API_BASE = import.meta.env.VITE_API_URL || '/api';
 const API = API_BASE;
 
+/** Coalesce identical in-flight GETs (Dashboard + TaskPanel often request the same `tasks?date=`). */
+const __apiInflightGet = new Map();
+
 /**
  * Map / Merchants table: logo <img> cannot send auth headers. This URL hits /admin/api/merchants/public-logo/…
  * (same path shape as JSON APIs) so it works through the dashboard /api proxy even when /uploads is not exposed on the dashboard host.
@@ -192,10 +195,24 @@ export async function api(path, options = {}) {
   const url = API.startsWith('http')
     ? (path.startsWith('/') ? base + path : `${base}/${path}`)
     : (path.startsWith('/') ? path : `${API}/${path}`);
-  const { skipDedupe: _skipDedupe, signal: _userSignal, ...fetchOptions } = options;
+  const { skipDedupe, signal: userSignal, ...fetchOptions } = options;
   const headers = { 'Content-Type': 'application/json', ...fetchOptions.headers };
   const token = getToken();
   if (token) headers['x-dashboard-token'] = token;
+
+  const method = String(fetchOptions.method || 'GET').toUpperCase();
+  const hasBody = fetchOptions.body != null && String(fetchOptions.body).trim() !== '';
+  const canDedupe =
+    method === 'GET' &&
+    skipDedupe !== true &&
+    userSignal == null &&
+    fetchOptions.signal == null &&
+    !hasBody;
+  const dedupeKey = canDedupe ? `GET ${url}` : null;
+  if (dedupeKey) {
+    const hit = __apiInflightGet.get(dedupeKey);
+    if (hit) return hit;
+  }
 
   const runFetch = async () => {
     const ctrl = new AbortController();
@@ -275,6 +292,15 @@ export async function api(path, options = {}) {
     }
     return data;
   };
+
+  if (dedupeKey) {
+    const p = runFetch();
+    __apiInflightGet.set(dedupeKey, p);
+    p.finally(() => {
+      if (__apiInflightGet.get(dedupeKey) === p) __apiInflightGet.delete(dedupeKey);
+    });
+    return p;
+  }
 
   return runFetch();
 }

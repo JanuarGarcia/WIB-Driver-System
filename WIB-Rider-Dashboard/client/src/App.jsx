@@ -13,9 +13,10 @@ import { TeamFilterProvider } from './context/TeamFilterContext';
 import Sidebar from './components/Sidebar';
 import MainHeader from './components/MainHeader';
 import Login from './pages/Login';
+/** Home route is eager so refresh / first open does not wait on a lazy chunk + nested map chunk. */
+import Dashboard from './pages/Dashboard';
 
 const NewTaskModal = lazy(() => import('./components/NewTaskModal'));
-const Dashboard = lazy(() => import('./pages/Dashboard'));
 const Tasks = lazy(() => import('./pages/Tasks'));
 const Drivers = lazy(() => import('./pages/Drivers'));
 const NewTask = lazy(() => import('./pages/NewTask'));
