@@ -35,6 +35,7 @@ const { insertMtOrderHistoryRow } = require('../lib/mtOrderHistoryInsert');
 const { notifyDashboardAfterMtTaskHistoryRow } = require('../lib/mtTaskStatusDashboardNotify');
 const { sendCustomerTaskMessage, sendCustomerTaskNotify } = require('../lib/sendCustomerTaskMessage');
 const { notifyCustomerFoodTaskStatusPushFireAndForget } = require('../lib/customerOrderPushDispatch');
+const { notifyRiderOrderPushAfterTaskStatusFireAndForget } = require('../lib/riderOrderPushDispatch');
 const { updateMtOrderStatusIfDeliveryComplete } = require('../lib/mtOrderStatusSync');
 const { buildErrandOrderDetailPayloadForDriver } = require('../lib/errandOrders');
 const { fetchErrandProofsForOrder } = require('../lib/errandProof');
@@ -1761,6 +1762,13 @@ router.post('/ChangeTaskStatus', validateApiKey, resolveDriver, async (req, res)
     orderId: task.order_id,
     prevStatusRaw: task.prev_status,
     newStatusRaw: status,
+  });
+
+  notifyRiderOrderPushAfterTaskStatusFireAndForget(pool, {
+    orderId: task.order_id,
+    driverId: task.driver_id,
+    prevStatus: task.prev_status,
+    newStatus: status,
   });
 
   return success(res, null);

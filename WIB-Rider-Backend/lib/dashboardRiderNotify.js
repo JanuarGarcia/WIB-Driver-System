@@ -216,4 +216,5 @@ module.exports = {
   formatActorFromDriver,
   formatActorFromAdminUser,
   attachActorToPayload,
+  normalizeFoodTaskStatusKey,
 };

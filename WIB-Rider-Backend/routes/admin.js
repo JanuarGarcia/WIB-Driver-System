@@ -30,7 +30,7 @@ const {
 } = require('../lib/errandOrders');
 const { normalizeIncomingStatusRaw, CANONICAL: ERRAND_CANONICAL_STATUSES } = require('../lib/errandDriverStatus');
 const { success, error } = require('../lib/response');
-const { sendPushToDriver, sendPushToAllDrivers, resetFirebase, initFirebase } = require('../services/fcm');
+const { sendPushToDriver, sendPushToAllDrivers, sendPushToDevice, resetFirebase, initFirebase } = require('../services/fcm');
 const { fetchTaskProofPhotosWithUrls, buildTaskProofImageUrl, normalizeStoredProofType } = require('../lib/taskProof');
 const { fetchErrandProofsForOrder } = require('../lib/errandProof');
 const riderNotificationService = require('../services/riderNotification.service');
@@ -59,6 +59,10 @@ const {
   notifyCustomerRiderAssignedForFoodTaskFireAndForget,
   notifyCustomerFoodTaskStatusPushFireAndForget,
 } = require('../lib/customerOrderPushDispatch');
+const {
+  notifyRiderOrderPushAfterAdminAssignFireAndForget,
+  notifyRiderOrderPushAfterTaskStatusFireAndForget,
+} = require('../lib/riderOrderPushDispatch');
 const { updateMtOrderStatusIfDeliveryComplete } = require('../lib/mtOrderStatusSync');
 const { sendCustomerTaskNotify } = require('../lib/sendCustomerTaskMessage');
 const { resolveMerchantLogoForApi, merchantLogoSearchDirs } = require('../lib/merchantUploadsLogo');
@@ -3513,6 +3517,11 @@ router.put('/tasks/:id/assign', express.json(), async (req, res) => {
       prevDriverId,
       newDriverId: driverId,
     });
+    notifyRiderOrderPushAfterAdminAssignFireAndForget(pool, {
+      orderId: task.order_id,
+      prevDriverId,
+      newDriverId: driverId,
+    });
     // Rider leaves the FIFO queue once they receive a task; they rejoin only from the app.
     try {
       await pool.query(
@@ -3664,6 +3673,16 @@ router.put('/errand-orders/:orderId/assign', express.json(), async (req, res) =>
   if (!Number.isFinite(orderId)) return res.status(400).json({ error: 'Invalid order id' });
   if (!Number.isFinite(driverId)) return res.status(400).json({ error: 'driver_id required' });
   try {
+    let prevDriverId = null;
+    try {
+      const [[prevRow]] = await errandWibPool.query('SELECT driver_id FROM st_ordernew WHERE order_id = ? LIMIT 1', [
+        orderId,
+      ]);
+      prevDriverId = prevRow?.driver_id ?? null;
+    } catch (_) {
+      prevDriverId = null;
+    }
+
     let result;
     try {
       [result] = await errandWibPool.query(
@@ -3708,6 +3727,11 @@ router.put('/errand-orders/:orderId/assign', express.json(), async (req, res) =>
       message: errandAssignMsg,
       type: 'task_assigned',
     }).catch(() => {});
+    notifyRiderOrderPushAfterAdminAssignFireAndForget(pool, {
+      orderId,
+      prevDriverId,
+      newDriverId: driverId,
+    });
     return res.json({ ok: true });
   } catch (e) {
     if (e.code === 'ER_BAD_FIELD_ERROR') {
@@ -4067,9 +4091,10 @@ router.put('/tasks/:id/status', express.json(), async (req, res) => {
   const remarks = reason != null && String(reason).trim() ? String(reason).trim() : '';
 
   try {
-    const [[taskBefore]] = await pool.query('SELECT order_id, status FROM mt_driver_task WHERE task_id = ? LIMIT 1', [
-      taskId,
-    ]);
+    const [[taskBefore]] = await pool.query(
+      'SELECT order_id, status, driver_id AS assign_driver_id FROM mt_driver_task WHERE task_id = ? LIMIT 1',
+      [taskId]
+    );
     if (!taskBefore) return res.status(404).json({ error: 'Task not found' });
     const prevTaskStatus = taskBefore.status;
 
@@ -4152,6 +4177,13 @@ router.put('/tasks/:id/status', express.json(), async (req, res) => {
       orderId: taskBefore.order_id,
       prevStatusRaw: prevTaskStatus,
       newStatusRaw: newStatus,
+    });
+
+    notifyRiderOrderPushAfterTaskStatusFireAndForget(pool, {
+      orderId: taskBefore.order_id,
+      driverId: taskBefore.assign_driver_id,
+      prevStatus: prevTaskStatus,
+      newStatus,
     });
 
     return res.json({ ok: true, status: newStatus });
@@ -4853,6 +4885,86 @@ router.get('/driver-push-logs', async (req, res) => {
   } catch (e) {
     if (e.code === 'ER_NO_SUCH_TABLE' || e.code === 'ER_BAD_FIELD_ERROR') return res.json([]);
     throw e;
+  }
+});
+
+// ---- Rider FCM registry (mt_rider_device_reg) — debug / ops ----
+router.get('/rider-fcm-devices', async (req, res) => {
+  const driverId = parseInt(String(req.query.driver_id || ''), 10);
+  if (!Number.isFinite(driverId) || driverId <= 0) {
+    return res.status(400).json({ error: 'driver_id query parameter required' });
+  }
+  try {
+    const [rows] = await pool.query(
+      `SELECT id, driver_id, device_id, device_platform, device_uuid, push_enabled, date_created, date_modified
+       FROM mt_rider_device_reg WHERE driver_id = ? ORDER BY date_modified DESC`,
+      [driverId]
+    );
+    return res.json(rows || []);
+  } catch (e) {
+    if (e.code === 'ER_NO_SUCH_TABLE') return res.json([]);
+    throw e;
+  }
+});
+
+router.get('/rider-fcm-push-logs', async (req, res) => {
+  let sql = `SELECT id, driver_id, order_id, trigger_id, push_type, push_title, push_body, device_id, status,
+    provider_response, error_message, date_created, date_modified
+    FROM mt_rider_push_logs WHERE 1=1`;
+  const params = [];
+  const driverId = parseInt(String(req.query.driver_id || ''), 10);
+  if (Number.isFinite(driverId) && driverId > 0) {
+    sql += ' AND driver_id = ?';
+    params.push(driverId);
+  }
+  const orderId = parseInt(String(req.query.order_id || ''), 10);
+  if (Number.isFinite(orderId) && orderId > 0) {
+    sql += ' AND order_id = ?';
+    params.push(orderId);
+  }
+  sql += ' ORDER BY date_created DESC LIMIT 200';
+  try {
+    const [rows] = await pool.query(sql, params);
+    return res.json(rows || []);
+  } catch (e) {
+    if (e.code === 'ER_NO_SUCH_TABLE') return res.json([]);
+    throw e;
+  }
+});
+
+router.post('/drivers/:id/rider-fcm-test-push', express.json(), async (req, res) => {
+  const driverId = parseInt(req.params.id, 10);
+  if (!Number.isFinite(driverId)) return res.status(400).json({ error: 'Invalid driver id' });
+  const { title, message, device_id } = req.body || {};
+  const pushTitle = (title ?? 'Test').toString().trim() || 'Test';
+  const pushMessage = (message ?? '').toString().trim() || 'Rider FCM test push';
+  let token = device_id != null && String(device_id).trim() ? String(device_id).trim() : '';
+  try {
+    if (!token) {
+      const [[row]] = await pool.query(
+        `SELECT device_id FROM mt_rider_device_reg WHERE driver_id = ? AND push_enabled = 1
+         AND device_id IS NOT NULL AND TRIM(device_id) <> '' ORDER BY date_modified DESC LIMIT 1`,
+        [driverId]
+      );
+      token = row?.device_id ? String(row.device_id).trim() : '';
+    }
+    if (!token) {
+      return res.status(400).json({ error: 'No device token — pass device_id or register from the rider app' });
+    }
+    const result = await sendPushToDevice(token, {
+      title: pushTitle,
+      body: pushMessage,
+      data: { type: 'admin_rider_fcm_test', push_type: 'admin_rider_fcm_test' },
+    });
+    if (!result.success) {
+      return res.status(400).json({ error: result.error || 'Failed to send push' });
+    }
+    return res.json({ ok: true, messageId: result.messageId || null });
+  } catch (e) {
+    if (e.code === 'ER_NO_SUCH_TABLE') {
+      return res.status(503).json({ error: 'mt_rider_device_reg not installed — run sql/wib_rider_device_and_push.sql' });
+    }
+    return res.status(500).json({ error: e.message || 'Failed to send push' });
   }
 });
 

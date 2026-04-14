@@ -7,6 +7,7 @@ const { databaseNames } = require('./config/db');
 const { getUploadsRoot } = require('./lib/uploadsRoot');
 const driverRoutes = require('./routes/driver');
 const adminRoutes = require('./routes/admin');
+const riderDevicesRoutes = require('./routes/riderDevicesRoutes');
 
 const app = express();
 
@@ -35,6 +36,9 @@ app.use('/upload/errand', express.static(uploadsErrandDir));
 
 // Driver API (Flutter app) - base path /driver/api
 app.use('/driver/api', driverRoutes);
+
+// Rider FCM device registry (Flutter → same auth as /driver/api)
+app.use('/api/riders', riderDevicesRoutes);
 
 // Admin API
 app.use('/admin/api', adminRoutes);

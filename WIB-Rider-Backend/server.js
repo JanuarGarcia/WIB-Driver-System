@@ -25,6 +25,7 @@ async function start() {
   app.listen(PORT, () => {
     console.log(`WIB Rider Backend listening on http://localhost:${PORT}`);
     console.log(`  Driver API: http://localhost:${PORT}/driver/api`);
+    console.log(`  Rider devices: http://localhost:${PORT}/api/riders/devices/...`);
     console.log(`  Admin API:  http://localhost:${PORT}/admin/api`);
   });
 }

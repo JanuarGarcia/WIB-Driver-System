@@ -144,4 +144,25 @@ async function sendPushToFcmToken(fcmToken, title, body, data = {}) {
   }
 }
 
-module.exports = { initFirebase, resetFirebase, sendPushToDriver, sendPushToAllDrivers, sendPushToFcmToken };
+/**
+ * Generic FCM send by registration token (e.g. mt_rider_device_reg.device_id).
+ * Uses the same notification + data merge as customer pushes for Flutter foreground handling.
+ * @param {string} token
+ * @param {{ title?: string, body?: string, data?: Record<string, unknown>, fcmApp?: string }} [opts]
+ */
+async function sendPushToDevice(token, opts = {}) {
+  const title = opts.title != null ? String(opts.title) : '';
+  const body = opts.body != null ? String(opts.body) : '';
+  const data = opts.data && typeof opts.data === 'object' ? opts.data : {};
+  void opts.fcmApp;
+  return sendPushToFcmToken(token, title, body, data);
+}
+
+module.exports = {
+  initFirebase,
+  resetFirebase,
+  sendPushToDriver,
+  sendPushToAllDrivers,
+  sendPushToFcmToken,
+  sendPushToDevice,
+};
