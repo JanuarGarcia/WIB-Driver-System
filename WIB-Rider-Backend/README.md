@@ -47,6 +47,28 @@ In the **WIB Driver App** folder, set the API base URL to this backend (no `/dri
 - In `.env`: `API_BASE_URL=http://localhost:3000` (or your PC’s LAN IP for a real device)
 - Optional: `DRIVER_API_KEY=GodissoGood@33` (must match backend `API_HASH_KEY`)
 
+## Mangan customer push notifications (auto-push on status updates)
+
+Mangan orders live in **ErrandWib** (`st_ordernew`). When a driver accepts an errand/Mangan order or updates its delivery status via:
+
+- `POST /driver/api/AcceptErrandOrder`
+- `POST /driver/api/ChangeErrandOrderStatus`
+
+this backend can optionally **mirror** that transition to the legacy Mangan PHP Driver API (the same endpoints in the Postman “Driver API Collection”, e.g. `/driver/acceptorder`, `/driver/orderpickup`, `/driver/orderdelivered`). That legacy API is the system that sends **customer push notifications** for the old Mangan customer app.
+
+To enable it:
+
+- **Env**: set `MANGAN_DRIVER_SYNC_ENABLED=1`
+- **Base URL**: (optional) `MANGAN_DRIVER_API_BASE_URL=https://order.wheninbaguioeat.com`
+- **Credentials** (recommended): run `sql/mt_driver_mangan_credentials.sql` on the primary DB and set `mt_driver.mangan_api_username` + `mt_driver.mangan_api_password` for each driver.
+- **Dev-only fallback login**: alternatively set `MANGAN_SYNC_FALLBACK_USERNAME` / `MANGAN_SYNC_FALLBACK_PASSWORD` (only works if that Mangan driver is assigned to the order, because the PHP API verifies `driver_id`).
+
+Notes:
+
+- **No-op protection**: the errand status update rejects unchanged states (and the Mangan API also rejects “same as current”), so pushes fire only on real transitions.
+- **Don’t break delivery updates**: the Mangan sync is fire-and-forget and never blocks saving the status update in ErrandWib.
+- **Custom status→action map**: if your canonical status ladder differs, set `MANGAN_SYNC_STATUS_MAP_JSON` (see `.env.example`).
+
 ## Deploy on cPanel / A2 (Git “Deploy HEAD Commit”)
 
 The **monorepo root** (`WIB-Driver-System`) includes **`.cpanel.yml`**, which copies **`WIB-Rider-Backend/`** into your Node **Application root** and runs **`npm install --omit=dev`**.

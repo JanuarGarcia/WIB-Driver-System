@@ -2,7 +2,11 @@
  * Server-to-server calls to the legacy Mangan rider API (PHP DriverController)
  * so order status changes trigger the same customer notifications as the native Mangan rider app.
  *
- * Requires per-driver Mangan login (see sql/mt_driver_mangan_credentials.sql) or MANGAN_SYNC_FALLBACK_* env.
+ * IMPORTANT: Mangan PHP validates the *logged-in driver* matches st_ordernew.driver_id.
+ * So we must login as that assigned Mangan driver (st_driver) for the given order.
+ *
+ * Requires per-driver Mangan login stored on Mangan DB st_driver (recommended),
+ * or a single fallback Mangan login (dev/test only).
  */
 
 const { URL } = require('url');
@@ -70,17 +74,25 @@ function canonicalToAction(canonical) {
 }
 
 /**
- * @param {import('mysql2/promise').Pool} mainPool
- * @param {number} driverId
+ * @param {import('mysql2/promise').Pool} errandPool Mangan/ErrandWib pool (must contain st_driver + st_ordernew)
+ * @param {number} manganDriverId st_driver.driver_id
  */
-async function resolveManganCredentials(mainPool, driverId) {
+async function resolveManganCredentials(errandPool, manganDriverId) {
+  const userCol = (process.env.MANGAN_ST_DRIVER_USER_COL || 'wib_sync_username').trim() || 'wib_sync_username';
+  const passCol = (process.env.MANGAN_ST_DRIVER_PASS_COL || 'wib_sync_password').trim() || 'wib_sync_password';
   try {
-    const [[row]] = await mainPool.query(
-      'SELECT mangan_api_username AS u, mangan_api_password AS p FROM mt_driver WHERE driver_id = ? LIMIT 1',
-      [driverId]
+    const [[row]] = await errandPool.query(
+      `SELECT \`${userCol}\` AS u, \`${passCol}\` AS p, email, password
+       FROM st_driver WHERE driver_id = ? LIMIT 1`,
+      [manganDriverId]
     );
+    // Preferred: explicit WIB sync creds (plaintext you control).
     if (row?.u && row?.p) {
       return { username: String(row.u).trim(), password: String(row.p) };
+    }
+    // Fallback: try native Mangan driver email/password columns (often hashed; works only if /driver/login expects hashed input).
+    if (row?.email && row?.password) {
+      return { username: String(row.email).trim(), password: String(row.password) };
     }
   } catch (e) {
     if (e.code !== 'ER_BAD_FIELD_ERROR') throw e;
@@ -217,9 +229,9 @@ function shouldIgnoreFailureMessage(msg) {
 
 /**
  * @param {object} opts
- * @param {import('mysql2/promise').Pool} opts.mainPool
- * @param {import('mysql2/promise').Pool} opts.errandPool
- * @param {{ id: number, username?: string|null }} opts.driver
+ * @param {import('mysql2/promise').Pool} opts.mainPool Unused for auth; kept for backward compatibility
+ * @param {import('mysql2/promise').Pool} opts.errandPool Must contain st_ordernew + st_driver
+ * @param {{ id: number, username?: string|null }=} opts.driver WIB driver (optional; not used for Mangan auth)
  * @param {number} opts.orderId st_ordernew.order_id
  * @param {string|null|undefined} opts.orderUuid Mangan order UUID
  * @param {string} opts.canonical errandDriverStatus canonical
@@ -228,22 +240,21 @@ function shouldIgnoreFailureMessage(msg) {
 async function syncErrandStatusToMangan(opts) {
   if (!isEnabled()) return { skipped: true, reason: 'disabled' };
 
-  const { mainPool, errandPool, driver, orderId, orderUuid: uuidIn, canonical, extras } = opts;
+  const { errandPool, orderId, orderUuid: uuidIn, canonical, extras } = opts;
   let orderUuid = uuidIn != null && String(uuidIn).trim() !== '' ? String(uuidIn).trim() : '';
-
-  if (!orderUuid) {
-    try {
-      const [[row]] = await errandPool.query('SELECT order_uuid FROM st_ordernew WHERE order_id = ? LIMIT 1', [orderId]);
-      if (row?.order_uuid != null) orderUuid = String(row.order_uuid).trim();
-    } catch {
-      /* ignore */
-    }
+  let manganDriverId = null;
+  try {
+    const [[row]] = await errandPool.query('SELECT order_uuid, driver_id FROM st_ordernew WHERE order_id = ? LIMIT 1', [orderId]);
+    if (!orderUuid && row?.order_uuid != null) orderUuid = String(row.order_uuid).trim();
+    const d = row?.driver_id != null ? parseInt(String(row.driver_id), 10) : NaN;
+    manganDriverId = Number.isFinite(d) && d > 0 ? d : null;
+  } catch {
+    /* ignore */
   }
-  if (!orderUuid) {
-    return { skipped: true, reason: 'no_order_uuid' };
-  }
+  if (!orderUuid) return { skipped: true, reason: 'no_order_uuid' };
+  if (!manganDriverId) return { skipped: true, reason: 'no_assigned_mangan_driver' };
 
-  const creds = await resolveManganCredentials(mainPool, driver.id);
+  const creds = await resolveManganCredentials(errandPool, manganDriverId);
   if (!creds) {
     return { skipped: true, reason: 'no_credentials' };
   }
@@ -257,7 +268,7 @@ async function syncErrandStatusToMangan(opts) {
   const baseUrl = getBaseUrl();
   let bearer;
   try {
-    bearer = await getBearerToken(driver.id, creds);
+    bearer = await getBearerToken(manganDriverId, creds);
   } catch (e) {
     return { ok: false, phase: 'login', error: e.message || String(e) };
   }
@@ -286,7 +297,7 @@ async function syncErrandStatusToMangan(opts) {
   const msg = json?.msg != null ? String(json.msg) : '';
 
   if (result.httpStatus === 401) {
-    tokenCache.delete(cacheKey(driver.id, creds.username));
+    tokenCache.delete(cacheKey(manganDriverId, creds.username));
   }
 
   if (code === 1) {

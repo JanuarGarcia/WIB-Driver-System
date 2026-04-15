@@ -1,6 +1,6 @@
 /**
- * When another system writes mt_order_history (e.g. status "decline"), align mt_driver_task.status
- * so the rider dashboard "Declined" bucket matches the activity timeline.
+ * When another system writes mt_order_history (e.g. status "decline"/"cancel"), align mt_driver_task.status
+ * so the rider dashboard buckets match the activity timeline.
  */
 
 'use strict';
@@ -23,16 +23,25 @@ function actorFromHistoryRow(row) {
   return n || '';
 }
 
+function statusForTimelineCategory(cat) {
+  const c = String(cat || '').toLowerCase().trim();
+  if (c === 'declined') return 'declined';
+  if (c === 'cancelled' || c === 'canceled') return 'cancelled';
+  return null;
+}
+
 /**
  * @param {import('mysql2/promise').Pool} pool
  * @param {number} taskId
  * @param {Record<string, unknown>} historyRow - raw or feed-shaped row for classifyTimelineHistoryForDashboardNotify
- * @returns {Promise<{ updated: boolean }>}
+ * @returns {Promise<{ updated: boolean, status?: string }>}
  */
-async function syncMtDriverTaskFromDeclineHistory(pool, taskId, historyRow) {
+async function syncMtDriverTaskFromTerminalTimelineHistory(pool, taskId, historyRow) {
   const tid = Number(taskId);
   if (!Number.isFinite(tid) || tid <= 0) return { updated: false };
-  if (classifyTimelineHistoryForDashboardNotify(historyRow) !== 'declined') return { updated: false };
+  const cat = classifyTimelineHistoryForDashboardNotify(historyRow);
+  const target = statusForTimelineCategory(cat);
+  if (!target) return { updated: false };
 
   let cur;
   try {
@@ -54,8 +63,8 @@ async function syncMtDriverTaskFromDeclineHistory(pool, taskId, historyRow) {
   let result;
   try {
     [result] = await pool.query(
-      "UPDATE mt_driver_task SET status = 'declined', date_modified = NOW() WHERE task_id = ?",
-      [tid]
+      'UPDATE mt_driver_task SET status = ?, date_modified = NOW() WHERE task_id = ?',
+      [target, tid]
     );
   } catch (e) {
     if (e.code === 'ER_NO_SUCH_TABLE' || e.code === 'ER_BAD_FIELD_ERROR') return { updated: false };
@@ -66,7 +75,7 @@ async function syncMtDriverTaskFromDeclineHistory(pool, taskId, historyRow) {
   const oid = cur.order_id != null ? parseInt(String(cur.order_id), 10) : NaN;
   if (Number.isFinite(oid) && oid > 0) {
     try {
-      await updateMtOrderStatusIfDeliveryComplete(pool, oid, 'declined');
+      await updateMtOrderStatusIfDeliveryComplete(pool, oid, target);
     } catch (_) {
       /* optional */
     }
@@ -77,12 +86,12 @@ async function syncMtDriverTaskFromDeclineHistory(pool, taskId, historyRow) {
     tid,
     cur.order_id,
     cur.task_description != null ? String(cur.task_description) : '',
-    'declined',
+    target,
     actor
   );
   if (payload) notifyAllDashboardAdminsFireAndForget(pool, { ...payload, activityAt: historyRow.date_created || null });
 
-  return { updated: true };
+  return { updated: true, status: target };
 }
 
-module.exports = { syncMtDriverTaskFromDeclineHistory };
+module.exports = { syncMtDriverTaskFromTerminalTimelineHistory };

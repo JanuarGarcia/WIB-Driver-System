@@ -100,6 +100,12 @@ function classifyTimelineHistoryForDashboardNotify(row) {
   ].filter(Boolean);
   if (keys.some((k) => k === 'successful' || k === 'completed' || k === 'delivered')) return 'successful';
   if (
+    keys.some((k) => k === 'cancelled' || k === 'canceled' || k === 'cancel' || k.includes('cancelled') || k.includes('canceled')) &&
+    !keys.some((k) => k.includes('notcancel') || k.includes('uncancel'))
+  ) {
+    return 'cancelled';
+  }
+  if (
     keys.some((k) => k === 'declined' || k === 'decline' || k === 'rejected' || k === 'reject') &&
     !keys.some((k) => k.includes('notdeclin') || k.includes('undecline'))
   ) {
