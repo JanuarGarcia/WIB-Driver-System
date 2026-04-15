@@ -26,6 +26,7 @@ const {
 } = require('../lib/dashboardRiderNotify');
 const riderNotificationService = require('../services/riderNotification.service');
 const { milestoneDedupeKeyForErrand, errandCanonicalToMilestoneCategory } = require('../lib/dashboardTimelineNotifyClassify');
+const { fireManganSync, ALLOWED_ACTIONS } = require('../lib/manganDriverSync');
 
 async function notifyErrandAdminsIfFreshMilestone(pool, orderId, canonical, payload) {
   if (!payload) return;
@@ -108,6 +109,22 @@ function cleanupUploadOnAuthError(req, res, next) {
 
 function todayStr() {
   return new Date().toISOString().slice(0, 10);
+}
+
+/** When false, skip mirroring this request to the Mangan driver API. */
+function errandWantsManganSync(body) {
+  const v = body?.mangan_sync ?? body?.manganSync;
+  if (v === false || v === 0) return false;
+  const s = v != null ? String(v).toLowerCase().trim() : '';
+  if (s === '0' || s === 'false' || s === 'off' || s === 'no') return false;
+  return true;
+}
+
+function parseManganOverrideAction(body) {
+  const raw = body?.mangan_milestone ?? body?.mangan_action ?? body?.manganMilestone;
+  if (raw == null || String(raw).trim() === '') return null;
+  const a = String(raw).trim().toLowerCase();
+  return ALLOWED_ACTIONS.has(a) ? a : null;
 }
 
 function truthyIncludeUnassigned(v) {
@@ -411,6 +428,17 @@ router.post('/AcceptErrandOrder', validateApiKey, resolveDriver, async (req, res
       const p = errandNotifyFromCanonical(orderId, lbl, 'assigned', actor);
       if (p) await notifyAllDashboardAdmins(pool, p).catch(() => {});
     } catch (_) {}
+    if (errandWantsManganSync(req.body)) {
+      fireManganSync({
+        mainPool: pool,
+        errandPool: errandWibPool,
+        driver: req.driver,
+        orderId,
+        orderUuid: null,
+        canonical: 'assigned',
+        extras: {},
+      });
+    }
     return success(res, details || null);
   } catch (e) {
     if (e.code === 'ER_NO_SUCH_TABLE') {
@@ -522,6 +550,38 @@ router.post('/ChangeErrandOrderStatus', validateApiKey, resolveDriver, async (re
       const p = errandNotifyFromCanonical(orderId, lbl, canonical, actor);
       await notifyErrandAdminsIfFreshMilestone(pool, orderId, canonical, p);
     } catch (_) {}
+    if (errandWantsManganSync(req.body) && canonical !== 'cancelled') {
+      const otp =
+        req.body.mangan_otp_code ??
+        req.body.manganOtpCode ??
+        req.body.otp_code ??
+        req.body.otpCode;
+      const proof =
+        req.body.mangan_proof_base64 ??
+        req.body.manganProofBase64 ??
+        req.body.proof_base64 ??
+        req.body.file_data;
+      fireManganSync({
+        mainPool: pool,
+        errandPool: errandWibPool,
+        driver: req.driver,
+        orderId,
+        orderUuid: null,
+        canonical,
+        extras: {
+          reason: reason != null ? String(reason) : undefined,
+          otpCode: otp != null && String(otp).trim() !== '' ? String(otp).trim() : undefined,
+          proofBase64: proof != null && String(proof).trim() !== '' ? String(proof).trim() : undefined,
+          imageType:
+            req.body.mangan_image_type != null
+              ? String(req.body.mangan_image_type).trim()
+              : req.body.image_type != null
+                ? String(req.body.image_type).trim()
+                : 'png',
+          overrideAction: parseManganOverrideAction(req.body),
+        },
+      });
+    }
     return success(res, null);
   } catch (e) {
     return error(res, e.message || 'Status update failed');

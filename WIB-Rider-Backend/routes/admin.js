@@ -65,6 +65,7 @@ const {
   notifyRiderOrderPushAfterTaskStatusFireAndForget,
 } = require('../lib/riderOrderPushDispatch');
 const { updateMtOrderStatusIfDeliveryComplete } = require('../lib/mtOrderStatusSync');
+const { syncMtDriverTaskFromDeclineHistory } = require('../lib/syncMtDriverTaskFromTimelineDecline');
 const { sendCustomerTaskNotify } = require('../lib/sendCustomerTaskMessage');
 const { resolveMerchantLogoForApi, merchantLogoSearchDirs } = require('../lib/merchantUploadsLogo');
 
@@ -1912,6 +1913,22 @@ async function attachTimelineReadyForPickupFlags(pool, errandPool, rows) {
       const oid = r.order_id != null ? parseInt(String(r.order_id), 10) : null;
       const merged = mergeOrderHistoryRowsForTaskFromPool(allMtHistory, tid, oid);
       active = isTimelineReadyForPickupActiveFromSortedHistory(merged);
+      const curKey = normalizeDashboardHistoryStatusKey(r.status);
+      const declineTerminal = new Set(['successful', 'completed', 'delivered', 'declined', 'cancelled', 'canceled', 'failed']);
+      if (Number.isFinite(tid) && tid > 0 && !declineTerminal.has(curKey)) {
+        let declineRow = null;
+        for (const hr of merged || []) {
+          if (classifyTimelineHistoryForDashboardNotify(hr) === 'declined') declineRow = hr;
+        }
+        if (declineRow) {
+          try {
+            const { updated } = await syncMtDriverTaskFromDeclineHistory(pool, tid, declineRow);
+            if (updated) r.status = 'declined';
+          } catch (e) {
+            console.warn('[tasks list] sync declined from merged timeline', e && e.message ? e.message : e);
+          }
+        }
+      }
     }
     r.timeline_ready_for_pickup = Boolean(active) && allowReadyForPickupByCurrentTaskStatus(r.status);
   }
@@ -2032,6 +2049,12 @@ function timelineNotifyPayloadFromCategory(taskId, taskDescription, orderId, cat
       message: messageBase,
       type: 'new_task',
     };
+  } else if (category === 'declined') {
+    payload = {
+      title: errandOpts != null ? 'Mangan declined' : 'Order declined',
+      message: messageBase,
+      type: 'default',
+    };
   }
   else if (category === 'started') payload = { title: 'Rider started', message: messageBase, type: 'new_task' };
   else if (category === 'inprogress') payload = { title: 'Task in progress', message: messageBase, type: 'new_task' };
@@ -2100,6 +2123,9 @@ async function fanOutTimelineMilestonesToRiderNotifications(pool, taskId, taskDe
   for (const row of newHistoryRows || []) {
     const hid = row && row.id != null ? Number(row.id) : NaN;
     if (!Number.isFinite(hid)) continue;
+    syncMtDriverTaskFromDeclineHistory(pool, taskId, row).catch((err) => {
+      console.warn('[timeline] sync task declined from history row', err && err.message ? err.message : err);
+    });
     const cat = classifyTimelineHistoryForDashboardNotify(row);
     if (!cat) continue;
     const dedupeKey = `mt-h-${hid}`;
@@ -2199,6 +2225,9 @@ async function fanOutOrderHistoryFeedEventsToRiderNotifications(pool, events) {
     if (!Number.isFinite(hid)) continue;
     const tid = ev.resolved_task_id != null ? Number(ev.resolved_task_id) : NaN;
     if (!Number.isFinite(tid) || tid <= 0) continue;
+    syncMtDriverTaskFromDeclineHistory(pool, tid, orderHistoryFeedEventToClassifierRow(ev)).catch((err) => {
+      console.warn('[order-history feed] sync task declined from timeline', err && err.message ? err.message : err);
+    });
     const cat = classifyTimelineHistoryForDashboardNotify(orderHistoryFeedEventToClassifierRow(ev));
     if (!cat) continue;
     const dedupeKey = `mt-h-${hid}`;

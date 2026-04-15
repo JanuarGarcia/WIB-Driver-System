@@ -99,6 +99,12 @@ function classifyTimelineHistoryForDashboardNotify(row) {
     normalizeTimelineNotifyKey(row.notes),
   ].filter(Boolean);
   if (keys.some((k) => k === 'successful' || k === 'completed' || k === 'delivered')) return 'successful';
+  if (
+    keys.some((k) => k === 'declined' || k === 'decline' || k === 'rejected' || k === 'reject') &&
+    !keys.some((k) => k.includes('notdeclin') || k.includes('undecline'))
+  ) {
+    return 'declined';
+  }
   if (keys.some((k) => k === 'readyforpickup' || k === 'readypickup' || normalizedBlobImpliesReadyForPickup(k))) {
     return 'ready_for_pickup';
   }
