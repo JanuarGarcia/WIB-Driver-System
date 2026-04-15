@@ -11,7 +11,19 @@ const axios = require('axios');
 
 const app = express();
 const PORT = process.env.PORT || process.env.DASHBOARD_PORT || 3002;
-const BACKEND_URL = (process.env.BACKEND_URL || 'http://localhost:3000').replace(/\/$/, '');
+
+/**
+ * WIB Rider Backend origin only (no path). Proxy adds `/admin/api/...`.
+ * Strips accidental `/admin/api` or `/admin` suffix so env mistakes still work.
+ */
+function normalizeBackendUrl(raw) {
+  let s = String(raw || 'http://localhost:3000').trim().replace(/\/+$/, '');
+  if (/\/admin\/api$/i.test(s)) s = s.replace(/\/admin\/api$/i, '');
+  else if (/\/admin$/i.test(s)) s = s.replace(/\/admin$/i, '');
+  return s.replace(/\/+$/, '') || 'http://localhost:3000';
+}
+
+const BACKEND_URL = normalizeBackendUrl(process.env.BACKEND_URL);
 const ADMIN_SECRET = process.env.ADMIN_SECRET || '';
 /** Must be ≥ browser client timeout (see VITE_API_FETCH_TIMEOUT_MS); 15s was cutting off slow /settings, /tasks, etc. */
 const API_PROXY_GET_TIMEOUT_MS = Math.max(
@@ -505,6 +517,47 @@ if (spaReady) {
   });
 }
 
+/** Log once at startup — wrong BACKEND_URL causes “web page instead of JSON” when saving drivers/settings. */
+async function logBackendHealthHint() {
+  const url = `${BACKEND_URL}/health`;
+  try {
+    const response = await axios.get(url, {
+      timeout: 10000,
+      validateStatus: () => true,
+      transformResponse: [(data) => data],
+      responseType: 'text',
+    });
+    const body = response.data;
+    const ct = String(response.headers['content-type'] || '');
+    if (typeof body === 'string' && (body.trimStart().startsWith('<') || /<!DOCTYPE\s+html/i.test(body))) {
+      console.error(
+        '[wib-rider-dashboard] BACKEND_URL returned HTML from /health — not the Node rider API. Fix .env BACKEND_URL (origin only, e.g. http://127.0.0.1:3000 or your API subdomain).'
+      );
+      console.error(`  Tried: ${url}`);
+      return;
+    }
+    if (!ct.includes('application/json')) {
+      console.warn(`[wib-rider-dashboard] BACKEND_URL /health content-type is ${ct || '(none)'} — expected JSON`);
+      return;
+    }
+    let json;
+    try {
+      json = typeof body === 'string' ? JSON.parse(body) : body;
+    } catch {
+      console.warn('[wib-rider-dashboard] BACKEND_URL /health body is not JSON');
+      return;
+    }
+    if (json && json.ok) {
+      console.log(`  Backend /health: OK${json.primary_database ? ` (db: ${json.primary_database})` : ''}`);
+    } else {
+      console.warn('[wib-rider-dashboard] BACKEND_URL /health:', json);
+    }
+  } catch (err) {
+    console.error(`[wib-rider-dashboard] Cannot reach BACKEND_URL at /health — ${err.message || err}`);
+    console.error('  Set BACKEND_URL in .env to where WIB-Rider-Backend runs (same server: often http://127.0.0.1:3000).');
+  }
+}
+
 app.listen(PORT, () => {
   console.log(`WIB Rider Dashboard: http://localhost:${PORT}`);
   console.log(`  Backend: ${BACKEND_URL}`);
@@ -514,4 +567,7 @@ app.listen(PORT, () => {
   } else {
     console.log(`  Static UI: ${clientBuild}`);
   }
+  setImmediate(() => {
+    logBackendHealthHint();
+  });
 });

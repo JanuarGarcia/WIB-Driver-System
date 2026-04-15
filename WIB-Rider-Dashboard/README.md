@@ -5,9 +5,9 @@ Node.js dashboard for **assigning tasks to drivers** without touching the live W
 ## Setup
 
 1. Copy `.env.example` to `.env` and set:
-   - `BACKEND_URL` – URL of WIB Rider Backend (e.g. `http://localhost:3000`)
+   - `BACKEND_URL` – **origin of WIB Rider Backend only** (e.g. `http://localhost:3000` or `http://127.0.0.1:3000` on the VPS). Do **not** use the dashboard’s own public URL, cPanel home, or a path like `/admin/api` (trailing `/admin/api` is stripped automatically, but the host must be the Node API).
    - `ADMIN_SECRET` – (optional) same as in the backend if you use admin API key
-   - `DASHBOARD_PORT` – port for this app (default `3001`)
+   - `DASHBOARD_PORT` – port for this app (default `3002`)
 
 2. Install and run:
 
@@ -29,6 +29,12 @@ If the dashboard is served by Apache and the Node app runs separately, requests 
 - If you get a 500 error, your host may not allow proxy in `.htaccess`. Then either run the Node app as the main handler for the domain (so it receives all requests) or ask the host to add a proxy for `/api` to your Node port in the server config.
 
 After deploying `.htaccess`, restart the Node app and try saving Settings again.
+
+### “API returned a web page instead of JSON” (drivers, settings, etc.)
+
+The dashboard Node app proxies `/api/*` → `BACKEND_URL/admin/api/*`. If `BACKEND_URL` points at Apache/cPanel, the dashboard domain, or a dead port, the proxy gets **HTML** and the UI shows that error.
+
+**Fix:** On the server where the **dashboard** Node process runs, set `BACKEND_URL` to wherever **WIB-Rider-Backend** listens (check that app’s port in cPanel “Node.js” or `server.js`). Typical same-server value: `http://127.0.0.1:3000`. After restart, the dashboard logs `Backend /health: OK` if the URL is correct.
 
 ## Features
 
