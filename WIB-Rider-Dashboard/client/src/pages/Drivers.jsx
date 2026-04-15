@@ -275,7 +275,11 @@ export default function Drivers() {
     let failed = 0;
     for (const id of ids) {
       try {
-        await api(`drivers/${id}/send-push`, { method: 'POST', body: JSON.stringify({ title, message }) });
+        await api(`drivers/${id}/send-push`, {
+          method: 'POST',
+          body: JSON.stringify({ title, message }),
+          fetchTimeoutMs: 35000,
+        });
       } catch (_) {
         failed += 1;
       }

@@ -306,7 +306,9 @@ async function sendCustomerTaskMessage(pool, errandWibPool, driver, body) {
     dataPayload.errand_order_id = String(errandOrderId);
   }
 
-  const pushResult = await sendPushToFcmToken(fcmToken, pushTitle, notifyBody, dataPayload);
+  const pushResult = await sendPushToFcmToken(fcmToken, pushTitle, notifyBody, dataPayload, {
+    useCustomerAndroidChannel: true,
+  });
 
   const logJson = JSON.stringify({
     ok: pushResult.success,

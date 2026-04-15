@@ -195,8 +195,15 @@ export async function api(path, options = {}) {
   const url = API.startsWith('http')
     ? (path.startsWith('/') ? base + path : `${base}/${path}`)
     : (path.startsWith('/') ? path : `${API}/${path}`);
-  const { skipDedupe, signal: userSignal, ...fetchOptions } = options;
+  const { skipDedupe, signal: userSignal, fetchTimeoutMs: fetchTimeoutOpt, ...fetchOptions } = options;
   const headers = { 'Content-Type': 'application/json', ...fetchOptions.headers };
+  const timeoutMs =
+    fetchTimeoutOpt != null &&
+    Number.isFinite(Number(fetchTimeoutOpt)) &&
+    Number(fetchTimeoutOpt) >= 3000 &&
+    Number(fetchTimeoutOpt) <= 120000
+      ? Number(fetchTimeoutOpt)
+      : API_FETCH_TIMEOUT_MS;
   const token = getToken();
   if (token) headers['x-dashboard-token'] = token;
 
@@ -216,7 +223,11 @@ export async function api(path, options = {}) {
 
   const runFetch = async () => {
     const ctrl = new AbortController();
-    const tid = setTimeout(() => ctrl.abort(), API_FETCH_TIMEOUT_MS);
+    const tid = setTimeout(() => ctrl.abort(), timeoutMs);
+    if (userSignal) {
+      if (userSignal.aborted) ctrl.abort();
+      else userSignal.addEventListener('abort', () => ctrl.abort(), { once: true });
+    }
     let res;
     try {
       res = await fetch(url, { ...fetchOptions, headers, signal: ctrl.signal });

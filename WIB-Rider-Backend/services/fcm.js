@@ -1,6 +1,13 @@
 let admin = null;
 let app = null;
 
+/** Max wait per FCM `send()` so dashboard “Send push” does not hang on bad network / FCM stalls. */
+function fcmSendTimeoutMs() {
+  const n = parseInt(String(process.env.FCM_SEND_TIMEOUT_MS || '25000'), 10);
+  if (Number.isFinite(n) && n >= 5000 && n <= 60000) return n;
+  return 25000;
+}
+
 /** FCM data payload values must be strings. */
 function stringifyDataPayload(data) {
   const out = {};
@@ -26,8 +33,8 @@ async function resetFirebase() {
 }
 
 /**
- * FCM token for admin/driver pushes: prefer `mt_driver.device_id`, else latest eligible row in `mt_rider_device_reg`
- * (Flutter rider app registers here; `mt_driver.device_id` is often empty).
+ * FCM token for admin/driver pushes: prefer latest `mt_rider_device_reg` (Flutter rider app),
+ * then fall back to `mt_driver.device_id` (legacy / login path). Avoids stale `mt_driver` tokens.
  * @param {import('mysql2/promise').Pool} pool
  * @param {number} driverId
  * @returns {Promise<string>}
@@ -35,10 +42,6 @@ async function resetFirebase() {
 async function resolveDriverFcmToken(pool, driverId) {
   const did = parseInt(String(driverId), 10);
   if (!Number.isFinite(did) || did <= 0) return '';
-
-  const [[d]] = await pool.query('SELECT device_id FROM mt_driver WHERE driver_id = ?', [did]);
-  const fromDriver = d?.device_id != null && String(d.device_id).trim() ? String(d.device_id).trim() : '';
-  if (fromDriver) return fromDriver;
 
   const loadFromReg = async (withPushEnabled) => {
     const pushClause = withPushEnabled
@@ -60,19 +63,25 @@ async function resolveDriverFcmToken(pool, driverId) {
     let t = await loadFromReg(true);
     if (t) return t;
     t = await loadFromReg(false);
-    return t || '';
+    if (t) return t;
   } catch (e) {
-    if (e.code === 'ER_NO_SUCH_TABLE') return '';
-    if (e.code === 'ER_BAD_FIELD_ERROR') {
+    if (e.code === 'ER_NO_SUCH_TABLE') {
+      /* fall through to mt_driver */
+    } else if (e.code === 'ER_BAD_FIELD_ERROR') {
       try {
-        return (await loadFromReg(false)) || '';
+        const t2 = await loadFromReg(false);
+        if (t2) return t2;
       } catch (e2) {
-        if (e2.code === 'ER_NO_SUCH_TABLE') return '';
-        throw e2;
+        if (e2.code !== 'ER_NO_SUCH_TABLE') throw e2;
       }
+    } else {
+      throw e;
     }
-    throw e;
   }
+
+  const [[d]] = await pool.query('SELECT device_id FROM mt_driver WHERE driver_id = ?', [did]);
+  const fromDriver = d?.device_id != null && String(d.device_id).trim() ? String(d.device_id).trim() : '';
+  return fromDriver || '';
 }
 
 async function initFirebase() {
@@ -101,7 +110,7 @@ async function sendPushToDriver(driverId, title, body, data = {}) {
   const { pool } = require('../config/db');
   const token = await resolveDriverFcmToken(pool, driverId);
   if (!token) return { success: false, error: 'No device token' };
-  return sendPushToFcmToken(token, title, body, data);
+  return sendPushToFcmToken(token, title, body, data, { useCustomerAndroidChannel: false });
 }
 
 async function sendPushToAllDrivers(title, body, data = {}) {
@@ -127,9 +136,10 @@ async function sendPushToAllDrivers(title, body, data = {}) {
 /**
  * Customer-app FCM: must include both `notification` (system tray when background/quit) and
  * string `title`/`body` in `data` so Flutter/React Native can show a local notification in foreground.
- * Optional FCM_CUSTOMER_ANDROID_CHANNEL_ID must match a channel created in the customer app (Android 8+).
+ * Optional FCM_CUSTOMER_ANDROID_CHANNEL_ID — only when opts.useCustomerAndroidChannel (customer app sends).
+ * Rider/admin pushes omit it so Android uses the app default channel unless FCM_RIDER_ANDROID_CHANNEL_ID is set.
  */
-async function sendPushToFcmToken(fcmToken, title, body, data = {}) {
+async function sendPushToFcmToken(fcmToken, title, body, data = {}, options = {}) {
   const app = await initFirebase();
   if (!app) return { success: false, error: 'FCM not configured' };
   const tok = fcmToken != null ? String(fcmToken).trim() : '';
@@ -145,7 +155,11 @@ async function sendPushToFcmToken(fcmToken, title, body, data = {}) {
     body: bodyStr,
   };
 
-  const channelId = String(process.env.FCM_CUSTOMER_ANDROID_CHANNEL_ID || '').trim();
+  const useCustomerChannel = options.useCustomerAndroidChannel === true;
+  const customerChannel = String(process.env.FCM_CUSTOMER_ANDROID_CHANNEL_ID || '').trim();
+  const riderChannel = String(process.env.FCM_RIDER_ANDROID_CHANNEL_ID || process.env.FCM_DRIVER_ANDROID_CHANNEL_ID || '').trim();
+  const channelId = useCustomerChannel ? customerChannel : riderChannel;
+
   const androidNotification = {
     title: titleStr,
     body: bodyStr,
@@ -155,29 +169,37 @@ async function sendPushToFcmToken(fcmToken, title, body, data = {}) {
     androidNotification.channelId = channelId;
   }
 
+  const message = {
+    token: tok,
+    notification: { title: titleStr, body: bodyStr },
+    data: mergedData,
+    android: {
+      priority: 'high',
+      notification: androidNotification,
+    },
+    apns: {
+      headers: {
+        'apns-priority': '10',
+      },
+      payload: {
+        aps: {
+          sound: 'default',
+        },
+      },
+    },
+  };
+
+  const ms = fcmSendTimeoutMs();
   try {
-    const result = await app.messaging().send({
-      token: tok,
-      notification: { title: titleStr, body: bodyStr },
-      data: mergedData,
-      android: {
-        priority: 'high',
-        notification: androidNotification,
-      },
-      apns: {
-        headers: {
-          'apns-priority': '10',
-        },
-        payload: {
-          aps: {
-            sound: 'default',
-          },
-        },
-      },
-    });
+    const result = await Promise.race([
+      app.messaging().send(message),
+      new Promise((_, reject) => {
+        setTimeout(() => reject(new Error(`FCM send timed out after ${ms}ms`)), ms);
+      }),
+    ]);
     return { success: true, messageId: result };
   } catch (e) {
-    return { success: false, error: e.message };
+    return { success: false, error: e.message || String(e) };
   }
 }
 
@@ -192,7 +214,7 @@ async function sendPushToDevice(token, opts = {}) {
   const body = opts.body != null ? String(opts.body) : '';
   const data = opts.data && typeof opts.data === 'object' ? opts.data : {};
   void opts.fcmApp;
-  return sendPushToFcmToken(token, title, body, data);
+  return sendPushToFcmToken(token, title, body, data, { useCustomerAndroidChannel: false });
 }
 
 module.exports = {

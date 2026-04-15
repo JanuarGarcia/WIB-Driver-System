@@ -58,6 +58,7 @@ export default function SendPushModal({ open, driverId, driverLabel = '', onClos
           title: pushTitle,
           message: pushMessage,
         }),
+        fetchTimeoutMs: 35000,
       });
       onSent?.();
       onClose();
