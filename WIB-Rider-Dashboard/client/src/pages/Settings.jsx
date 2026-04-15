@@ -112,6 +112,7 @@ export default function Settings() {
   const [hideTotalOrderAmount, setHideTotalOrderAmount] = useState(false);
   const [appName, setAppName] = useState('WIB Rider');
   const [sendPushOnlyOnlineDriver, setSendPushOnlyOnlineDriver] = useState(false);
+  const [enableRiderCustomerMessage, setEnableRiderCustomerMessage] = useState(true);
   const [enabledNotes, setEnabledNotes] = useState(true);
   const [enabledSignature, setEnabledSignature] = useState(false);
   const [mandatorySignature, setMandatorySignature] = useState(false);
@@ -183,6 +184,7 @@ export default function Settings() {
     setHideTotalOrderAmount(settings.hide_total_order_amount === '1');
     setAppName(settings.app_name != null ? String(settings.app_name) : 'WIB Rider');
     setSendPushOnlyOnlineDriver(settings.send_push_only_online_driver === '1');
+    setEnableRiderCustomerMessage(settings.enable_rider_customer_message !== '0');
     setEnabledNotes(settings.enabled_notes !== '0');
     setEnabledSignature(settings.enabled_signature === '1');
     setMandatorySignature(settings.mandatory_signature === '1');
@@ -213,7 +215,7 @@ export default function Settings() {
     setHideDeliveryTasks(settings.hide_delivery_tasks === '1');
     setHideSuccessfulTasks(settings.hide_successful_tasks === '1');
     setGoogleMapStyle(settings.google_map_style != null ? String(settings.google_map_style) : '');
-  }, [settings.allow_all_admin_team_by_merchant, settings.set_certain_merchant_admin_team, settings.admin_team_merchant_ids, settings.task_owner, settings.merchant_task_owner_admin_ids, settings.admin_show_only_admin_task, settings.do_not_allow_merchant_delete_task, settings.merchant_delete_task_days, settings.block_merchant_ids, settings.allow_task_successful_when, settings.order_status_accepted, settings.order_status_cancel, settings.delivery_time, settings.hide_total_order_amount, settings.app_name, settings.send_push_only_online_driver, settings.enabled_notes, settings.enabled_signature, settings.mandatory_signature, settings.enabled_signup, settings.enabled_add_photo_take_picture, settings.enabled_resize_picture, settings.resize_picture_width, settings.resize_picture_height, settings.device_vibration, settings.signup_status, settings.signup_notification_emails, settings.localize_calendar_language, settings.driver_tracking_option, settings.records_driver_location, settings.disabled_tracking, settings.track_interval, settings.task_critical_options_enabled, settings.task_critical_options_minutes, settings.privacy_policy_link, settings.language, settings.default_map_country, settings.disable_activity_tracking, settings.activity_refresh_interval, settings.driver_activity_refresh, settings.auto_geocode_address, settings.include_offline_drivers_on_map, settings.hide_pickup_tasks, settings.hide_delivery_tasks, settings.hide_successful_tasks, settings.google_map_style]);
+  }, [settings.allow_all_admin_team_by_merchant, settings.set_certain_merchant_admin_team, settings.admin_team_merchant_ids, settings.task_owner, settings.merchant_task_owner_admin_ids, settings.admin_show_only_admin_task, settings.do_not_allow_merchant_delete_task, settings.merchant_delete_task_days, settings.block_merchant_ids, settings.allow_task_successful_when, settings.order_status_accepted, settings.order_status_cancel, settings.delivery_time, settings.hide_total_order_amount, settings.app_name, settings.send_push_only_online_driver, settings.enable_rider_customer_message, settings.enabled_notes, settings.enabled_signature, settings.mandatory_signature, settings.enabled_signup, settings.enabled_add_photo_take_picture, settings.enabled_resize_picture, settings.resize_picture_width, settings.resize_picture_height, settings.device_vibration, settings.signup_status, settings.signup_notification_emails, settings.localize_calendar_language, settings.driver_tracking_option, settings.records_driver_location, settings.disabled_tracking, settings.track_interval, settings.task_critical_options_enabled, settings.task_critical_options_minutes, settings.privacy_policy_link, settings.language, settings.default_map_country, settings.disable_activity_tracking, settings.activity_refresh_interval, settings.driver_activity_refresh, settings.auto_geocode_address, settings.include_offline_drivers_on_map, settings.hide_pickup_tasks, settings.hide_delivery_tasks, settings.hide_successful_tasks, settings.google_map_style]);
 
   const handleGeneralSubmit = (e) => {
     e.preventDefault();
@@ -243,6 +245,7 @@ export default function Settings() {
       hide_total_order_amount: hideTotalOrderAmount ? '1' : '0',
       app_name: String(appName ?? '').trim(),
       send_push_only_online_driver: sendPushOnlyOnlineDriver ? '1' : '0',
+      enable_rider_customer_message: enableRiderCustomerMessage ? '1' : '0',
       enabled_notes: enabledNotes ? '1' : '0',
       enabled_signature: enabledSignature ? '1' : '0',
       mandatory_signature: mandatorySignature ? '1' : '0',
@@ -792,6 +795,23 @@ export default function Settings() {
                   />
                   <span className="settings-toggle-label">{sendPushOnlyOnlineDriver ? 'ON' : 'OFF'}</span>
                   <p className="settings-helper">Send push notification only to online drivers when assigning task.</p>
+                </div>
+              </div>
+              <div className="settings-form-row">
+                <label>Rider can message customer app</label>
+                <div className="settings-field">
+                  <div
+                    role="button"
+                    className={`settings-toggle ${enableRiderCustomerMessage ? 'on' : ''}`}
+                    tabIndex={0}
+                    aria-label="Toggle rider to customer app messaging"
+                    onClick={() => setEnableRiderCustomerMessage((v) => !v)}
+                    onKeyDown={(e) => e.key === 'Enter' && setEnableRiderCustomerMessage((v) => !v)}
+                  />
+                  <span className="settings-toggle-label">{enableRiderCustomerMessage ? 'ON' : 'OFF'}</span>
+                  <p className="settings-helper">
+                    When ON, riders can send messages / notify the new customer app for active tasks. When OFF, the rider app should hide that action and the API will reject sends.
+                  </p>
                 </div>
               </div>
               <div className="settings-form-row">

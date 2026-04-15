@@ -770,6 +770,12 @@ router.get('/settings', async (req, res) => {
       hide_total_order_amount: map.hide_total_order_amount || '0',
       app_name: map.app_name != null && map.app_name !== '' ? String(map.app_name) : (map.website_title || 'WIB Rider'),
       send_push_only_online_driver: map.send_push_only_online_driver || '0',
+      enable_rider_customer_message: (() => {
+        const v = map.enable_rider_customer_message;
+        if (v == null || v === '') return '1';
+        const s = String(v).trim().toLowerCase();
+        return s === '0' || s === 'false' || s === 'no' || s === 'off' ? '0' : '1';
+      })(),
       enabled_notes: map.enabled_notes || '1',
       enabled_signature: map.enabled_signature || '0',
       mandatory_signature: map.mandatory_signature || '0',
@@ -815,7 +821,7 @@ router.put('/settings', async (req, res) => {
     do_not_allow_merchant_delete_task, merchant_delete_task_days,
     block_merchant_ids, allow_task_successful_when,
     order_status_accepted, order_status_cancel, delivery_time, hide_total_order_amount,
-    app_name, send_push_only_online_driver, enabled_notes, enabled_signature, mandatory_signature,
+    app_name, send_push_only_online_driver, enable_rider_customer_message, enabled_notes, enabled_signature, mandatory_signature,
     enabled_signup, enabled_add_photo_take_picture, enabled_resize_picture,
     resize_picture_width, resize_picture_height, device_vibration,
     signup_status, signup_notification_emails, localize_calendar_language,
@@ -861,6 +867,7 @@ router.put('/settings', async (req, res) => {
     [hide_total_order_amount === true || hide_total_order_amount === '1' ? '1' : (hide_total_order_amount === false || hide_total_order_amount === '0' ? '0' : undefined), 'hide_total_order_amount'],
     [app_name, 'app_name'],
     [send_push_only_online_driver === true || send_push_only_online_driver === '1' ? '1' : (send_push_only_online_driver === false || send_push_only_online_driver === '0' ? '0' : undefined), 'send_push_only_online_driver'],
+    [enable_rider_customer_message === true || enable_rider_customer_message === '1' ? '1' : (enable_rider_customer_message === false || enable_rider_customer_message === '0' ? '0' : undefined), 'enable_rider_customer_message'],
     [enabled_notes === true || enabled_notes === '1' ? '1' : (enabled_notes === false || enabled_notes === '0' ? '0' : undefined), 'enabled_notes'],
     [enabled_signature === true || enabled_signature === '1' ? '1' : (enabled_signature === false || enabled_signature === '0' ? '0' : undefined), 'enabled_signature'],
     [mandatory_signature === true || mandatory_signature === '1' ? '1' : (mandatory_signature === false || mandatory_signature === '0' ? '0' : undefined), 'mandatory_signature'],

@@ -1256,19 +1256,33 @@ async function handleDriverApiLogin(req, res) {
 router.post('/Login', validateApiKey, handleDriverApiLogin);
 router.post('/login', validateApiKey, handleDriverApiLogin);
 
+/** Merge `mt_option` + `settings` (same as admin getSettingsMap; `settings` wins on duplicate keys). */
 async function getDriverSettingsMap() {
-  try {
-    const [rows] = await pool.query('SELECT `key`, value FROM settings');
-    if (rows && rows.length > 0) return Object.fromEntries(rows.map((r) => [r.key, r.value]));
-  } catch (e) {
-    // settings table may not exist
-  }
+  let fromOption = {};
   try {
     const [rows] = await pool.query('SELECT option_name AS `key`, option_value AS value FROM mt_option');
-    return Object.fromEntries((rows || []).map((r) => [r.key, r.value]));
-  } catch (e) {
-    return {};
-  }
+    if (rows && rows.length > 0) {
+      fromOption = Object.fromEntries(rows.map((r) => [r.key, r.value]));
+    }
+  } catch (_) {}
+  try {
+    const [rows] = await pool.query('SELECT `key`, value FROM settings');
+    if (rows && rows.length > 0) {
+      const fromSettings = Object.fromEntries(rows.map((r) => [r.key, r.value]));
+      return { ...fromOption, ...fromSettings };
+    }
+  } catch (_) {}
+  return fromOption;
+}
+
+/** Admin toggle: rider → new customer app messaging. Default ON when unset (backward compatible). */
+function isRiderCustomerMessagingEnabled(map) {
+  if (!map || typeof map !== 'object') return true;
+  const v = map.enable_rider_customer_message;
+  if (v == null || v === '') return true;
+  const s = String(v).trim().toLowerCase();
+  if (s === '0' || s === 'false' || s === 'no' || s === 'off') return false;
+  return true;
 }
 
 /** Optional COD / payment fields when completing a task (mt_order). */
@@ -1316,6 +1330,7 @@ router.post('/GetAppSettings', validateApiKey, optionalDriver, async (req, res) 
     app_language: settings.app_default_language || 'en',
     app_name: appName,
     allow_task_successful_when: settings.allow_task_successful_when || 'picture_proof',
+    allow_send_customer_message: isRiderCustomerMessagingEnabled(settings) ? 1 : 0,
     valid_token: driver != null,
     todays_date: todayStr(),
     todays_date_raw: todayRaw(),
@@ -1601,6 +1616,10 @@ router.post('/GetTaskDetails', validateApiKey, resolveDriver, async (req, res) =
 
 async function handleSendCustomerTaskMessage(req, res) {
   try {
+    const settingsMap = await getDriverSettingsMap();
+    if (!isRiderCustomerMessagingEnabled(settingsMap)) {
+      return error(res, 'Messaging to customer app is disabled by admin');
+    }
     const r = await sendCustomerTaskMessage(pool, errandWibPool, req.driver, req.body);
     if (r.err) return error(res, r.err);
     return success(res, r.details, 'ok');
@@ -1611,6 +1630,10 @@ async function handleSendCustomerTaskMessage(req, res) {
 
 async function handleNotifyCustomer(req, res) {
   try {
+    const settingsMap = await getDriverSettingsMap();
+    if (!isRiderCustomerMessagingEnabled(settingsMap)) {
+      return error(res, 'Messaging to customer app is disabled by admin');
+    }
     const r = await sendCustomerTaskNotify(pool, errandWibPool, req.driver, req.body);
     if (r.err) return error(res, r.err);
     return success(res, r.details, 'ok');
