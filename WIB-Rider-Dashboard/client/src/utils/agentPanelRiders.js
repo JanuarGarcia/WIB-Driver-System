@@ -29,7 +29,7 @@ export function isAgentPanelOnline(d) {
  * Driver IDs shown on the Agent panel "Active" tab (before search), for map filtering.
  * @param {{ active?: unknown[], offline?: unknown[], total?: unknown[] }} details
  * @param {string|number|null|undefined} selectedTeamId
- * @returns {Set<string>|null} null = empty API response; caller should try /drivers fallback
+ * @returns {Set<string>} empty set when the roster is empty (no `/drivers` fallback needed)
  */
 export function buildActivePanelDriverIdSet(details, selectedTeamId) {
   const active = Array.isArray(details?.active) ? details.active : [];
@@ -37,7 +37,7 @@ export function buildActivePanelDriverIdSet(details, selectedTeamId) {
   const total = Array.isArray(details?.total) ? details.total : [];
 
   if (active.length === 0 && offline.length === 0 && total.length === 0) {
-    return null;
+    return new Set();
   }
 
   const allDriversRaw = total;

@@ -153,11 +153,11 @@ export default function Settings() {
   };
 
   useEffect(() => {
-    fetchSettings();
-  }, []);
-
-  useEffect(() => {
-    api('merchants').then((list) => setMerchants(Array.isArray(list) ? list : [])).catch(() => setMerchants([]));
+    setLoading(true);
+    Promise.all([
+      api('settings').then(setSettings).catch(() => ({})),
+      api('merchants').then((list) => setMerchants(Array.isArray(list) ? list : [])).catch(() => setMerchants([])),
+    ]).finally(() => setLoading(false));
   }, []);
 
   useEffect(() => {

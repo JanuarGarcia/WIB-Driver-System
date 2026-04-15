@@ -386,55 +386,7 @@ const AgentPanel = forwardRef(function AgentPanel(
       const offline = Array.isArray(d.offline) ? d.offline : [];
       const total = Array.isArray(d.total) ? d.total : [];
 
-      // Fallback: when agent-dashboard returns empty, derive from `/drivers`
-      // so Agent panel remains usable and consistent with Drivers table data.
-      if (active.length === 0 && offline.length === 0 && total.length === 0) {
-        const rows = await api('drivers');
-        let drivers = Array.isArray(rows) ? rows : [];
-
-        if (selectedTeamId != null && selectedTeamId !== '') {
-          drivers = drivers.filter((r) => String(r.team_id ?? '') === String(selectedTeamId));
-        }
-        if ((searchQuery || '').trim()) {
-          const q = searchQuery.trim().toLowerCase();
-          drivers = drivers.filter((r) => {
-            const id = String(r.id ?? r.driver_id ?? '').toLowerCase();
-            const username = String(r.username ?? '').toLowerCase();
-            const name = String(r.full_name ?? '').toLowerCase();
-            const phone = String(r.phone ?? '').toLowerCase();
-            return id.includes(q) || username.includes(q) || name.includes(q) || phone.includes(q);
-          });
-        }
-
-        const normalized = drivers.map((r) => {
-          return {
-            ...r,
-            id: r.id ?? r.driver_id,
-            driver_id: r.driver_id ?? r.id,
-            // `/drivers` has no live connection telemetry — do not infer "online" from on_duty alone.
-            online_status: 'lost_connection',
-            connection_status: 'Connection Lost',
-            last_seen: r.status_updated_at ? new Date(r.status_updated_at).toLocaleString() : '—',
-            total_task: r.total_task ?? 0,
-          };
-        });
-
-        const isLiveFallback = (d) => {
-          const c = String(d?.online_status || d?.connection_status || '').toLowerCase().trim();
-          if (!c) return false;
-          if (c === 'lost_connection' || c.includes('lost')) return false;
-          return c === 'online' || c === 'connected';
-        };
-        const isOnlineAgentFallback = (d) => isLiveFallback(d) && Number(d.on_duty) === 1;
-
-        setDetails({
-          active: normalized.filter(isOnlineAgentFallback),
-          offline: normalized.filter((d) => !isOnlineAgentFallback(d)),
-          total: normalized,
-        });
-      } else {
-        setDetails({ active, offline, total });
-      }
+      setDetails({ active, offline, total });
     } catch (_) {
       // Do not clear a previously good roster — timeouts or transient API stalls were blanking the whole panel.
     } finally {

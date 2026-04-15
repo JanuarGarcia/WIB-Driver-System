@@ -11,7 +11,6 @@ const ActivityTimelineToastStack = lazy(() => import('../components/ActivityTime
 
 import AgentPanel from '../components/AgentPanel';
 import { useMapMerchantFilterSelection } from '../components/MapMerchantFilter';
-import { hydrateMapMerchantFilterFromServer } from '../utils/mapMerchantFilterPrefs';
 import { api, userFacingApiError, apiEventSourceUrl } from '../api';
 import { RIDER_NOTIFICATIONS_POLL_EVENT } from '../hooks/useNotifications';
 import { getToken } from '../auth';
@@ -132,6 +131,8 @@ export default function Dashboard() {
 
   const [locations, setLocations] = useState([]);
   const [merchants, setMerchants] = useState([]);
+  const merchantsRef = useRef(merchants);
+  merchantsRef.current = merchants;
   const selectedMapMerchantIds = useMapMerchantFilterSelection();
   const [mapProvider, setMapProvider] = useState('mapbox');
   const [googleApiKey, setGoogleApiKey] = useState('');
@@ -207,25 +208,7 @@ export default function Dashboard() {
     try {
       const res = await api(`driver/agent-dashboard?${params}`);
       const d = res?.details || {};
-      let idSet = buildActivePanelDriverIdSet(d, selectedTeamId);
-      if (idSet === null) {
-        const rows = await api('drivers');
-        let drivers = Array.isArray(rows) ? rows : [];
-        if (selectedTeamId != null && selectedTeamId !== '') {
-          drivers = drivers.filter((r) => String(r.team_id ?? '') === String(selectedTeamId));
-        }
-        const normalized = drivers.map((r) => ({
-          ...r,
-          id: r.id ?? r.driver_id,
-          driver_id: r.driver_id ?? r.id,
-          online_status: 'lost_connection',
-          connection_status: 'Connection Lost',
-          last_seen: r.status_updated_at ? new Date(r.status_updated_at).toLocaleString() : '—',
-          total_task: r.total_task ?? 0,
-        }));
-        idSet = buildActivePanelDriverIdSet({ active: [], offline: [], total: normalized }, selectedTeamId);
-        if (idSet === null) idSet = null;
-      }
+      const idSet = buildActivePanelDriverIdSet(d, selectedTeamId);
       setActivePanelDriverIdSet(idSet);
     } catch {
       // Keep all rider GPS pins visible on transient failures.
@@ -261,12 +244,12 @@ export default function Dashboard() {
           writeJsonSessionStorage(mapDataCacheKey, {
             at: Date.now(),
             locations: nextLoc,
-            merchants,
+            merchants: merchantsRef.current,
             tasks: nextTasks,
           });
           if (refreshMerchants) {
             const merchantsOrNull = await api('merchants/locations').catch(() => null);
-            const nextMerchants = Array.isArray(merchantsOrNull) ? merchantsOrNull : merchants;
+            const nextMerchants = Array.isArray(merchantsOrNull) ? merchantsOrNull : merchantsRef.current;
             setMerchants(nextMerchants);
             lastMerchantsRefreshAtRef.current = Date.now();
             writeJsonSessionStorage(mapDataCacheKey, {
@@ -287,7 +270,7 @@ export default function Dashboard() {
         mapDataInFlightRef.current = null;
       }
     },
-    [driversLocationsUrl, tasksMapDateStr, mapDataCacheKey, merchants]
+    [driversLocationsUrl, tasksMapDateStr, mapDataCacheKey]
   );
 
   useEffect(() => {
@@ -421,10 +404,6 @@ export default function Dashboard() {
       })
       .catch(() => { setGoogleApiKey(''); setMapboxToken(''); });
   };
-
-  useEffect(() => {
-    hydrateMapMerchantFilterFromServer();
-  }, []);
 
   useEffect(() => {
     if (location.pathname !== '/') return;

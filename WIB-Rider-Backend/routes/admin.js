@@ -4475,14 +4475,11 @@ router.post('/drivers/:id/send-push', async (req, res) => {
 router.get('/drivers/:id/details', async (req, res) => {
   // Debug/version marker so we can verify which server code is running in production.
   // Safe to leave in place; it does not expose sensitive data.
-  res.set('X-Driver-Details-Version', '2026-04-14');
+  res.set('X-Driver-Details-Version', '2026-04-15');
   const driverId = parseInt(req.params.id, 10);
   const dateStr = (req.query.date || '').toString().trim() || new Date().toISOString().slice(0, 10);
   if (!Number.isFinite(driverId)) return res.status(400).json({ error: 'Invalid driver id' });
   try {
-    // Keep this route robust across schema differences:
-    // - Fetch driver from mt_driver only (no join)
-    // - Then (best-effort) fetch team_name from mt_driver_team
     const [driverRows] = await pool.query(
       `SELECT
          d.driver_id AS id,
@@ -4502,24 +4499,16 @@ router.get('/drivers/:id/details', async (req, res) => {
          COALESCE(d.app_version, '') AS app_version,
          d.location_lat,
          d.location_lng,
-         COALESCE(d.last_login, d.date_modified) AS last_seen
+         COALESCE(d.last_login, d.date_modified) AS last_seen,
+         t.team_name AS team_name
        FROM mt_driver d
+       LEFT JOIN mt_driver_team t ON d.team_id = t.team_id
        WHERE d.driver_id = ?`,
       [driverId]
     );
 
     if (!driverRows || !driverRows.length) return res.status(404).json({ error: 'Driver not found' });
     const d = driverRows[0];
-
-    let teamName = null;
-    if (d.team_id != null) {
-      try {
-        const [teamRows] = await pool.query('SELECT team_name FROM mt_driver_team WHERE team_id = ? LIMIT 1', [d.team_id]);
-        teamName = teamRows && teamRows.length ? (teamRows[0].team_name ?? null) : null;
-      } catch (_) {
-        teamName = null;
-      }
-    }
 
     const driver = {
       id: d.id,
@@ -4531,7 +4520,7 @@ router.get('/drivers/:id/details', async (req, res) => {
       phone: d.phone,
       on_duty: d.on_duty,
       team_id: d.team_id,
-      team_name: teamName,
+      team_name: d.team_name != null && String(d.team_name).trim() !== '' ? d.team_name : null,
       transport_type_id: d.transport_type_id,
       transport_type: d.transport_description, // alias for frontend display
       transport_description: d.transport_description,
@@ -4543,7 +4532,7 @@ router.get('/drivers/:id/details', async (req, res) => {
       location_lng: d.location_lng,
       last_seen: d.last_seen,
     };
-    let tasks = [];
+
     const taskSelectAttempts = [
       `SELECT t.task_id, t.task_description, t.status, t.delivery_date, t.delivery_address, t.customer_name,
               t.trans_type, t.date_created
@@ -4559,48 +4548,55 @@ router.get('/drivers/:id/details', async (req, res) => {
        WHERE t.driver_id = ? AND (t.delivery_date = ? OR DATE(t.delivery_date) = ?)
        ORDER BY t.task_id DESC`,
     ];
-    try {
-      for (const sql of taskSelectAttempts) {
-        try {
-          const [taskRows] = await pool.query(sql, [driverId, dateStr, dateStr]);
-          tasks = (taskRows || []).map((r) => ({
-            ...r,
-            task_source: 'food',
-            order_kind: 'task',
-          }));
-          break;
-        } catch (e) {
-          if (e.code !== 'ER_BAD_FIELD_ERROR') throw e;
-        }
-      }
-    } catch (_) {
-      // Some deployments may not have mt_driver_task or these columns; still return driver info.
-      tasks = [];
-    }
 
-    if (errandWibPool) {
+    const loadFoodTasks = async () => {
+      let foodTasks = [];
       try {
-        const errandMapped = await fetchErrandMappedOrdersForDriverDate(errandWibPool, pool, driverId, dateStr);
-        const errandWithKind = (errandMapped || []).map((r) => ({ ...r, order_kind: 'mangan' }));
-        const rowTime = (row) => {
-          const t1 = row?.date_created != null ? new Date(row.date_created).getTime() : NaN;
-          if (Number.isFinite(t1)) return t1;
-          const t2 = row?.delivery_date != null ? new Date(row.delivery_date).getTime() : NaN;
-          return Number.isFinite(t2) ? t2 : 0;
-        };
-        const merged = [...tasks, ...errandWithKind].sort((a, b) => {
-          const tb = rowTime(b);
-          const ta = rowTime(a);
-          if (tb !== ta) return tb - ta;
-          const idb = Math.abs(parseInt(String(b.task_id ?? b.id ?? 0), 10)) || 0;
-          const ida = Math.abs(parseInt(String(a.task_id ?? a.id ?? 0), 10)) || 0;
-          return idb - ida;
-        });
-        tasks = merged;
-      } catch (e) {
-        if (e.code !== 'ER_NO_SUCH_TABLE' && e.code !== 'ER_BAD_FIELD_ERROR') throw e;
+        for (const sql of taskSelectAttempts) {
+          try {
+            const [taskRows] = await pool.query(sql, [driverId, dateStr, dateStr]);
+            foodTasks = (taskRows || []).map((r) => ({
+              ...r,
+              task_source: 'food',
+              order_kind: 'task',
+            }));
+            break;
+          } catch (e) {
+            if (e.code !== 'ER_BAD_FIELD_ERROR') throw e;
+          }
+        }
+      } catch (_) {
+        foodTasks = [];
       }
-    }
+      return foodTasks;
+    };
+
+    const loadErrandTasks = async () => {
+      if (!errandWibPool) return [];
+      try {
+        return await fetchErrandMappedOrdersForDriverDate(errandWibPool, pool, driverId, dateStr);
+      } catch (e) {
+        if (e.code === 'ER_NO_SUCH_TABLE' || e.code === 'ER_BAD_FIELD_ERROR') return [];
+        throw e;
+      }
+    };
+
+    const [foodTasks, errandMapped] = await Promise.all([loadFoodTasks(), loadErrandTasks()]);
+    const errandWithKind = (errandMapped || []).map((r) => ({ ...r, order_kind: 'mangan' }));
+    const rowTime = (row) => {
+      const t1 = row?.date_created != null ? new Date(row.date_created).getTime() : NaN;
+      if (Number.isFinite(t1)) return t1;
+      const t2 = row?.delivery_date != null ? new Date(row.delivery_date).getTime() : NaN;
+      return Number.isFinite(t2) ? t2 : 0;
+    };
+    const tasks = [...foodTasks, ...errandWithKind].sort((a, b) => {
+      const tb = rowTime(b);
+      const ta = rowTime(a);
+      if (tb !== ta) return tb - ta;
+      const idb = Math.abs(parseInt(String(b.task_id ?? b.id ?? 0), 10)) || 0;
+      const ida = Math.abs(parseInt(String(a.task_id ?? a.id ?? 0), 10)) || 0;
+      return idb - ida;
+    });
 
     return res.json({ driver, tasks });
   } catch (e) {

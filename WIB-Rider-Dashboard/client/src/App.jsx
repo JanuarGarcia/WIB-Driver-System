@@ -55,11 +55,20 @@ function AppRouteFallback() {
 
 function MapMerchantFilterServerSync() {
   useEffect(() => {
-    hydrateMapMerchantFilterFromServer();
-    const retry = setTimeout(() => hydrateMapMerchantFilterFromServer(), 2000);
+    let cancelled = false;
+    let retryTimer = null;
+    (async () => {
+      const ok = await hydrateMapMerchantFilterFromServer();
+      if (cancelled || ok) return;
+      retryTimer = setTimeout(() => {
+        retryTimer = null;
+        if (!cancelled) hydrateMapMerchantFilterFromServer();
+      }, 2000);
+    })();
     const removeListeners = setupMapMerchantFilterServerListeners();
     return () => {
-      clearTimeout(retry);
+      cancelled = true;
+      if (retryTimer) clearTimeout(retryTimer);
       removeListeners();
     };
   }, []);

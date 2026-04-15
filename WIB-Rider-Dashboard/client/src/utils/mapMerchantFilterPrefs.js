@@ -136,24 +136,25 @@ export function saveMapMerchantFilterToSession(ids, opts = {}) {
   } catch (_) {}
 }
 
-/** Load merchant filter for the signed-in admin from API; updates local cache. */
+/** Load merchant filter for the signed-in admin from API; updates local cache. @returns {Promise<boolean>} true if server responded with a definitive value */
 export async function hydrateMapMerchantFilterFromServer() {
   await ensureDashboardAdminId();
   migrateLegacyMapMerchantFilterLocalStorage();
-  if (!getToken()) return;
+  if (!getToken()) return false;
   for (const path of HYDRATE_PATHS) {
     try {
       const data = await api(path);
       if (data && Array.isArray(data.merchant_ids)) {
         const cleaned = normalizeMapMerchantFilterIds(data.merchant_ids);
         saveMapMerchantFilterToSession(cleaned, { skipServerPut: true });
-        return;
+        return true;
       }
-      if (data && data.merchant_ids === null) return;
+      if (data && data.merchant_ids === null) return true;
     } catch {
       /* try next path */
     }
   }
+  return false;
 }
 
 let hydrateDebounce = null;
