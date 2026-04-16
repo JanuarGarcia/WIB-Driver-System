@@ -1878,6 +1878,23 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
   -webkit-overflow-scrolling: touch;
 }
 
+@media (max-width: 768px) {
+  /* Toast popups: switch to full-width container on mobile so content isn't clipped. */
+  .Toastify__toast-container.Toastify__toast-container--bottom-right {
+    left: max(0.5rem, env(safe-area-inset-left));
+    right: max(0.5rem, env(safe-area-inset-right));
+    bottom: max(0.5rem, env(safe-area-inset-bottom));
+    top: auto;
+    padding: 0;
+    max-width: none;
+    max-height: min(50vh, calc(100vh - 7rem));
+  }
+  .Toastify__toast-container.Toastify__toast-container--bottom-right .Toastify__toast {
+    width: 100%;
+    margin: 0 0 0.5rem;
+  }
+}
+
 .Toastify__toast-container.Toastify__toast-container--bottom-right::-webkit-scrollbar {
   width: 6px;
 }
@@ -10374,6 +10391,17 @@ tr:hover { background: var(--bg-hover) !important; }
     max-height: min(75vh, 480px);
     right: 0;
     left: auto;
+  }
+  /* Notifications dropdown: use a fixed “sheet” on mobile so it never renders off-screen. */
+  .rider-notif-panel {
+    position: fixed;
+    top: calc(env(safe-area-inset-top) + 0.5rem);
+    left: max(0.5rem, env(safe-area-inset-left));
+    right: max(0.5rem, env(safe-area-inset-right));
+    bottom: max(0.5rem, env(safe-area-inset-bottom));
+    width: auto;
+    max-height: none;
+    border-radius: 14px;
   }
   .btn { min-height: 44px; padding: 0.5rem 0.85rem; }
   .btn-sm { min-height: 40px; padding: 0.45rem 0.75rem; }

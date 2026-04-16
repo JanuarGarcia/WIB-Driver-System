@@ -49,6 +49,32 @@ function formatDatetimeLocalForInput(d) {
   return '';
 }
 
+/** Wall time from task.delivery_date for "Complete before" when order has no delivery_time slot. */
+function timePartFromTaskDeliveryForCompleteBefore(taskDeliveryRaw) {
+  if (taskDeliveryRaw == null || taskDeliveryRaw === '') return '';
+  const s = String(taskDeliveryRaw).trim();
+  const iso = /^(\d{4}-\d{2}-\d{2})[T ](\d{1,2}):(\d{2})(?::(\d{2}))?/.exec(s);
+  if (!iso) return '';
+  const h = parseInt(iso[2], 10);
+  const min = parseInt(iso[3], 10);
+  if (!Number.isFinite(h) || !Number.isFinite(min)) return '';
+  if (h === 0 && min === 0) return '';
+  return formatDbTimeTo12h(`${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}:00`);
+}
+
+/** Send naive local wall time to API (avoids `T` / driver quirks); omit when empty. */
+function formatDeliveryDateForApi(isoLocal) {
+  if (isoLocal == null || String(isoLocal).trim() === '') return undefined;
+  const s = String(isoLocal).trim();
+  const m = /^(\d{4}-\d{2}-\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?/.exec(s);
+  if (m) {
+    const sec = m[4] != null && m[4] !== '' ? String(parseInt(m[4], 10)).padStart(2, '0') : '00';
+    return `${m[1]} ${m[2]}:${m[3]}:${sec}`;
+  }
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return `${s} 00:00:00`;
+  return s;
+}
+
 /** Strip bogus \\ / escapes for read-only UI; hide literal "undefined"/"null" strings from API. */
 function displaySanitized(raw) {
   if (raw == null) return '';
@@ -1265,14 +1291,6 @@ export default function TaskDetailsModal({
       .finally(() => setActionLoading(false));
   };
 
-  const handleRetryAutoAssign = () => {
-    setActionLoading(true);
-    api(`tasks/${taskId}/retry-auto-assign`, { method: 'POST' })
-      .then(() => {})
-      .catch((err) => alert(userFacingApiError(err) || 'Failed'))
-      .finally(() => setActionLoading(false));
-  };
-
   const openEdit = () => {
     const t = data?.task ?? data;
     const order = data?.order;
@@ -1324,7 +1342,7 @@ export default function TaskDetailsModal({
       delivery_address: editForm.delivery_address,
       customer_name: editForm.customer_name,
       contact_number: `${editContactCountryCode || ''}${String(editForm.contact_number || '').trim()}`,
-      delivery_date: editForm.delivery_date || undefined,
+      delivery_date: formatDeliveryDateForApi(editForm.delivery_date),
       email_address: editForm.email_address || undefined,
     };
 
@@ -1555,12 +1573,26 @@ export default function TaskDetailsModal({
     order?.delivery_time != null && String(order.delivery_time).trim() !== ''
       ? order.delivery_time
       : order?.order_delivery_time;
-  const completeBefore =
-    order?.delivery_date && orderDeliveryTimeRaw
-      ? `${formatDateOnly(order.delivery_date)} ${formatDbTimeTo12h(orderDeliveryTimeRaw)}`
-      : order?.delivery_date
-        ? formatDateOnly(order.delivery_date)
-        : formatDateOnly(task?.delivery_date);
+  const taskDeliveryRaw = task?.delivery_date != null ? String(task.delivery_date).trim() : '';
+  const taskTimeForCompleteBefore = taskDeliveryRaw
+    ? timePartFromTaskDeliveryForCompleteBefore(taskDeliveryRaw)
+    : '';
+  const completeBefore = (() => {
+    if (order?.delivery_date && orderDeliveryTimeRaw) {
+      return `${formatDateOnly(order.delivery_date)} ${formatDbTimeTo12h(orderDeliveryTimeRaw)}`.trim();
+    }
+    if (order?.delivery_date) {
+      const datePart = formatDateOnly(order.delivery_date);
+      if (taskTimeForCompleteBefore) return `${datePart} ${taskTimeForCompleteBefore}`;
+      return datePart;
+    }
+    if (taskDeliveryRaw) {
+      const datePart = formatDateOnly(taskDeliveryRaw);
+      if (taskTimeForCompleteBefore) return `${datePart} ${taskTimeForCompleteBefore}`;
+      return datePart;
+    }
+    return '—';
+  })();
   const advanceLinesModal = order
     ? getAdvanceOrderLines(
         {
@@ -2030,17 +2062,12 @@ export default function TaskDetailsModal({
                 {(String(task.status || '').toLowerCase() === 'unassigned') && (
                   <>
                     <button type="button" className="btn btn-primary" onClick={openAssignModal} disabled={actionLoading}>Assign driver</button>
-                    {!isErrandTask && (
-                      <button
-                        type="button"
-                        className="btn task-details-footer-retry-auto-assign"
-                        onClick={handleRetryAutoAssign}
-                        disabled={actionLoading}
-                      >
-                        Retry auto-assign
-                      </button>
-                    )}
                   </>
+                )}
+                {(String(task.status || '').toLowerCase() !== 'unassigned') && !assignOpen && (
+                  <button type="button" className="btn btn-primary" onClick={openAssignModal} disabled={actionLoading}>
+                    Re-assign Agent
+                  </button>
                 )}
                 {!changeStatusOpen && !editOpen && !assignOpen && (
                   <button type="button" className="btn" onClick={openEdit} disabled={actionLoading}>Edit task</button>

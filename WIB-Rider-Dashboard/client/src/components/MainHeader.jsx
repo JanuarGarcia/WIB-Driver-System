@@ -65,7 +65,11 @@ export default function MainHeader({ onMenuClick, onOpenNewTask }) {
       if (notifRef.current && !notifRef.current.contains(e.target)) setNotificationsOpen(false);
     };
     document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
+    document.addEventListener('touchstart', handleClickOutside, { passive: true });
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('touchstart', handleClickOutside);
+    };
   }, [notificationsOpen]);
 
   useEffect(() => {

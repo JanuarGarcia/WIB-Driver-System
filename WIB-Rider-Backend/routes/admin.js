@@ -3315,8 +3315,11 @@ router.get('/tasks', async (req, res) => {
     WHERE 1=1`;
   const params = [];
   if (date) {
-    sql += ' AND (t.delivery_date = ? OR DATE(t.delivery_date) = ?)';
-    params.push(date, date);
+    // Match task wall time or order delivery date so edited task.delivery_date (datetime) cannot
+    // drop the row off the dashboard day when the linked order is still for this date.
+    sql +=
+      ' AND (t.delivery_date = ? OR DATE(t.delivery_date) = ? OR (o.order_id IS NOT NULL AND (o.delivery_date = ? OR DATE(o.delivery_date) = ?)))';
+    params.push(date, date, date, date);
   }
   if (status_in) {
     const keys = String(status_in)
@@ -4077,6 +4080,22 @@ router.delete('/errand-orders/:orderId', async (req, res) => {
 });
 
 // ---- updateTask (edit task fields) ----
+/** Normalize dashboard datetime-local / ISO-ish strings to naive `YYYY-MM-DD HH:MM:SS` (no TZ shift). */
+function normalizeTaskDeliveryDateForDb(raw) {
+  if (raw == null) return null;
+  const s = String(raw).trim();
+  if (!s) return null;
+  const m = /^(\d{4}-\d{2}-\d{2})[T ](\d{1,2}):(\d{2})(?::(\d{2}))?/.exec(s);
+  if (m) {
+    const sec = m[4] != null && m[4] !== '' ? String(parseInt(m[4], 10)).padStart(2, '0') : '00';
+    const hh = String(parseInt(m[2], 10)).padStart(2, '0');
+    const mm = String(parseInt(m[3], 10)).padStart(2, '0');
+    return `${m[1]} ${hh}:${mm}:${sec}`;
+  }
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return `${s} 00:00:00`;
+  return s;
+}
+
 router.put('/tasks/:id', express.json(), async (req, res) => {
   const taskId = parseInt(req.params.id, 10);
   if (!Number.isFinite(taskId)) return res.status(400).json({ error: 'Invalid task id' });
@@ -4086,7 +4105,8 @@ router.put('/tasks/:id', express.json(), async (req, res) => {
     delivery_address: body.delivery_address,
     customer_name: body.customer_name,
     contact_number: body.contact_number,
-    delivery_date: body.delivery_date,
+    delivery_date:
+      body.delivery_date === undefined ? undefined : normalizeTaskDeliveryDateForDb(body.delivery_date),
     email_address: body.email_address,
   };
   const updates = [];

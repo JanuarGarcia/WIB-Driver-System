@@ -2,6 +2,8 @@
 
 Node.js dashboard for **assigning tasks to drivers** without touching the live WIB rider dashboard. It talks to your existing **WIB Rider Backend** API.
 
+**New admin user?** Step-by-step usage, screen tour, and troubleshooting: [ADMIN_GUIDE.md](./ADMIN_GUIDE.md).
+
 ## Setup
 
 1. Copy `.env.example` to `.env` and set:
@@ -17,7 +19,7 @@ npm install
 npm start
 ```
 
-3. Open **http://localhost:3001** in the browser.
+3. Open the dashboard in the browser (default **http://localhost:3002** unless you set `DASHBOARD_PORT` or `PORT`).
 
 ## Live deployment (cPanel / Apache)
 
