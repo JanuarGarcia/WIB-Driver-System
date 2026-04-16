@@ -45,6 +45,14 @@ export default function Login() {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [forgotOpen, setForgotOpen] = useState(false);
+  const [forgotLogin, setForgotLogin] = useState('');
+  const [forgotCode, setForgotCode] = useState('');
+  const [forgotNewPassword, setForgotNewPassword] = useState('');
+  const [forgotConfirmPassword, setForgotConfirmPassword] = useState('');
+  const [forgotLoading, setForgotLoading] = useState(false);
+  const [forgotMessage, setForgotMessage] = useState('');
+  const [forgotError, setForgotError] = useState('');
   const submitLockRef = useRef(false);
   const navigate = useNavigate();
   const location = useLocation();
@@ -90,6 +98,86 @@ export default function Login() {
     } finally {
       setLoading(false);
       submitLockRef.current = false;
+    }
+  };
+
+  const handleRequestResetCode = async () => {
+    const login = (forgotLogin || emailOrUsername || '').trim();
+    if (!login) {
+      setForgotError('Enter your email or username first.');
+      return;
+    }
+    setForgotLoading(true);
+    setForgotError('');
+    setForgotMessage('');
+    try {
+      const res = await fetch(`${API_BASE.replace(/\/$/, '')}/auth/forgot-password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email_or_username: login }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setForgotError(data.error || 'Failed to request reset code.');
+        return;
+      }
+      if (data.reset_code) {
+        setForgotMessage(`Reset code (debug): ${data.reset_code}`);
+      } else {
+        setForgotMessage(data.message || 'If the account exists, a reset code has been sent.');
+      }
+    } catch (_) {
+      setForgotError('Failed to request reset code.');
+    } finally {
+      setForgotLoading(false);
+    }
+  };
+
+  const handleResetPassword = async () => {
+    const login = (forgotLogin || emailOrUsername || '').trim();
+    if (!login) {
+      setForgotError('Enter your email or username.');
+      return;
+    }
+    if (!forgotCode.trim()) {
+      setForgotError('Enter the reset code.');
+      return;
+    }
+    if (!forgotNewPassword || forgotNewPassword.length < 6) {
+      setForgotError('New password must be at least 6 characters.');
+      return;
+    }
+    if (forgotNewPassword !== forgotConfirmPassword) {
+      setForgotError('Passwords do not match.');
+      return;
+    }
+    setForgotLoading(true);
+    setForgotError('');
+    setForgotMessage('');
+    try {
+      const res = await fetch(`${API_BASE.replace(/\/$/, '')}/auth/reset-password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email_or_username: login,
+          reset_code: forgotCode.trim(),
+          new_password: forgotNewPassword,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setForgotError(data.error || 'Failed to reset password.');
+        return;
+      }
+      setForgotMessage(data.message || 'Password has been reset. You can log in now.');
+      setForgotCode('');
+      setForgotNewPassword('');
+      setForgotConfirmPassword('');
+      if (!emailOrUsername) setEmailOrUsername(login);
+    } catch (_) {
+      setForgotError('Failed to reset password.');
+    } finally {
+      setForgotLoading(false);
     }
   };
 
@@ -172,8 +260,84 @@ export default function Login() {
               />
               <span>Remember Me</span>
             </label>
-            <a href="#forgot-password" className="login-forgot">Forgot password?</a>
+            <button
+              type="button"
+              className="login-forgot"
+              onClick={() => {
+                setForgotOpen((v) => !v);
+                setForgotError('');
+                setForgotMessage('');
+                if (!forgotLogin && emailOrUsername) setForgotLogin(emailOrUsername);
+              }}
+            >
+              Forgot password?
+            </button>
           </div>
+          {forgotOpen && (
+            <div className="login-forgot-panel">
+              <label className="login-label" htmlFor="forgot-login-id">
+                Email or username
+              </label>
+              <input
+                id="forgot-login-id"
+                type="text"
+                className="login-input"
+                value={forgotLogin}
+                onChange={(e) => setForgotLogin(e.target.value)}
+                placeholder="admin@gmail.com"
+                autoComplete="username"
+              />
+              <div className="login-forgot-actions">
+                <button type="button" className="btn btn-sm" onClick={handleRequestResetCode} disabled={forgotLoading}>
+                  {forgotLoading ? 'Sending…' : 'Send reset code'}
+                </button>
+              </div>
+
+              <label className="login-label" htmlFor="forgot-code">
+                Reset code
+              </label>
+              <input
+                id="forgot-code"
+                type="text"
+                className="login-input"
+                value={forgotCode}
+                onChange={(e) => setForgotCode(e.target.value)}
+                placeholder="6-digit code"
+                autoComplete="one-time-code"
+              />
+              <label className="login-label" htmlFor="forgot-new-password">
+                New password
+              </label>
+              <input
+                id="forgot-new-password"
+                type="password"
+                className="login-input"
+                value={forgotNewPassword}
+                onChange={(e) => setForgotNewPassword(e.target.value)}
+                placeholder="New password"
+                autoComplete="new-password"
+              />
+              <label className="login-label" htmlFor="forgot-confirm-password">
+                Confirm password
+              </label>
+              <input
+                id="forgot-confirm-password"
+                type="password"
+                className="login-input"
+                value={forgotConfirmPassword}
+                onChange={(e) => setForgotConfirmPassword(e.target.value)}
+                placeholder="Confirm password"
+                autoComplete="new-password"
+              />
+              <div className="login-forgot-actions">
+                <button type="button" className="btn btn-primary btn-sm" onClick={handleResetPassword} disabled={forgotLoading}>
+                  {forgotLoading ? 'Resetting…' : 'Reset password'}
+                </button>
+              </div>
+              {forgotError ? <div className="login-error" role="alert">{forgotError}</div> : null}
+              {forgotMessage ? <div className="login-info" role="status">{forgotMessage}</div> : null}
+            </div>
+          )}
           <button type="submit" className="login-btn" disabled={loading}>
             {loading ? 'Logging in…' : 'Login'}
           </button>

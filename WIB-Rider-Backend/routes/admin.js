@@ -75,6 +75,7 @@ const {
   compliancePayloadForDriver,
   STATUS: OFFICE_COMPLIANCE_STATUS,
 } = require('../services/officeComplianceService');
+const { issueResetCode, consumeResetCode } = require('../lib/passwordResetStore');
 
 const ADMIN_SECRET = process.env.ADMIN_SECRET || '';
 
@@ -244,6 +245,72 @@ router.post('/auth/login', express.json(), async (req, res) => {
       return res.status(500).json({ error: 'mt_admin_user table not found. Set DB_NAME to the database that contains mt_admin_user (e.g. wibdb).' });
     }
     return res.status(500).json({ error: e.message || 'Login failed' });
+  }
+});
+
+async function findAdminUserForLoginKey(loginKey) {
+  const key = (loginKey || '').toString().trim();
+  if (!key) return null;
+  const [rows] = await pool.query(
+    `SELECT admin_id, username, email_address, password, first_name, last_name, role
+     FROM mt_admin_user
+     WHERE (username = ? OR email_address = ?)
+       AND (status IS NULL OR status = '' OR status = 0 OR status = 1 OR status = '1' OR status = ?)
+     LIMIT 1`,
+    [key, key, 'active']
+  );
+  return rows && rows[0] ? rows[0] : null;
+}
+
+router.post('/auth/forgot-password', express.json(), async (req, res) => {
+  const loginKey = (req.body?.email_or_username || req.body?.email || req.body?.username || '').toString().trim();
+  if (!loginKey) return res.status(400).json({ error: 'Email or username is required' });
+  try {
+    const user = await findAdminUserForLoginKey(loginKey);
+    if (!user) {
+      return res.json({ ok: true, message: 'If the account exists, a reset code has been sent.' });
+    }
+    const ip = (req.headers['x-forwarded-for'] || req.socket?.remoteAddress || '').split(',')[0].trim() || null;
+    const issued = await issueResetCode(pool, 'admin', user.admin_id, loginKey, ip);
+    const debugRaw = process.env.DASHBOARD_FORGOT_PASSWORD_DEBUG_CODE;
+    const showCode = debugRaw == null || debugRaw === '' ? true : !(/^(0|false)$/i.test(String(debugRaw).trim()));
+    return res.json({
+      ok: true,
+      message: showCode
+        ? `Reset code generated (debug mode). Expires in ${issued.expires_in_minutes} minutes.`
+        : 'If the account exists, a reset code has been sent.',
+      ...(showCode ? { reset_code: issued.code, expires_in_minutes: issued.expires_in_minutes } : {}),
+    });
+  } catch (e) {
+    if (e.code === 'ER_NO_SUCH_TABLE') {
+      return res.status(500).json({ error: 'mt_admin_user table not found. Check DB_NAME.' });
+    }
+    return res.status(500).json({ error: e.message || 'Forgot password failed' });
+  }
+});
+
+router.post('/auth/reset-password', express.json(), async (req, res) => {
+  const loginKey = (req.body?.email_or_username || req.body?.email || req.body?.username || '').toString().trim();
+  const resetCode = (req.body?.reset_code || req.body?.code || '').toString().trim();
+  const newPassword = (req.body?.new_password || '').toString();
+  if (!loginKey) return res.status(400).json({ error: 'Email or username is required' });
+  if (!resetCode) return res.status(400).json({ error: 'Reset code is required' });
+  if (!newPassword || newPassword.trim().length < 6) {
+    return res.status(400).json({ error: 'New password must be at least 6 characters' });
+  }
+  try {
+    const user = await findAdminUserForLoginKey(loginKey);
+    if (!user) return res.status(400).json({ error: 'Invalid reset request' });
+    const used = await consumeResetCode(pool, 'admin', user.admin_id, resetCode);
+    if (!used.ok) return res.status(400).json({ error: 'Invalid or expired reset code' });
+    const hash = await bcrypt.hash(newPassword.trim(), 10);
+    await pool.query('UPDATE mt_admin_user SET password = ? WHERE admin_id = ?', [hash, user.admin_id]);
+    return res.json({ ok: true, message: 'Password has been reset.' });
+  } catch (e) {
+    if (e.code === 'ER_NO_SUCH_TABLE') {
+      return res.status(500).json({ error: 'mt_admin_user table not found. Check DB_NAME.' });
+    }
+    return res.status(500).json({ error: e.message || 'Reset password failed' });
   }
 });
 

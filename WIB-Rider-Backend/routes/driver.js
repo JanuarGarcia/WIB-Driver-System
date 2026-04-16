@@ -46,6 +46,7 @@ const {
   compliancePayloadForDriver,
 } = require('../services/officeComplianceService');
 const { subscribeDriverSse } = require('../services/driverRealtime');
+const { issueResetCode, consumeResetCode } = require('../lib/passwordResetStore');
 
 const uploadDir = path.join(getUploadsRoot(), 'profiles');
 if (!fs.existsSync(uploadDir)) {
@@ -1868,9 +1869,49 @@ router.post('/ClearNotifications', validateApiKey, resolveDriver, async (req, re
 });
 
 router.post('/ForgotPassword', validateApiKey, async (req, res) => {
-  const { email } = req.body;
-  if (!email) return error(res, 'Email required');
-  return success(res, null, 'If the email exists, a reset link has been sent.');
+  const body = req.body && typeof req.body === 'object' ? req.body : {};
+  const identifier = resolveLoginKeyFromBody(body) || normalizeLoginKeyInput(body.email || body.username || body.phone);
+  if (!identifier) return error(res, 'Email, username, or mobile is required');
+  try {
+    const row = await fetchDriverRowForLogin(identifier);
+    // Keep response generic (do not expose account existence).
+    if (!row || !row.id) {
+      return success(res, null, 'If the account exists, a reset code has been sent.');
+    }
+    const ip = req.ip || req.connection?.remoteAddress || null;
+    const issued = await issueResetCode(pool, 'driver', row.id, identifier, ip);
+    const debugRaw = process.env.DRIVER_FORGOT_PASSWORD_DEBUG_CODE;
+    const showCode = debugRaw == null || debugRaw === '' ? true : !(/^(0|false)$/i.test(String(debugRaw).trim()));
+    return success(
+      res,
+      showCode ? { reset_code: issued.code, expires_in_minutes: issued.expires_in_minutes } : null,
+      showCode
+        ? `Reset code generated (debug mode). Expires in ${issued.expires_in_minutes} minutes.`
+        : 'If the account exists, a reset code has been sent.'
+    );
+  } catch (e) {
+    return error(res, e.message || 'Failed to process forgot password');
+  }
+});
+
+router.post('/ResetPassword', validateApiKey, async (req, res) => {
+  const body = req.body && typeof req.body === 'object' ? req.body : {};
+  const identifier = resolveLoginKeyFromBody(body) || normalizeLoginKeyInput(body.email || body.username || body.phone);
+  const resetCode = normalizeLoginKeyInput(body.reset_code || body.code || body.forgot_pass_code);
+  const newPassword = body.new_password != null ? String(body.new_password) : '';
+  if (!identifier) return error(res, 'Email, username, or mobile is required');
+  if (!resetCode) return error(res, 'Reset code is required');
+  if (!newPassword || newPassword.trim().length < 6) return error(res, 'New password must be at least 6 characters');
+  try {
+    const row = await fetchDriverRowForLogin(identifier);
+    if (!row || !row.id) return error(res, 'Invalid reset request');
+    const used = await consumeResetCode(pool, 'driver', row.id, resetCode);
+    if (!used.ok) return error(res, 'Invalid or expired reset code');
+    await persistDualPasswordOnPasswordChangeMtDriver(pool, row.id, newPassword.trim());
+    return success(res, null, 'Password has been reset.');
+  } catch (e) {
+    return error(res, e.message || 'Failed to reset password');
+  }
 });
 
 router.post('/ChangePassword', validateApiKey, resolveDriver, async (req, res) => {
