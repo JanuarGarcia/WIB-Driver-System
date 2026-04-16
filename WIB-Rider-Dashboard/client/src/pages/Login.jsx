@@ -275,60 +275,81 @@ export default function Login() {
           </div>
           {forgotOpen && (
             <div className="login-forgot-panel">
-              <label className="login-label" htmlFor="forgot-login-id">
-                Email or username
-              </label>
-              <input
-                id="forgot-login-id"
-                type="text"
-                className="login-input"
-                value={forgotLogin}
-                onChange={(e) => setForgotLogin(e.target.value)}
-                placeholder="admin@gmail.com"
-                autoComplete="username"
-              />
-              <div className="login-forgot-actions">
-                <button type="button" className="btn btn-sm" onClick={handleRequestResetCode} disabled={forgotLoading}>
-                  {forgotLoading ? 'Sending…' : 'Send reset code'}
-                </button>
+              <div className="login-forgot-header">
+                <h4 className="login-forgot-title">Reset your password</h4>
+                <p className="login-forgot-subtitle">Step 1: request a reset code. Step 2: enter the code and your new password.</p>
+              </div>
+              <div className="login-forgot-step">
+                <label className="login-label" htmlFor="forgot-login-id">
+                  Email or username
+                </label>
+                <div className="login-input-wrap login-input-wrap--forgot">
+                  <span className="login-input-icon"><IconEnvelope /></span>
+                  <input
+                    id="forgot-login-id"
+                    type="text"
+                    className="login-input"
+                    value={forgotLogin}
+                    onChange={(e) => setForgotLogin(e.target.value)}
+                    placeholder="admin@gmail.com"
+                    autoComplete="username"
+                  />
+                  <button type="button" className="login-forgot-inline-btn" onClick={handleRequestResetCode} disabled={forgotLoading}>
+                    {forgotLoading ? 'Sending…' : 'Send code'}
+                  </button>
+                </div>
               </div>
 
-              <label className="login-label" htmlFor="forgot-code">
-                Reset code
-              </label>
-              <input
-                id="forgot-code"
-                type="text"
-                className="login-input"
-                value={forgotCode}
-                onChange={(e) => setForgotCode(e.target.value)}
-                placeholder="6-digit code"
-                autoComplete="one-time-code"
-              />
-              <label className="login-label" htmlFor="forgot-new-password">
-                New password
-              </label>
-              <input
-                id="forgot-new-password"
-                type="password"
-                className="login-input"
-                value={forgotNewPassword}
-                onChange={(e) => setForgotNewPassword(e.target.value)}
-                placeholder="New password"
-                autoComplete="new-password"
-              />
-              <label className="login-label" htmlFor="forgot-confirm-password">
-                Confirm password
-              </label>
-              <input
-                id="forgot-confirm-password"
-                type="password"
-                className="login-input"
-                value={forgotConfirmPassword}
-                onChange={(e) => setForgotConfirmPassword(e.target.value)}
-                placeholder="Confirm password"
-                autoComplete="new-password"
-              />
+              <div className="login-forgot-grid">
+                <div className="login-forgot-field">
+                  <label className="login-label" htmlFor="forgot-code">
+                    Reset code
+                  </label>
+                  <div className="login-input-wrap login-input-wrap--forgot">
+                    <input
+                      id="forgot-code"
+                      type="text"
+                      className="login-input"
+                      value={forgotCode}
+                      onChange={(e) => setForgotCode(e.target.value)}
+                      placeholder="6-digit code"
+                      autoComplete="one-time-code"
+                    />
+                  </div>
+                </div>
+                <div className="login-forgot-field">
+                  <label className="login-label" htmlFor="forgot-new-password">
+                    New password
+                  </label>
+                  <div className="login-input-wrap login-input-wrap--forgot">
+                    <input
+                      id="forgot-new-password"
+                      type="password"
+                      className="login-input"
+                      value={forgotNewPassword}
+                      onChange={(e) => setForgotNewPassword(e.target.value)}
+                      placeholder="New password"
+                      autoComplete="new-password"
+                    />
+                  </div>
+                </div>
+                <div className="login-forgot-field login-forgot-field--full">
+                  <label className="login-label" htmlFor="forgot-confirm-password">
+                    Confirm password
+                  </label>
+                  <div className="login-input-wrap login-input-wrap--forgot">
+                    <input
+                      id="forgot-confirm-password"
+                      type="password"
+                      className="login-input"
+                      value={forgotConfirmPassword}
+                      onChange={(e) => setForgotConfirmPassword(e.target.value)}
+                      placeholder="Confirm password"
+                      autoComplete="new-password"
+                    />
+                  </div>
+                </div>
+              </div>
               <div className="login-forgot-actions">
                 <button type="button" className="btn btn-primary btn-sm" onClick={handleResetPassword} disabled={forgotLoading}>
                   {forgotLoading ? 'Resetting…' : 'Reset password'}

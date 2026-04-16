@@ -10715,16 +10715,69 @@ tr:hover { background: var(--bg-hover) !important; }
 }
 .login-forgot:hover { color: #b8e09a; text-decoration: underline; }
 .login-forgot-panel {
-  margin-top: -0.25rem;
-  padding: 0.85rem;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 10px;
-  background: rgba(16, 28, 22, 0.45);
+  margin-top: -0.15rem;
+  padding: 1rem;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 12px;
+  background: linear-gradient(145deg, rgba(16, 28, 22, 0.55), rgba(12, 22, 18, 0.45));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+.login-forgot-header {
+  margin-bottom: 0.75rem;
+}
+.login-forgot-title {
+  margin: 0;
+  color: #e6f0dc;
+  font-size: 0.95rem;
+  font-weight: 700;
+}
+.login-forgot-subtitle {
+  margin: 0.25rem 0 0;
+  color: #aebda7;
+  font-size: 0.79rem;
+  line-height: 1.4;
+}
+.login-forgot-step {
+  margin-bottom: 0.8rem;
+}
+.login-input-wrap--forgot {
+  min-height: 44px;
+  padding-right: 0.5rem;
+}
+.login-forgot-inline-btn {
+  border: 1px solid rgba(168, 208, 141, 0.5);
+  background: rgba(79, 112, 59, 0.35);
+  color: #d8efc6;
+  border-radius: 8px;
+  padding: 0.45rem 0.7rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.login-forgot-inline-btn:hover:not(:disabled) {
+  background: rgba(79, 112, 59, 0.55);
+}
+.login-forgot-inline-btn:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+.login-forgot-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.65rem 0.75rem;
+}
+.login-forgot-field {
+  min-width: 0;
+}
+.login-forgot-field--full {
+  grid-column: 1 / -1;
 }
 .login-forgot-actions {
   display: flex;
   justify-content: flex-end;
-  margin-top: 0.4rem;
+  margin-top: 0.65rem;
+  gap: 0.5rem;
 }
 .login-info {
   background: rgba(79, 112, 59, 0.25);
@@ -10733,7 +10786,14 @@ tr:hover { background: var(--bg-hover) !important; }
   border-radius: 10px;
   border: 1px solid rgba(168, 208, 141, 0.45);
   font-size: 0.85rem;
-  margin-top: 0.55rem;
+  margin-top: 0.6rem;
+}
+.login-forgot-panel .login-error {
+  margin: 0.6rem 0 0;
+  border-radius: 10px;
+  padding: 0.6rem 0.8rem;
+  font-size: 0.82rem;
+  border-width: 1px;
 }
 .login-btn {
   position: relative;
@@ -10802,6 +10862,11 @@ tr:hover { background: var(--bg-hover) !important; }
   font-size: 0.8125rem;
   text-align: center;
   line-height: 1.45;
+}
+@media (max-width: 560px) {
+  .login-forgot-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* Directions panel under dashboard map – above map so it’s visible */
