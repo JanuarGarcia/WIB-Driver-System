@@ -1,5 +1,6 @@
 import { useState, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
+import { createPortal } from 'react-dom';
 import { setToken, setDashboardAdminId, notifyDashboardAdminIdChanged } from '../auth';
 import { API_BASE } from '../api';
 import { migrateLegacyMapMerchantFilterLocalStorage } from '../utils/mapMerchantFilterPrefs';
@@ -273,92 +274,6 @@ export default function Login() {
               Forgot password?
             </button>
           </div>
-          {forgotOpen && (
-            <div className="login-forgot-panel">
-              <div className="login-forgot-header">
-                <h4 className="login-forgot-title">Reset your password</h4>
-                <p className="login-forgot-subtitle">Step 1: request a reset code. Step 2: enter the code and your new password.</p>
-              </div>
-              <div className="login-forgot-step">
-                <label className="login-label" htmlFor="forgot-login-id">
-                  Email or username
-                </label>
-                <div className="login-input-wrap login-input-wrap--forgot">
-                  <span className="login-input-icon"><IconEnvelope /></span>
-                  <input
-                    id="forgot-login-id"
-                    type="text"
-                    className="login-input"
-                    value={forgotLogin}
-                    onChange={(e) => setForgotLogin(e.target.value)}
-                    placeholder="admin@gmail.com"
-                    autoComplete="username"
-                  />
-                  <button type="button" className="login-forgot-inline-btn" onClick={handleRequestResetCode} disabled={forgotLoading}>
-                    {forgotLoading ? 'Sending…' : 'Send code'}
-                  </button>
-                </div>
-              </div>
-
-              <div className="login-forgot-grid">
-                <div className="login-forgot-field">
-                  <label className="login-label" htmlFor="forgot-code">
-                    Reset code
-                  </label>
-                  <div className="login-input-wrap login-input-wrap--forgot">
-                    <input
-                      id="forgot-code"
-                      type="text"
-                      className="login-input"
-                      value={forgotCode}
-                      onChange={(e) => setForgotCode(e.target.value)}
-                      placeholder="6-digit code"
-                      autoComplete="one-time-code"
-                    />
-                  </div>
-                </div>
-                <div className="login-forgot-field">
-                  <label className="login-label" htmlFor="forgot-new-password">
-                    New password
-                  </label>
-                  <div className="login-input-wrap login-input-wrap--forgot">
-                    <input
-                      id="forgot-new-password"
-                      type="password"
-                      className="login-input"
-                      value={forgotNewPassword}
-                      onChange={(e) => setForgotNewPassword(e.target.value)}
-                      placeholder="New password"
-                      autoComplete="new-password"
-                    />
-                  </div>
-                </div>
-                <div className="login-forgot-field login-forgot-field--full">
-                  <label className="login-label" htmlFor="forgot-confirm-password">
-                    Confirm password
-                  </label>
-                  <div className="login-input-wrap login-input-wrap--forgot">
-                    <input
-                      id="forgot-confirm-password"
-                      type="password"
-                      className="login-input"
-                      value={forgotConfirmPassword}
-                      onChange={(e) => setForgotConfirmPassword(e.target.value)}
-                      placeholder="Confirm password"
-                      autoComplete="new-password"
-                    />
-                  </div>
-                </div>
-              </div>
-              <div className="login-forgot-actions">
-                <button type="button" className="btn btn-primary btn-sm" onClick={handleResetPassword} disabled={forgotLoading}>
-                  {forgotLoading ? 'Resetting…' : 'Reset password'}
-                </button>
-              </div>
-              {forgotError ? <div className="login-error" role="alert">{forgotError}</div> : null}
-              {forgotMessage ? <div className="login-info" role="status">{forgotMessage}</div> : null}
-            </div>
-          )}
           <button type="submit" className="login-btn" disabled={loading}>
             {loading ? 'Logging in…' : 'Login'}
           </button>
@@ -367,6 +282,121 @@ export default function Login() {
           Admin access only. Accounts are managed internally.
         </p>
       </div>
+      {forgotOpen &&
+        createPortal(
+          <div
+            className="modal-backdrop login-forgot-modal-backdrop"
+            role="presentation"
+            onClick={() => !forgotLoading && setForgotOpen(false)}
+          >
+            <div
+              className="modal-box login-forgot-modal"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="login-forgot-modal-title"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="modal-header send-push-modal-header login-forgot-modal-header">
+                <h3 id="login-forgot-modal-title" className="send-push-modal-title">
+                  Reset your password
+                </h3>
+                <button
+                  type="button"
+                  className="send-push-modal-close"
+                  onClick={() => !forgotLoading && setForgotOpen(false)}
+                  disabled={forgotLoading}
+                  aria-label="Close"
+                >
+                  ×
+                </button>
+              </div>
+              <div className="modal-body send-push-modal-body">
+                <p className="login-forgot-subtitle">
+                  Step 1: request a reset code. Step 2: enter the code and your new password.
+                </p>
+                <div className="login-forgot-step">
+                  <label className="login-label" htmlFor="forgot-login-id">
+                    Email or username
+                  </label>
+                  <div className="login-input-wrap login-input-wrap--forgot">
+                    <span className="login-input-icon"><IconEnvelope /></span>
+                    <input
+                      id="forgot-login-id"
+                      type="text"
+                      className="login-input"
+                      value={forgotLogin}
+                      onChange={(e) => setForgotLogin(e.target.value)}
+                      placeholder="admin@gmail.com"
+                      autoComplete="username"
+                    />
+                    <button type="button" className="login-forgot-inline-btn" onClick={handleRequestResetCode} disabled={forgotLoading}>
+                      {forgotLoading ? 'Sending…' : 'Send code'}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="login-forgot-grid">
+                  <div className="login-forgot-field">
+                    <label className="login-label" htmlFor="forgot-code">
+                      Reset code
+                    </label>
+                    <div className="login-input-wrap login-input-wrap--forgot">
+                      <input
+                        id="forgot-code"
+                        type="text"
+                        className="login-input"
+                        value={forgotCode}
+                        onChange={(e) => setForgotCode(e.target.value)}
+                        placeholder="6-digit code"
+                        autoComplete="one-time-code"
+                      />
+                    </div>
+                  </div>
+                  <div className="login-forgot-field">
+                    <label className="login-label" htmlFor="forgot-new-password">
+                      New password
+                    </label>
+                    <div className="login-input-wrap login-input-wrap--forgot">
+                      <input
+                        id="forgot-new-password"
+                        type="password"
+                        className="login-input"
+                        value={forgotNewPassword}
+                        onChange={(e) => setForgotNewPassword(e.target.value)}
+                        placeholder="New password"
+                        autoComplete="new-password"
+                      />
+                    </div>
+                  </div>
+                  <div className="login-forgot-field login-forgot-field--full">
+                    <label className="login-label" htmlFor="forgot-confirm-password">
+                      Confirm password
+                    </label>
+                    <div className="login-input-wrap login-input-wrap--forgot">
+                      <input
+                        id="forgot-confirm-password"
+                        type="password"
+                        className="login-input"
+                        value={forgotConfirmPassword}
+                        onChange={(e) => setForgotConfirmPassword(e.target.value)}
+                        placeholder="Confirm password"
+                        autoComplete="new-password"
+                      />
+                    </div>
+                  </div>
+                </div>
+                <div className="login-forgot-actions">
+                  <button type="button" className="btn btn-primary btn-sm" onClick={handleResetPassword} disabled={forgotLoading}>
+                    {forgotLoading ? 'Resetting…' : 'Reset password'}
+                  </button>
+                </div>
+                {forgotError ? <div className="login-error" role="alert">{forgotError}</div> : null}
+                {forgotMessage ? <div className="login-info" role="status">{forgotMessage}</div> : null}
+              </div>
+            </div>
+          </div>,
+          document.body
+        )}
     </div>
   );
 }

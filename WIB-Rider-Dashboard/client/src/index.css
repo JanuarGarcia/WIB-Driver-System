@@ -10714,6 +10714,19 @@ tr:hover { background: var(--bg-hover) !important; }
   font-family: inherit;
 }
 .login-forgot:hover { color: #b8e09a; text-decoration: underline; }
+.login-forgot-modal-backdrop {
+  z-index: 1300;
+  background: var(--modal-backdrop, rgba(0, 0, 0, 0.6));
+}
+.login-forgot-modal {
+  width: min(560px, calc(100vw - 2rem));
+  max-width: 560px;
+  border-radius: 14px;
+  overflow: hidden;
+}
+.login-forgot-modal-header {
+  border-bottom-color: rgba(168, 208, 141, 0.35);
+}
 .login-forgot-panel {
   margin-top: -0.15rem;
   padding: 1rem;
@@ -10864,6 +10877,10 @@ tr:hover { background: var(--bg-hover) !important; }
   line-height: 1.45;
 }
 @media (max-width: 560px) {
+  .login-forgot-modal {
+    width: calc(100vw - 1rem);
+    max-width: 100%;
+  }
   .login-forgot-grid {
     grid-template-columns: 1fr;
   }
