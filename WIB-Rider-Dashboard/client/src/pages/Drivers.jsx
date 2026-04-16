@@ -56,6 +56,16 @@ function formatStatusTime(isoOrDate) {
   return d.toLocaleTimeString('en-US', { hour12: true, hour: '2-digit', minute: '2-digit', second: '2-digit' });
 }
 
+function complianceBadgeInfo(d) {
+  const required = Number(d?.compliance_required) === 1 || d?.compliance_required === true;
+  const status = String(d?.compliance_status ?? '').toLowerCase().trim();
+  const reason = String(d?.compliance_reason ?? '').toLowerCase().trim();
+  const blocked = required && status === 'not_reported';
+  if (!blocked) return null;
+  const label = reason === 'remittance' ? 'Not Remitted' : 'Not Reported';
+  return { label, title: 'Office compliance required before resuming duty' };
+}
+
 export default function Drivers() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [drivers, setDrivers] = useState([]);
@@ -231,6 +241,38 @@ export default function Drivers() {
         });
       })
       .catch((err) => alert(err?.error || err?.message || 'Update failed'));
+  };
+
+  const setDriverCompliance = async (d, action) => {
+    const id = d.id ?? d.driver_id;
+    if (id == null) return;
+    if (action === 'flag') {
+      const reason = window.prompt('Reason (violation, remittance, other):', 'violation');
+      if (!reason) return;
+      const r = reason.trim().toLowerCase();
+      if (!['violation', 'remittance', 'other'].includes(r)) {
+        alert('Invalid reason. Use: violation, remittance, other.');
+        return;
+      }
+      const note = window.prompt('Optional note (shown to admin only):', '') || '';
+      try {
+        await api(`drivers/${id}/compliance`, { method: 'PUT', body: JSON.stringify({ action: 'flag', reason: r, note, force_off_duty: true }) });
+        fetchDrivers();
+      } catch (err) {
+        alert(err?.error || err?.message || 'Update failed');
+      }
+      return;
+    }
+    if (action === 'clear') {
+      if (!window.confirm('Mark this rider as reported/complied and allow duty?')) return;
+      const note = window.prompt('Optional note:', '') || '';
+      try {
+        await api(`drivers/${id}/compliance`, { method: 'PUT', body: JSON.stringify({ action: 'clear', note }) });
+        fetchDrivers();
+      } catch (err) {
+        alert(err?.error || err?.message || 'Update failed');
+      }
+    }
   };
 
   const toggleDriverSelection = (id) => {
@@ -443,6 +485,7 @@ export default function Drivers() {
                 {paginatedDrivers.map((d) => {
                   const rowId = d.id ?? d.driver_id;
                   const isPending = String(d.status || '').toLowerCase() === 'pending';
+                  const compliance = complianceBadgeInfo(d);
                   return (
                 <tr key={rowId}>
                   <td className="drivers-col-select">
@@ -469,6 +512,11 @@ export default function Drivers() {
                       <span className={`tag ${driverStatusClass(d.status)}`}>
                         {(d.status || 'active').toLowerCase()}
                       </span>
+                      {compliance && (
+                        <span className="tag status-red" title={compliance.title}>
+                          {compliance.label}
+                        </span>
+                      )}
                     </div>
                   </td>
                   <td>
@@ -484,6 +532,12 @@ export default function Drivers() {
                       </button>
                       <button type="button" className="btn btn-sm" onClick={() => setDriverOnDuty(d, !d.on_duty)} title={d.on_duty ? 'Set off duty' : 'Set on duty'}>
                         {d.on_duty ? 'On duty' : 'Off'}
+                      </button>
+                      <button type="button" className="btn btn-sm" onClick={() => setDriverCompliance(d, 'flag')} title="Require office reporting/remittance">
+                        Office hold
+                      </button>
+                      <button type="button" className="btn btn-sm" onClick={() => setDriverCompliance(d, 'clear')} title="Mark as reported/complied">
+                        Clear hold
                       </button>
                       <button type="button" className="btn btn-sm" onClick={() => openEditDriver(d)}>Edit</button>
                       <button type="button" className="btn btn-primary btn-sm" onClick={() => openSendPush(d)} title="Send push">Send push</button>

@@ -27,6 +27,11 @@ const {
 const riderNotificationService = require('../services/riderNotification.service');
 const { milestoneDedupeKeyForErrand, errandCanonicalToMilestoneCategory } = require('../lib/dashboardTimelineNotifyClassify');
 const { fireManganSync, ALLOWED_ACTIONS } = require('../lib/manganDriverSync');
+const {
+  COMPLIANCE_BLOCK_MESSAGE,
+  getDriverCompliance,
+  isComplianceBlocking,
+} = require('../services/officeComplianceService');
 
 async function notifyErrandAdminsIfFreshMilestone(pool, orderId, canonical, payload) {
   if (!payload) return;
@@ -395,6 +400,14 @@ router.post('/GetErrandOrderDetails', validateApiKey, resolveDriver, async (req,
 });
 
 router.post('/AcceptErrandOrder', validateApiKey, resolveDriver, async (req, res) => {
+  try {
+    const compliance = await getDriverCompliance(pool, req.driver.id);
+    if (isComplianceBlocking(compliance)) {
+      return error(res, COMPLIANCE_BLOCK_MESSAGE);
+    }
+  } catch (_) {
+    // allow if compliance storage is unavailable
+  }
   const orderId = parseErrandOrderId(req.body);
   if (!orderId) return error(res, 'order_id required');
   const driverId = req.driver.id;
@@ -449,6 +462,14 @@ router.post('/AcceptErrandOrder', validateApiKey, resolveDriver, async (req, res
 });
 
 router.post('/ChangeErrandOrderStatus', validateApiKey, resolveDriver, async (req, res) => {
+  try {
+    const compliance = await getDriverCompliance(pool, req.driver.id);
+    if (isComplianceBlocking(compliance)) {
+      return error(res, COMPLIANCE_BLOCK_MESSAGE);
+    }
+  } catch (_) {
+    // allow if compliance storage is unavailable
+  }
   const orderId = parseErrandOrderId(req.body);
   if (!orderId) return error(res, 'order_id required');
   const {

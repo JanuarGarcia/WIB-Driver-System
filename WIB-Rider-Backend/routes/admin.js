@@ -69,6 +69,12 @@ const { updateMtOrderStatusIfDeliveryComplete } = require('../lib/mtOrderStatusS
 const { syncMtDriverTaskFromTerminalTimelineHistory } = require('../lib/syncMtDriverTaskFromTimelineDecline');
 const { sendCustomerTaskNotify } = require('../lib/sendCustomerTaskMessage');
 const { resolveMerchantLogoForApi, merchantLogoSearchDirs } = require('../lib/merchantUploadsLogo');
+const {
+  getDriverCompliance,
+  setDriverCompliance,
+  compliancePayloadForDriver,
+  STATUS: OFFICE_COMPLIANCE_STATUS,
+} = require('../services/officeComplianceService');
 
 const ADMIN_SECRET = process.env.ADMIN_SECRET || '';
 
@@ -4449,19 +4455,29 @@ router.get('/drivers', async (req, res) => {
   try {
     let rows;
     // Prefer last_login for status date/time; fall back to date_modified. Support email or email_address.
-    const fullSelect = `d.driver_id AS id, d.username, CONCAT(COALESCE(d.first_name,''), ' ', COALESCE(d.last_name,'')) AS full_name,
+    const baseSelect = `d.driver_id AS id, d.username, CONCAT(COALESCE(d.first_name,''), ' ', COALESCE(d.last_name,'')) AS full_name,
        d.phone, d.on_duty, d.team_id, t.team_name,
        d.email AS email,
        d.device_platform AS device,
        COALESCE(d.transport_description, d.licence_plate, '') AS vehicle,
        COALESCE(NULLIF(TRIM(d.status), ''), 'active') AS status,
        COALESCE(d.last_login, d.date_modified) AS status_updated_at`;
-    const fromClause = `FROM mt_driver d LEFT JOIN mt_driver_team t ON d.team_id = t.team_id`;
+    const selectWithCompliance = `${baseSelect},
+       COALESCE(c.compliance_required, 0) AS compliance_required,
+       COALESCE(c.compliance_status, '${OFFICE_COMPLIANCE_STATUS.REPORTED}') AS compliance_status,
+       c.compliance_reason,
+       c.flagged_at,
+       c.flagged_by_label,
+       c.cleared_at,
+       c.cleared_by_label`;
+    const fromClause = `FROM mt_driver d
+      LEFT JOIN mt_driver_team t ON d.team_id = t.team_id
+      LEFT JOIN mt_driver_office_compliance c ON c.driver_id = d.driver_id`;
     const orderClause = `ORDER BY d.first_name, d.last_name`;
 
     try {
       [rows] = await pool.query(
-        `SELECT ${fullSelect} ${fromClause} ${orderClause}`
+        `SELECT ${selectWithCompliance} ${fromClause} ${orderClause}`
       );
     } catch (colErr) {
       if (colErr.code === 'ER_BAD_FIELD_ERROR') {
@@ -4521,6 +4537,52 @@ router.get('/drivers', async (req, res) => {
   } catch (e) {
     if (e.code === 'ER_NO_SUCH_TABLE' || e.code === 'ER_BAD_FIELD_ERROR') return res.json([]);
     throw e;
+  }
+});
+
+/**
+ * Office compliance gate controls (admin).
+ * Body JSON:
+ *  - { action: "flag", reason: "violation"|"remittance"|"other", note?, force_off_duty? }
+ *  - { action: "clear", note? }
+ */
+router.put('/drivers/:id/compliance', express.json(), async (req, res) => {
+  const driverId = parseInt(req.params.id, 10);
+  if (!Number.isFinite(driverId) || driverId <= 0) return res.status(400).json({ error: 'Invalid driver id' });
+  const action = String(req.body?.action ?? '').trim().toLowerCase();
+  const reason = req.body?.reason != null ? String(req.body.reason).trim().toLowerCase() : null;
+  const note = req.body?.note != null ? String(req.body.note).trim() : null;
+  const forceOffDuty = req.body?.force_off_duty;
+
+  if (action !== 'flag' && action !== 'clear') {
+    return res.status(400).json({ error: 'action required (flag|clear)' });
+  }
+  if (action === 'flag') {
+    if (!reason) return res.status(400).json({ error: 'reason is required' });
+    if (!['violation', 'remittance', 'other'].includes(reason)) {
+      return res.status(400).json({ error: 'Invalid reason (use violation|remittance|other)' });
+    }
+  }
+
+  try {
+    const result = await setDriverCompliance(
+      pool,
+      driverId,
+      {
+        action,
+        reason: action === 'flag' ? reason : null,
+        note,
+        force_off_duty: forceOffDuty !== undefined ? Boolean(forceOffDuty) : true,
+      },
+      { adminUser: req.adminUser }
+    );
+    if (!result.ok) return res.status(400).json({ error: result.error || 'Update failed' });
+    return res.json({ ok: true, compliance: result.state, forced_off_duty: result.forced_off_duty === true });
+  } catch (e) {
+    if (e.code === 'ER_NO_SUCH_TABLE') {
+      return res.status(503).json({ error: 'Compliance tables not migrated. Run WIB-Rider-Backend/sql/2026-04-16_office_compliance_gate.sql' });
+    }
+    return res.status(500).json({ error: e.message || 'Update failed' });
   }
 });
 
@@ -4612,6 +4674,12 @@ router.get('/drivers/:id/details', async (req, res) => {
       location_lng: d.location_lng,
       last_seen: d.last_seen,
     };
+    try {
+      const c = await getDriverCompliance(pool, driverId);
+      driver.compliance = compliancePayloadForDriver(c);
+    } catch (_) {
+      driver.compliance = compliancePayloadForDriver(null);
+    }
 
     const taskSelectAttempts = [
       `SELECT t.task_id, t.task_description, t.status, t.delivery_date, t.delivery_address, t.customer_name,
@@ -4707,6 +4775,12 @@ router.get('/drivers/:id', async (req, res) => {
     if (!rows || !rows.length) return res.status(404).json({ error: 'Driver not found' });
     const driver = rows[0];
     driver.full_name = [driver.first_name, driver.last_name].filter(Boolean).join(' ').trim() || driver.username;
+    try {
+      const c = await getDriverCompliance(pool, driverId);
+      driver.compliance = compliancePayloadForDriver(c);
+    } catch (_) {
+      driver.compliance = compliancePayloadForDriver(null);
+    }
     return res.json(driver);
   } catch (e) {
     if (e.code === 'ER_NO_SUCH_TABLE' || e.code === 'ER_BAD_FIELD_ERROR') {
@@ -4725,23 +4799,116 @@ router.post('/drivers', express.json(), async (req, res) => {
   if (!pwd) return res.status(400).json({ error: 'password required' });
   try {
     const hash = await bcrypt.hash(pwd, 10);
-    const [result] = await pool.query(
-      `INSERT INTO mt_driver (username, password, first_name, last_name, email, phone, team_id, transport_description, status, on_duty)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
-      [
-        user,
-        hash,
-        (first_name || '').toString().trim() || null,
-        (last_name || '').toString().trim() || null,
-        (email || '').toString().trim() || null,
-        (phone || '').toString().trim() || null,
-        team_id != null && team_id !== '' ? parseInt(team_id, 10) : null,
-        (vehicle || '').toString().trim() || null,
-        (status || 'active').toString().trim()
-      ]
-    );
-    const driverId = result.insertId;
-    return res.json({ id: driverId, ok: true });
+    const fn = (first_name || '').toString().trim() || null;
+    const ln = (last_name || '').toString().trim() || null;
+    const em = (email || '').toString().trim() || null;
+    const ph = (phone || '').toString().trim() || null;
+    const tid = team_id != null && team_id !== '' ? parseInt(team_id, 10) : null;
+    const veh = (vehicle || '').toString().trim() || null;
+    const st = (status || 'active').toString().trim().toLowerCase();
+
+    /**
+     * mt_driver schema varies across deployments.
+     * Newer schemas include fields like user_type/user_id/password_bcrypt/date_created/date_modified/enabled_push/is_signup.
+     * Older schemas may not have them. Insert with progressive fallbacks.
+     */
+    const insertAttempts = [
+      // Most complete schema (matches typical mt_driver columns seen in production).
+      {
+        sql: `INSERT INTO mt_driver
+          (user_type, user_id, on_duty, first_name, last_name, email, phone, username, password, password_bcrypt,
+           team_id, transport_type_id, transport_description, licence_plate, color, status,
+           enabled_push, is_signup, date_created, date_modified)
+         VALUES
+          (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+        params: () => [
+          'driver',
+          0,
+          0,
+          fn,
+          ln,
+          em,
+          ph,
+          user,
+          hash,
+          hash,
+          tid,
+          null,
+          veh,
+          null,
+          null,
+          st,
+          1,
+          0,
+        ],
+      },
+      // Same but without password_bcrypt.
+      {
+        sql: `INSERT INTO mt_driver
+          (user_type, user_id, on_duty, first_name, last_name, email, phone, username, password,
+           team_id, transport_type_id, transport_description, licence_plate, color, status,
+           enabled_push, is_signup, date_created, date_modified)
+         VALUES
+          (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+        params: () => [
+          'driver',
+          0,
+          0,
+          fn,
+          ln,
+          em,
+          ph,
+          user,
+          hash,
+          tid,
+          null,
+          veh,
+          null,
+          null,
+          st,
+          1,
+          0,
+        ],
+      },
+      // Without date_created/date_modified (DB defaults may exist).
+      {
+        sql: `INSERT INTO mt_driver
+          (user_type, user_id, on_duty, first_name, last_name, email, phone, username, password,
+           team_id, transport_description, status, enabled_push, is_signup)
+         VALUES
+          (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        params: () => ['driver', 0, 0, fn, ln, em, ph, user, hash, tid, veh, st, 1, 0],
+      },
+      // Minimal-but-still-popular schema (legacy deployments).
+      {
+        sql: `INSERT INTO mt_driver
+          (username, password, first_name, last_name, email, phone, team_id, transport_description, status, on_duty)
+         VALUES
+          (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+        params: () => [user, hash, fn, ln, em, ph, tid, veh, st],
+      },
+      // Absolute minimal (very old schemas).
+      {
+        sql: `INSERT INTO mt_driver (username, password) VALUES (?, ?)`,
+        params: () => [user, hash],
+      },
+    ];
+
+    /** @type {any} */
+    let lastErr = null;
+    for (const attempt of insertAttempts) {
+      try {
+        const [result] = await pool.query(attempt.sql, attempt.params());
+        const driverId = result.insertId;
+        return res.json({ id: driverId, ok: true });
+      } catch (e) {
+        lastErr = e;
+        // Retry only on missing columns; other errors should stop.
+        if (e.code !== 'ER_BAD_FIELD_ERROR') break;
+      }
+    }
+
+    throw lastErr;
   } catch (e) {
     if (e.code === 'ER_DUP_ENTRY') return res.status(400).json({ error: 'Username already exists' });
     if (e.code === 'ER_NO_SUCH_TABLE' || e.code === 'ER_BAD_FIELD_ERROR') {

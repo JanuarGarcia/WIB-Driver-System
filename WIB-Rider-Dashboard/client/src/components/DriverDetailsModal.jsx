@@ -40,6 +40,17 @@ function driverDetailsTaskRowKey(t) {
   return `${src}-${tid}`;
 }
 
+function complianceBlockBadge(driver) {
+  const c = driver?.compliance;
+  if (!c || typeof c !== 'object') return null;
+  const required = Number(c.compliance_required) === 1 || c.compliance_required === true;
+  const status = String(c.compliance_status ?? '').toLowerCase().trim();
+  const reason = String(c.compliance_reason ?? '').toLowerCase().trim();
+  const blocked = required && status === 'not_reported';
+  if (!blocked) return null;
+  return reason === 'remittance' ? 'Not Remitted' : 'Not Reported';
+}
+
 /** Read-only driver details + today's tasks (same UX as Agent panel "Details"). */
 export default function DriverDetailsModal({
   driverId,
@@ -210,6 +221,22 @@ export default function DriverDetailsModal({
                 <div className="agent-driver-details-row">
                   <div className="agent-driver-details-label">App Version :</div>
                   <div className="agent-driver-details-value">{state.driver?.app_version ?? '—'}</div>
+                </div>
+
+                <div className="agent-driver-details-row">
+                  <div className="agent-driver-details-label">Office Compliance :</div>
+                  <div className="agent-driver-details-value">
+                    {(() => {
+                      const badge = complianceBlockBadge(state.driver);
+                      if (!badge) return '—';
+                      const msg = state.driver?.compliance?.compliance_message || 'Office compliance required';
+                      return (
+                        <span className="agent-driver-details-task-status status-red" title={msg}>
+                          {badge}
+                        </span>
+                      );
+                    })()}
+                  </div>
                 </div>
               </div>
 

@@ -12,7 +12,8 @@
     "migrate-client-password-bcrypt": "node -r dotenv/config scripts/add-client-password-bcrypt-column.js",
     "migrate-mt-driver-password-bcrypt": "node -r dotenv/config scripts/add-mt-driver-password-bcrypt-column.js",
     "smoke-driver-login": "node -r dotenv/config scripts/smoke-driver-login.js",
-    "debug-login-db": "node -r dotenv/config scripts/debug-driver-login-db.js"
+    "debug-login-db": "node -r dotenv/config scripts/debug-driver-login-db.js",
+    "test": "jest"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
@@ -23,5 +24,8 @@
     "multer": "^1.4.5-lts.1",
     "mysql2": "^3.6.5",
     "uuid": "^9.0.1"
+  },
+  "devDependencies": {
+    "jest": "^30.0.5"
   }
 }

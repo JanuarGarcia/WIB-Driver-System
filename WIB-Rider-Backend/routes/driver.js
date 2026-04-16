@@ -39,6 +39,13 @@ const { notifyRiderOrderPushAfterTaskStatusFireAndForget } = require('../lib/rid
 const { updateMtOrderStatusIfDeliveryComplete } = require('../lib/mtOrderStatusSync');
 const { buildErrandOrderDetailPayloadForDriver } = require('../lib/errandOrders');
 const { fetchErrandProofsForOrder } = require('../lib/errandProof');
+const {
+  COMPLIANCE_BLOCK_MESSAGE,
+  getDriverCompliance,
+  isComplianceBlocking,
+  compliancePayloadForDriver,
+} = require('../services/officeComplianceService');
+const { subscribeDriverSse } = require('../services/driverRealtime');
 
 const uploadDir = path.join(getUploadsRoot(), 'profiles');
 if (!fs.existsSync(uploadDir)) {
@@ -1349,6 +1356,17 @@ router.post('/GetAppSettings', validateApiKey, optionalDriver, async (req, res) 
   if (mobileApiBase) {
     details.mobile_api_url = mobileApiBase;
   }
+  if (driver) {
+    try {
+      const compliance = await getDriverCompliance(pool, driver.id);
+      Object.assign(details, compliancePayloadForDriver(compliance));
+    } catch (_) {
+      // Backward compatible: if compliance storage is unavailable, do not block app bootstrap.
+      Object.assign(details, compliancePayloadForDriver(null));
+    }
+  } else {
+    Object.assign(details, compliancePayloadForDriver(null));
+  }
   return success(res, details);
 });
 
@@ -1382,6 +1400,16 @@ router.post('/reRegisterDevice', validateApiKey, resolveDriver, async (req, res)
 router.post('/ChangeDutyStatus', validateApiKey, resolveDriver, async (req, res) => {
   const onDuty = parseInt(req.body.on_duty, 10);
   const val = onDuty === 1 ? 1 : 0;
+  if (val === 1) {
+    try {
+      const compliance = await getDriverCompliance(pool, req.driver.id);
+      if (isComplianceBlocking(compliance)) {
+        return error(res, COMPLIANCE_BLOCK_MESSAGE);
+      }
+    } catch (_) {
+      // If compliance table is missing/unavailable, default to allow (backward compatible).
+    }
+  }
   if (val !== 1) {
     const oldUnix = Math.floor(Date.now() / 1000) - 35 * 60;
     try {
@@ -1411,6 +1439,23 @@ router.post('/ChangeDutyStatus', validateApiKey, resolveDriver, async (req, res)
     }
   }
   return success(res, null);
+});
+
+/**
+ * Real-time stream for driver app (SSE).
+ * Client: GET /driver/api/events?api_key=...&token=...
+ * Emits: event=init, event=compliance_update, event=ping
+ */
+router.get('/events', validateApiKey, resolveDriver, async (req, res) => {
+  let initPayload = null;
+  try {
+    const compliance = await getDriverCompliance(pool, req.driver.id);
+    initPayload = { compliance: compliancePayloadForDriver(compliance) };
+  } catch (_) {
+    initPayload = { compliance: compliancePayloadForDriver(null) };
+  }
+  const r = subscribeDriverSse(res, req.driver.id, initPayload);
+  if (!r.ok) return res.status(400).end();
 });
 
 router.post('/UpdateDriverLocation', validateApiKey, resolveDriver, async (req, res) => {
@@ -1648,6 +1693,14 @@ router.post('/NotifyCustomer', validateApiKey, resolveDriver, handleNotifyCustom
 router.post('/notifyCustomer', validateApiKey, resolveDriver, handleNotifyCustomer);
 
 router.post('/ChangeTaskStatus', validateApiKey, resolveDriver, async (req, res) => {
+  try {
+    const compliance = await getDriverCompliance(pool, req.driver.id);
+    if (isComplianceBlocking(compliance)) {
+      return error(res, COMPLIANCE_BLOCK_MESSAGE);
+    }
+  } catch (_) {
+    // allow if compliance storage is unavailable
+  }
   const body = req.body || {};
   const {
     task_id,
@@ -1855,6 +1908,14 @@ router.post('/ChangePassword', validateApiKey, resolveDriver, async (req, res) =
 });
 
 router.post('/joinQueue', validateApiKey, resolveDriver, async (req, res) => {
+  try {
+    const compliance = await getDriverCompliance(pool, req.driver.id);
+    if (isComplianceBlocking(compliance)) {
+      return error(res, COMPLIANCE_BLOCK_MESSAGE);
+    }
+  } catch (_) {
+    // allow if compliance storage is unavailable
+  }
   const [[existing]] = await pool.query('SELECT id FROM mt_driver_queue WHERE driver_id = ? AND left_at IS NULL LIMIT 1', [req.driver.id]);
   if (!existing) {
     await pool.query(
