@@ -1164,11 +1164,65 @@ async function fetchDriverRowsForAgentDashboard(filters) {
       ),
   ];
 
+  async function attachCompliance(rows) {
+    const list = Array.isArray(rows) ? rows : [];
+    if (!list.length) return list;
+    const ids = [...new Set(list.map((r) => Number(r?.driver_id)).filter((n) => Number.isFinite(n) && n > 0))];
+    if (!ids.length) return list;
+    try {
+      const ph = ids.map(() => '?').join(',');
+      const [crows] = await pool.query(
+        `SELECT driver_id,
+                COALESCE(compliance_required, 0) AS compliance_required,
+                COALESCE(compliance_status, '${OFFICE_COMPLIANCE_STATUS.REPORTED}') AS compliance_status,
+                compliance_reason,
+                compliance_note,
+                flagged_at,
+                flagged_by_label,
+                cleared_at,
+                cleared_by_label
+         FROM mt_driver_office_compliance
+         WHERE driver_id IN (${ph})`,
+        ids
+      );
+      const cmap = new Map((crows || []).map((r) => [Number(r.driver_id), r]));
+      return list.map((row) => {
+        const c = cmap.get(Number(row.driver_id));
+        return {
+          ...row,
+          compliance_required: c?.compliance_required ?? 0,
+          compliance_status: c?.compliance_status ?? OFFICE_COMPLIANCE_STATUS.REPORTED,
+          compliance_reason: c?.compliance_reason ?? null,
+          compliance_note: c?.compliance_note ?? null,
+          flagged_at: c?.flagged_at ?? null,
+          flagged_by_label: c?.flagged_by_label ?? null,
+          cleared_at: c?.cleared_at ?? null,
+          cleared_by_label: c?.cleared_by_label ?? null,
+        };
+      });
+    } catch (e) {
+      if (e.code === 'ER_NO_SUCH_TABLE' || e.code === 'ER_BAD_FIELD_ERROR') {
+        return list.map((row) => ({
+          ...row,
+          compliance_required: 0,
+          compliance_status: OFFICE_COMPLIANCE_STATUS.REPORTED,
+          compliance_reason: null,
+          compliance_note: null,
+          flagged_at: null,
+          flagged_by_label: null,
+          cleared_at: null,
+          cleared_by_label: null,
+        }));
+      }
+      throw e;
+    }
+  }
+
   for (const run of queries) {
     try {
       const [r] = await run();
       const rows = r || [];
-      return rows.map((row) => ({
+      const normalized = rows.map((row) => ({
         ...row,
         last_online:
           row.last_online != null
@@ -1177,6 +1231,7 @@ async function fetchDriverRowsForAgentDashboard(filters) {
               ? Math.floor(new Date(row.last_login).getTime() / 1000)
               : null,
       }));
+      return attachCompliance(normalized);
     } catch (e) {
       if (e.code !== 'ER_BAD_FIELD_ERROR' && e.code !== 'ER_NO_SUCH_TABLE') throw e;
     }
@@ -1205,7 +1260,7 @@ async function fetchDriverRowsForAgentDashboard(filters) {
       FROM mt_driver d${where}${orderFallback}`,
       totalParams
     );
-    return (r || []).map((row) => ({
+    const baseRows = (r || []).map((row) => ({
       ...row,
       full_name: [row.first_name, row.last_name].filter(Boolean).join(' ').trim() || null,
       team_name: null,
@@ -1220,6 +1275,7 @@ async function fetchDriverRowsForAgentDashboard(filters) {
       device_type: null,
       last_online: row.last_login ? Math.floor(new Date(row.last_login).getTime() / 1000) : null,
     }));
+    return attachCompliance(baseRows);
   } catch (eLast) {
     if (eLast.code === 'ER_BAD_FIELD_ERROR') {
       const [r2] = await pool.query(
@@ -1228,7 +1284,7 @@ async function fetchDriverRowsForAgentDashboard(filters) {
         FROM mt_driver d${where}${orderFallback}`,
         totalParams
       );
-      return (r2 || []).map((row) => ({
+      const baseRows = (r2 || []).map((row) => ({
         ...row,
         username: null,
         full_name: [row.first_name, row.last_name].filter(Boolean).join(' ').trim() || null,
@@ -1245,6 +1301,7 @@ async function fetchDriverRowsForAgentDashboard(filters) {
         device_type: null,
         last_online: null,
       }));
+      return attachCompliance(baseRows);
     }
     throw eLast;
   }
