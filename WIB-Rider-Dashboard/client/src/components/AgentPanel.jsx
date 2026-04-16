@@ -170,6 +170,25 @@ function normStatus(status) {
 
 const QUEUE_POLL_MS = 8000;
 
+function agentComplianceBadgeInfo(d) {
+  const required = Number(d?.compliance_required) === 1 || d?.compliance_required === true;
+  const status = String(d?.compliance_status ?? '').toLowerCase().trim();
+  const reason = String(d?.compliance_reason ?? '').toLowerCase().trim();
+  const blocked = required && status === 'not_reported';
+  if (!blocked) return null;
+  const label = reason === 'remittance' ? 'Not Remitted' : 'Not Reported';
+  const note = d?.compliance_note != null && String(d.compliance_note).trim() ? String(d.compliance_note).trim() : '';
+  const who = d?.flagged_by_label != null && String(d.flagged_by_label).trim() ? String(d.flagged_by_label).trim() : '';
+  const when = d?.flagged_at ? new Date(d.flagged_at).toLocaleString() : '';
+  const parts = [
+    'Office compliance required before resuming duty.',
+    reason ? `Reason: ${reason}.` : '',
+    note ? `Note: ${note}` : '',
+    who || when ? `Flagged: ${[who, when].filter(Boolean).join(' • ')}` : '',
+  ].filter(Boolean);
+  return { label, title: parts.join('\n') };
+}
+
 function queueAssignTaskLines(t) {
   const orderBits = shortTaskOrderDigits(t.order_id, t.task_id);
   const cust = sanitizeLocationDisplayName(t.customer_name || '') || '—';
@@ -1019,6 +1038,7 @@ const AgentPanel = forwardRef(function AgentPanel(
               const taskCount = d.total_task ?? d.task_count ?? d.assigned_tasks ?? 0;
               const lastSeen = d.last_seen ?? d.last_activity ?? 'Moments ago';
               const device = (d.device ?? d.platform ?? 'android').toString().toLowerCase();
+              const compliance = agentComplianceBadgeInfo(d);
               return (
                 <li
                   key={d.id}
@@ -1046,6 +1066,13 @@ const AgentPanel = forwardRef(function AgentPanel(
                           </>
                         )}
                       </div>
+                      {compliance && (
+                        <div className="agent-active-detail-badges">
+                          <span className="tag status-red agent-compliance-badge" title={compliance.title}>
+                            {compliance.label}
+                          </span>
+                        </div>
+                      )}
                       <div className="agent-detail-card-actions agent-active-detail-actions">
                         <button
                           type="button"
@@ -1090,6 +1117,7 @@ const AgentPanel = forwardRef(function AgentPanel(
               const device = d.device ?? d.platform ?? 'Android';
               const phone = d.phone ? String(d.phone) : null;
               const dutyOn = isOnDuty(d);
+              const compliance = agentComplianceBadgeInfo(d);
               return (
                 <li
                   key={d.id}
@@ -1104,6 +1132,13 @@ const AgentPanel = forwardRef(function AgentPanel(
                       {dutyOn ? 'ON DUTY' : 'OFF DUTY'}
                     </span>
                   </div>
+                  {compliance && (
+                    <div className="agent-detail-card-row agent-detail-card-row--badges">
+                      <span className="tag status-red agent-compliance-badge" title={compliance.title}>
+                        {compliance.label}
+                      </span>
+                    </div>
+                  )}
                   <div className="agent-detail-card-row">Tasks today: {taskCount}</div>
                   <div className={`agent-detail-card-row ${isLostConnection ? 'agent-detail-card-row--lost' : ''}`}>
                     {connectionStatus}

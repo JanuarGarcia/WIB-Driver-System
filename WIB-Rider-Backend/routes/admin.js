@@ -998,8 +998,46 @@ async function fetchDriverRowsForAgentDashboard(filters) {
   const { filterClause, params } = buildAgentDashboardFilterClause(filters);
   const orderClause = ' ORDER BY d.first_name, d.last_name';
   const fromJoin = 'FROM mt_driver d LEFT JOIN mt_driver_team t ON d.team_id = t.team_id';
+  const fromJoinWithCompliance = `${fromJoin} LEFT JOIN mt_driver_office_compliance c ON c.driver_id = d.driver_id`;
 
   const queries = [
+    // Preferred: include office compliance (table may not exist pre-migration).
+    () =>
+      pool.query(
+        `SELECT 
+          d.driver_id,
+          d.username,
+          d.first_name,
+          d.last_name,
+          CONCAT(COALESCE(d.first_name,''), ' ', COALESCE(d.last_name,'')) AS full_name,
+          d.phone,
+          d.on_duty,
+          d.team_id,
+          t.team_name,
+          d.email,
+          COALESCE(d.transport_description, d.licence_plate, '') AS vehicle,
+          COALESCE(NULLIF(TRIM(d.status), ''), 'active') AS status,
+          COALESCE(d.last_login, d.date_modified) AS status_updated_at,
+          d.last_login,
+          d.last_online,
+          d.location_lat,
+          d.location_lng,
+          d.user_type,
+          d.user_id,
+          d.device_platform,
+          d.device_type,
+          COALESCE(c.compliance_required, 0) AS compliance_required,
+          COALESCE(c.compliance_status, '${OFFICE_COMPLIANCE_STATUS.REPORTED}') AS compliance_status,
+          c.compliance_reason,
+          c.compliance_note,
+          c.flagged_at,
+          c.flagged_by_label,
+          c.cleared_at,
+          c.cleared_by_label
+        ${fromJoinWithCompliance}
+        WHERE 1=1${filterClause}${orderClause}`,
+        params
+      ),
     () =>
       pool.query(
         `SELECT 
@@ -1140,7 +1178,7 @@ async function fetchDriverRowsForAgentDashboard(filters) {
               : null,
       }));
     } catch (e) {
-      if (e.code !== 'ER_BAD_FIELD_ERROR') throw e;
+      if (e.code !== 'ER_BAD_FIELD_ERROR' && e.code !== 'ER_NO_SUCH_TABLE') throw e;
     }
   }
 
@@ -1267,6 +1305,14 @@ function mapDriverRowToAgentDriver(r, dateOnly, trackingType, taskCountByDriver,
     total_task: taskCountByDriver[r.driver_id] ?? 0,
     device: r.device_platform || r.device_type || null,
     platform: (r.device_platform || r.device_type || 'android').toString().toLowerCase(),
+    compliance_required: r.compliance_required ?? 0,
+    compliance_status: r.compliance_status ?? OFFICE_COMPLIANCE_STATUS.REPORTED,
+    compliance_reason: r.compliance_reason ?? null,
+    compliance_note: r.compliance_note ?? null,
+    flagged_at: r.flagged_at ?? null,
+    flagged_by_label: r.flagged_by_label ?? null,
+    cleared_at: r.cleared_at ?? null,
+    cleared_by_label: r.cleared_by_label ?? null,
   };
   if (r.driver_source === 'errand') out.driver_source = 'errand';
   return out;
@@ -4466,6 +4512,7 @@ router.get('/drivers', async (req, res) => {
        COALESCE(c.compliance_required, 0) AS compliance_required,
        COALESCE(c.compliance_status, '${OFFICE_COMPLIANCE_STATUS.REPORTED}') AS compliance_status,
        c.compliance_reason,
+       c.compliance_note,
        c.flagged_at,
        c.flagged_by_label,
        c.cleared_at,

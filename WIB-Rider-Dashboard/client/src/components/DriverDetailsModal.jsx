@@ -51,6 +51,21 @@ function complianceBlockBadge(driver) {
   return reason === 'remittance' ? 'Not Remitted' : 'Not Reported';
 }
 
+function formatDateTimeDisplay(v) {
+  if (!v) return '—';
+  const d = new Date(v);
+  if (Number.isNaN(d.getTime())) return '—';
+  return d.toLocaleString();
+}
+
+function complianceReasonLabel(reasonRaw) {
+  const r = String(reasonRaw ?? '').trim().toLowerCase();
+  if (r === 'violation') return 'Violation';
+  if (r === 'remittance') return 'Remittance';
+  if (r === 'other') return 'Other';
+  return r ? r : '—';
+}
+
 /** Read-only driver details + today's tasks (same UX as Agent panel "Details"). */
 export default function DriverDetailsModal({
   driverId,
@@ -228,13 +243,62 @@ export default function DriverDetailsModal({
                   <div className="agent-driver-details-value">
                     {(() => {
                       const badge = complianceBlockBadge(state.driver);
+                      const c = state.driver?.compliance;
                       if (!badge) return '—';
-                      const msg = state.driver?.compliance?.compliance_message || 'Office compliance required';
+                      const msg =
+                        c?.compliance_message ||
+                        (c?.compliance_note && String(c.compliance_note).trim()
+                          ? `Office compliance required.\nNote: ${String(c.compliance_note).trim()}`
+                          : 'Office compliance required');
                       return (
                         <span className="agent-driver-details-task-status status-red" title={msg}>
                           {badge}
                         </span>
                       );
+                    })()}
+                  </div>
+                </div>
+
+                <div className="agent-driver-details-row">
+                  <div className="agent-driver-details-label">Compliance Reason :</div>
+                  <div className="agent-driver-details-value">
+                    {complianceReasonLabel(state.driver?.compliance?.compliance_reason)}
+                  </div>
+                </div>
+
+                <div className="agent-driver-details-row">
+                  <div className="agent-driver-details-label">Admin Note :</div>
+                  <div className="agent-driver-details-value">
+                    {(() => {
+                      const note = state.driver?.compliance?.compliance_note;
+                      const s = note != null ? String(note).trim() : '';
+                      return s ? s : '—';
+                    })()}
+                  </div>
+                </div>
+
+                <div className="agent-driver-details-row">
+                  <div className="agent-driver-details-label">Flagged :</div>
+                  <div className="agent-driver-details-value">
+                    {(() => {
+                      const c = state.driver?.compliance;
+                      const who = c?.flagged_by ? String(c.flagged_by).trim() : '';
+                      const when = formatDateTimeDisplay(c?.flagged_at);
+                      if (!who && when === '—') return '—';
+                      return [who, when !== '—' ? when : ''].filter(Boolean).join(' • ') || '—';
+                    })()}
+                  </div>
+                </div>
+
+                <div className="agent-driver-details-row">
+                  <div className="agent-driver-details-label">Cleared :</div>
+                  <div className="agent-driver-details-value">
+                    {(() => {
+                      const c = state.driver?.compliance;
+                      const who = c?.cleared_by ? String(c.cleared_by).trim() : '';
+                      const when = formatDateTimeDisplay(c?.cleared_at);
+                      if (!who && when === '—') return '—';
+                      return [who, when !== '—' ? when : ''].filter(Boolean).join(' • ') || '—';
                     })()}
                   </div>
                 </div>

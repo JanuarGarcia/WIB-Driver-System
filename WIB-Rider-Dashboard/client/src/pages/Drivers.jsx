@@ -8,6 +8,7 @@ import TablePaginationControls from '../components/TablePaginationControls';
 import TableSortControls from '../components/TableSortControls';
 import DriverDetailsModal from '../components/DriverDetailsModal';
 import SendPushModal from '../components/SendPushModal';
+import OfficeHoldModal from '../components/OfficeHoldModal';
 
 const STATUS_FILTERS = [
   { id: 'all', label: 'All' },
@@ -63,7 +64,16 @@ function complianceBadgeInfo(d) {
   const blocked = required && status === 'not_reported';
   if (!blocked) return null;
   const label = reason === 'remittance' ? 'Not Remitted' : 'Not Reported';
-  return { label, title: 'Office compliance required before resuming duty' };
+  const note = d?.compliance_note != null && String(d.compliance_note).trim() ? String(d.compliance_note).trim() : '';
+  const who = d?.flagged_by_label != null && String(d.flagged_by_label).trim() ? String(d.flagged_by_label).trim() : '';
+  const when = d?.flagged_at ? new Date(d.flagged_at).toLocaleString() : '';
+  const parts = [
+    'Office compliance required before resuming duty.',
+    reason ? `Reason: ${reason}.` : '',
+    note ? `Note: ${note}` : '',
+    who || when ? `Flagged: ${[who, when].filter(Boolean).join(' • ')}` : '',
+  ].filter(Boolean);
+  return { label, title: parts.join('\n') };
 }
 
 export default function Drivers() {
@@ -90,6 +100,8 @@ export default function Drivers() {
   const [bulkPushSending, setBulkPushSending] = useState(false);
   /** Row object for read-only details modal (same as Agent panel Details) */
   const [viewDriver, setViewDriver] = useState(null);
+  const [officeHoldModal, setOfficeHoldModal] = useState(null); // { action: 'flag'|'clear', driver: { id, label } }
+  const [officeHoldSaving, setOfficeHoldSaving] = useState(false);
 
   const setStatusFilter = (id) => {
     setSearchParams((prev) => {
@@ -246,33 +258,8 @@ export default function Drivers() {
   const setDriverCompliance = async (d, action) => {
     const id = d.id ?? d.driver_id;
     if (id == null) return;
-    if (action === 'flag') {
-      const reason = window.prompt('Reason (violation, remittance, other):', 'violation');
-      if (!reason) return;
-      const r = reason.trim().toLowerCase();
-      if (!['violation', 'remittance', 'other'].includes(r)) {
-        alert('Invalid reason. Use: violation, remittance, other.');
-        return;
-      }
-      const note = window.prompt('Optional note (shown to admin only):', '') || '';
-      try {
-        await api(`drivers/${id}/compliance`, { method: 'PUT', body: JSON.stringify({ action: 'flag', reason: r, note, force_off_duty: true }) });
-        fetchDrivers();
-      } catch (err) {
-        alert(err?.error || err?.message || 'Update failed');
-      }
-      return;
-    }
-    if (action === 'clear') {
-      if (!window.confirm('Mark this rider as reported/complied and allow duty?')) return;
-      const note = window.prompt('Optional note:', '') || '';
-      try {
-        await api(`drivers/${id}/compliance`, { method: 'PUT', body: JSON.stringify({ action: 'clear', note }) });
-        fetchDrivers();
-      } catch (err) {
-        alert(err?.error || err?.message || 'Update failed');
-      }
-    }
+    const label = d.full_name || d.username || `Driver #${id}`;
+    setOfficeHoldModal({ action: action === 'clear' ? 'clear' : 'flag', driver: { id, label } });
   };
 
   const toggleDriverSelection = (id) => {
@@ -710,6 +697,28 @@ export default function Drivers() {
             : ''
         }
         onClose={() => setPushDriver(null)}
+      />
+
+      <OfficeHoldModal
+        open={!!officeHoldModal}
+        action={officeHoldModal?.action}
+        driverLabel={officeHoldModal?.driver?.label || ''}
+        submitting={officeHoldSaving}
+        onClose={() => !officeHoldSaving && setOfficeHoldModal(null)}
+        onSubmit={async (payload) => {
+          const id = officeHoldModal?.driver?.id;
+          if (id == null) return;
+          setOfficeHoldSaving(true);
+          try {
+            await api(`drivers/${id}/compliance`, { method: 'PUT', body: JSON.stringify(payload) });
+            setOfficeHoldModal(null);
+            fetchDrivers();
+          } catch (err) {
+            alert(err?.error || err?.message || 'Update failed');
+          } finally {
+            setOfficeHoldSaving(false);
+          }
+        }}
       />
 
       {bulkPushOpen && (

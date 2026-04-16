@@ -3551,6 +3551,18 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
   width: 20px;
   height: 20px;
 }
+
+/* Agent panel compliance badge */
+.agent-compliance-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+.agent-active-detail-badges { margin-top: 0.35rem; }
+.agent-detail-card-row--badges { margin-top: 0.25rem; }
 .panel.tasks-panel .panel-filters { background: #ebebe8; border-bottom: 1px solid var(--border-soft); }
 
 /* Stats bar (Unassigned | Assigned | Started | In progress | Completed / Active | Offline | Total) – professional */
@@ -9049,6 +9061,39 @@ tr:hover { background: var(--bg-hover) !important; }
   border-top: 1px solid var(--border-soft);
   gap: 0.75rem;
 }
+
+/* Office hold / clear hold modal (reuses send-push modal layout) */
+.office-hold-modal { max-width: 520px; }
+.office-hold-modal-header--flag { border-bottom-color: var(--color-danger); }
+.office-hold-modal-header--clear { border-bottom-color: var(--color-success, #16a34a); }
+.office-hold-reason-row { display: flex; align-items: center; gap: 0.65rem; }
+.office-hold-reason-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.35rem 0.6rem;
+  border-radius: 999px;
+  border: 1px solid var(--border-soft);
+  background: var(--bg-elevated);
+  color: var(--text-dark);
+  font-size: 0.8rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.office-hold-help { margin-top: 0.35rem; }
+.office-hold-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  user-select: none;
+}
+.office-hold-checkbox input { width: 16px; height: 16px; }
+.office-hold-submit--flag.btn-primary { background: var(--color-danger); border-color: var(--color-danger); }
+.office-hold-submit--flag.btn-primary:hover:not(:disabled) { filter: brightness(1.05); }
+.office-hold-submit--clear.btn-primary {
+  background: var(--color-success, #16a34a);
+  border-color: var(--color-success, #16a34a);
+}
+.office-hold-submit--clear.btn-primary:hover:not(:disabled) { filter: brightness(1.05); }
 .send-push-submit { font-weight: 500; padding: 0.5rem 1rem; }
 .send-push-cancel {
   background: transparent;
