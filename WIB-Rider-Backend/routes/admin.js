@@ -59,6 +59,7 @@ const {
 const {
   notifyCustomerRiderAssignedForFoodTaskFireAndForget,
   notifyCustomerFoodTaskStatusPushFireAndForget,
+  diagnoseCustomerDispatchConfig,
 } = require('../lib/customerOrderPushDispatch');
 const {
   notifyRiderOrderPushAfterAdminAssignFireAndForget,
@@ -417,6 +418,22 @@ router.get('/merchants/public-logo/:filename', (req, res) => {
 });
 
 router.use(adminAuth);
+
+/**
+ * Diagnostics: show effective customer dispatch configuration without secrets.
+ * Auth: header `x-admin-key: <ADMIN_SECRET>` (or valid x-dashboard-token).
+ */
+router.get('/internal/diag/customer-dispatch', (req, res) => {
+  if (!ADMIN_SECRET) {
+    return res.status(503).json({ error: 'ADMIN_SECRET is not configured on this server' });
+  }
+  const diag = diagnoseCustomerDispatchConfig();
+  return res.json({
+    ok: true,
+    node_env: process.env.NODE_ENV || null,
+    ...diag,
+  });
+});
 
 /**
  * Server-to-server: legacy Yii/PHP (or any backend) after it updates driver_task / order_history.

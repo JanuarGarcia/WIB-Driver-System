@@ -190,11 +190,44 @@ function customerDispatchOrderUrl(baseUrl) {
 }
 
 function getCustomerDispatchConfig() {
-  const baseUrl = String(process.env.CUSTOMER_API_BASE_URL || process.env.WIBEATS_API_BASE_URL || '')
+  const customerRaw = process.env.CUSTOMER_API_BASE_URL;
+  const legacyRaw = process.env.WIBEATS_API_BASE_URL;
+  const pickedRaw = customerRaw != null && String(customerRaw).trim() !== '' ? customerRaw : legacyRaw;
+
+  const baseUrl = String(pickedRaw || '')
     .trim()
     .replace(/\/+$/, '');
+
+  const baseUrlSource =
+    customerRaw != null && String(customerRaw).trim() !== ''
+      ? 'CUSTOMER_API_BASE_URL'
+      : legacyRaw != null && String(legacyRaw).trim() !== ''
+        ? 'WIBEATS_API_BASE_URL'
+        : 'none';
+
   const secret = trimEnvSecret(process.env.PUSH_DISPATCH_SECRET);
-  return { baseUrl, secret, ok: Boolean(baseUrl && secret) };
+  const hasSecret = Boolean(secret && String(secret).trim());
+
+  const ok = Boolean(baseUrl && hasSecret);
+  const reason = !baseUrl ? 'missing_base_url' : !hasSecret ? 'missing_secret' : null;
+
+  return { baseUrl, baseUrlSource, secret, hasSecret, ok, reason };
+}
+
+/**
+ * Diagnostics helper for production: returns *effective* config without exposing secrets.
+ * @returns {{ baseUrl: string, baseUrlSource: string, ok: boolean, reason: string|null, hasSecret: boolean, dispatchUrl: string }}
+ */
+function diagnoseCustomerDispatchConfig() {
+  const cfg = getCustomerDispatchConfig();
+  return {
+    baseUrl: cfg.baseUrl,
+    baseUrlSource: cfg.baseUrlSource,
+    ok: cfg.ok,
+    reason: cfg.reason,
+    hasSecret: cfg.hasSecret,
+    dispatchUrl: customerDispatchOrderUrl(cfg.baseUrl),
+  };
 }
 
 /**
@@ -243,8 +276,16 @@ function interpretCustomerDispatchResponseBody(text) {
  * @returns {Promise<{ ok?: boolean, skipped?: string, status?: number, body?: string, error?: string, httpOk?: boolean, fcmSent?: number|null, customerSkipped?: string|null }>}
  */
 async function postCustomerDispatchOrder({ clientId, orderId, title, message }) {
-  const { baseUrl, secret, ok } = getCustomerDispatchConfig();
-  if (!ok) return { skipped: 'not_configured' };
+  const { baseUrl, baseUrlSource, secret, ok, reason } = getCustomerDispatchConfig();
+  if (!ok) {
+    return {
+      ok: false,
+      skipped: reason || 'not_configured',
+      baseUrl,
+      baseUrlSource,
+      dispatchUrl: customerDispatchOrderUrl(baseUrl),
+    };
+  }
 
   const oid = parseInt(String(orderId), 10);
   const cid = parseInt(String(clientId), 10);
@@ -275,7 +316,7 @@ async function postCustomerDispatchOrder({ clientId, orderId, title, message }) 
     });
     const text = await res.text();
     if (!res.ok) {
-      return { ok: false, status: res.status, body: text, httpOk: false };
+      return { ok: false, status: res.status, body: text, httpOk: false, baseUrl, baseUrlSource, dispatchUrl: url };
     }
     const interp = interpretCustomerDispatchResponseBody(text);
     return {
@@ -285,10 +326,13 @@ async function postCustomerDispatchOrder({ clientId, orderId, title, message }) 
       httpOk: true,
       fcmSent: interp.fcmSent,
       customerSkipped: interp.customerSkipped,
+      baseUrl,
+      baseUrlSource,
+      dispatchUrl: url,
     };
   } catch (e) {
     const msg = e && e.name === 'AbortError' ? 'timeout' : e.message || String(e);
-    return { ok: false, error: msg };
+    return { ok: false, error: msg, baseUrl, baseUrlSource, dispatchUrl: url };
   } finally {
     clearTimeout(timeout);
   }
@@ -353,6 +397,10 @@ async function recordDispatchOrderPushLog(pool, meta) {
       order_id: orderId,
       task_id: taskId,
       push: pushKind,
+      base_url: dispatchResult.baseUrl ?? null,
+      base_url_source: dispatchResult.baseUrlSource ?? null,
+      dispatch_url: dispatchResult.dispatchUrl ?? null,
+      skipped: dispatchResult.skipped ?? null,
       http_status: dispatchResult.status ?? null,
       http_ok: dispatchResult.httpOk === true,
       ok,
@@ -399,7 +447,8 @@ function notifyCustomerRiderAssignedForFoodTaskFireAndForget(pool, ctx) {
   const oid = ctx.orderId != null ? parseInt(String(ctx.orderId), 10) : NaN;
   if (!Number.isFinite(oid) || oid <= 0) return;
 
-  if (!getCustomerDispatchConfig().ok) return;
+  const cfg = getCustomerDispatchConfig();
+  if (!cfg.baseUrl) return;
 
   (async () => {
     const logBase = { task_id: taskId, order_id: oid, push: 'rider_assigned', prev_driver_id: prevId, new_driver_id: nextId };
@@ -413,7 +462,6 @@ function notifyCustomerRiderAssignedForFoodTaskFireAndForget(pool, ctx) {
         title: COPY_RIDER_ASSIGNED.title,
         message: COPY_RIDER_ASSIGNED.message,
       });
-      if (result.skipped) return;
       if (!result.ok) logDispatchFailure(logBase, clientId, result);
       await recordDispatchOrderPushLog(pool, {
         clientId,
@@ -466,7 +514,8 @@ function notifyCustomerFoodTaskStatusPushFireAndForget(pool, ctx) {
   const oid = ctx.orderId != null ? parseInt(String(ctx.orderId), 10) : NaN;
   if (!Number.isFinite(oid) || oid <= 0) return;
 
-  if (!getCustomerDispatchConfig().ok) return;
+  const cfg = getCustomerDispatchConfig();
+  if (!cfg.baseUrl) return;
 
   const copy =
     pushKind === 'acknowledged'
@@ -491,7 +540,6 @@ function notifyCustomerFoodTaskStatusPushFireAndForget(pool, ctx) {
         title: copy.title,
         message: copy.message,
       });
-      if (result.skipped) return;
       if (!result.ok) logDispatchFailure(logBase, clientId, result);
       await recordDispatchOrderPushLog(pool, {
         clientId,
@@ -521,4 +569,5 @@ module.exports = {
   statusImpliesStarted,
   statusImpliesInProgress,
   statusImpliesComplete,
+  diagnoseCustomerDispatchConfig,
 };
