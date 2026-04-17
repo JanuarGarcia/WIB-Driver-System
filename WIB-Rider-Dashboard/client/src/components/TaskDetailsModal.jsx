@@ -360,6 +360,44 @@ function getMerchantPickupCoords(merchant) {
   return { lat: la, lng: ln };
 }
 
+/** Status keys for cancel / fail / decline / drop — rider reason is required server-side for these. */
+const RIDER_NEGATIVE_REASON_STATUSES = new Set([
+  'cancelled',
+  'canceled',
+  'failed',
+  'declined',
+  'rejected',
+  'unassigned',
+]);
+
+/**
+ * Latest history row: negative outcome + remarks (rider reason). Errand rows omit update_by_type.
+ * @param {unknown[]} historyRows
+ * @param {boolean} isErrand
+ * @returns {{ statusLabel: string, remarks: string, dateCreated: unknown } | null}
+ */
+function pickLatestRiderNegativeReasonFromHistory(historyRows, isErrand) {
+  const rows = Array.isArray(historyRows) ? [...historyRows] : [];
+  rows.sort((a, b) => {
+    const ta = a?.date_created ? new Date(a.date_created).getTime() : 0;
+    const tb = b?.date_created ? new Date(b.date_created).getTime() : 0;
+    if (ta !== tb) return tb - ta;
+    return Number(b?.id ?? 0) - Number(a?.id ?? 0);
+  });
+  for (const row of rows) {
+    if (!row || typeof row !== 'object') continue;
+    const by = String(row.update_by_type || '').toLowerCase();
+    if (!isErrand && by !== 'driver') continue;
+    const st = normalizeTimelineStatusKey(row.status || row.description || '');
+    if (!st || !RIDER_NEGATIVE_REASON_STATUSES.has(st)) continue;
+    const rem = String(row.remarks ?? row.reason ?? row.notes ?? '').trim();
+    if (!rem) continue;
+    const label = String(row.status || row.description || st).trim() || st;
+    return { statusLabel: label, remarks: rem, dateCreated: row.date_created };
+  }
+  return null;
+}
+
 function timelineHistoryBadgeLabel(entry) {
   return String(entry?.status ?? entry?.description ?? '').trim() || '—';
 }
@@ -1404,6 +1442,18 @@ export default function TaskDetailsModal({
             : [];
     return enrichErrandOrderDetailsFromTimelineRemarks(raw, hist, isErrandTask);
   }, [data?.order_details, data?.order_history, data?.mt_order_history, orderHistory, isErrandTask]);
+
+  const riderNegativeReasonHighlight = useMemo(() => {
+    const hist =
+      Array.isArray(orderHistory) && orderHistory.length > 0
+        ? orderHistory
+        : Array.isArray(data?.order_history)
+          ? data.order_history
+          : Array.isArray(data?.mt_order_history)
+            ? data.mt_order_history
+            : [];
+    return pickLatestRiderNegativeReasonFromHistory(hist, isErrandTask);
+  }, [orderHistory, data?.order_history, data?.mt_order_history, isErrandTask]);
   const taskManagementDisplayId = (() => {
     if (isErrandTask) {
       if (task?.st_order_id != null) return task.st_order_id;
@@ -1677,6 +1727,16 @@ export default function TaskDetailsModal({
                           <span className="task-detail-label">Status</span>
                           <span className={`task-detail-status-badge ${statusDisplayClass(task.status)}`}>{task.status ?? '—'}</span>
                         </div>
+                        {riderNegativeReasonHighlight ? (
+                          <div className="task-detail-rider-reason" role="status">
+                            <div className="task-detail-rider-reason-title">
+                              Rider reason · {displaySanitized(riderNegativeReasonHighlight.statusLabel) || riderNegativeReasonHighlight.statusLabel}
+                            </div>
+                            <div className="task-detail-rider-reason-body">
+                              {displaySanitized(riderNegativeReasonHighlight.remarks) || riderNegativeReasonHighlight.remarks}
+                            </div>
+                          </div>
+                        ) : null}
                         <div className="task-detail-row">
                           <span className="task-detail-label">Transaction type</span>
                           <span className="task-detail-value">{order?.trans_type ?? task.trans_type ?? '—'}</span>

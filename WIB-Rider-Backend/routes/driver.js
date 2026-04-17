@@ -23,10 +23,18 @@ const {
   buildTaskProofImageUrl,
   insertDriverTaskPhotoRow,
   deleteDriverTaskProofSlot,
+  selectDriverTaskProofFileNames,
   parseProofTypeParam,
   defaultProofTypeWhenOmitted,
   inferProofTypeFromFileGroups,
+  sanitizeTaskProofFileName,
+  taskStatusAllowsProofReceipt,
+  taskStatusAllowsProofDelivery,
 } = require('../lib/taskProof');
+const {
+  foodTaskStatusRequiresRiderReason,
+  validateRiderOutcomeReason,
+} = require('../lib/riderOutcomeReason');
 const { fetchDriverMergedOrderHistory } = require('../lib/driverOrderHistory');
 const { enrichOrderDetailsWithSubcategoryAddons } = require('../lib/orderDetailAddons');
 const { attachOrderDetailCategories } = require('../lib/orderDetailCategories');
@@ -81,26 +89,6 @@ const taskProofUpload = multer({
     }
   },
 });
-
-function normalizeTaskStatusKeyForProof(s) {
-  return String(s || '')
-    .toLowerCase()
-    .trim()
-    .replace(/\s+/g, '')
-    .replace(/_/g, '');
-}
-
-/** Receipt / merchant proof: not once the task is finished or cancelled. */
-function taskStatusAllowsProofReceipt(statusRaw) {
-  const k = normalizeTaskStatusKeyForProof(statusRaw);
-  const blocked = ['successful', 'completed', 'delivered', 'cancelled', 'failed', 'declined'];
-  return !blocked.includes(k);
-}
-
-/** Delivery proof: same gate — must be before terminal delivery state. */
-function taskStatusAllowsProofDelivery(statusRaw) {
-  return taskStatusAllowsProofReceipt(statusRaw);
-}
 
 /** Remove multer temp file when auth middleware responds with code 2 (invalid key/token). */
 function cleanupUploadOnAuthError(req, res, next) {
@@ -1040,6 +1028,8 @@ async function enrichRiderTaskDetails(pool, taskRow) {
   details.order_status_list = orderHistoryForDriver;
   details.order_status_history = orderHistoryForDriver;
 
+  details.proof_editable = taskStatusAllowsProofReceipt(details.status);
+
   return details;
 }
 
@@ -1610,6 +1600,8 @@ async function tryErrandTaskDetailsForGetTaskDetails(errandPool, mainPool, order
   }));
   details.task_photos = taskPhotos;
   details.proof_images = proofs.map((p) => p.proof_url).filter(Boolean);
+  const st = details.delivery_status ?? details.status ?? details.deliveryStatus;
+  details.proof_editable = taskStatusAllowsProofReceipt(st);
   return details;
 }
 
@@ -1737,6 +1729,13 @@ router.post('/ChangeTaskStatus', validateApiKey, resolveDriver, async (req, res)
     return error(res, 'Task not found or not assigned to you');
   }
 
+  let driverReasonForHistory = reason != null && String(reason).trim() ? String(reason).trim() : '';
+  if (foodTaskStatusRequiresRiderReason(status)) {
+    const vr = validateRiderOutcomeReason(reason);
+    if (!vr.ok) return error(res, vr.error);
+    driverReasonForHistory = vr.reason;
+  }
+
   const settings = await getDriverSettingsMap();
   const policy = settings.allow_task_successful_when || 'picture_proof';
   const requiresProof = policy === 'picture_proof' && (status === 'successful' || status === 'delivered');
@@ -1793,7 +1792,7 @@ router.post('/ChangeTaskStatus', validateApiKey, resolveDriver, async (req, res)
 
   let historyInsertId = null;
   try {
-    const remarks = reason != null && String(reason).trim() ? String(reason).trim() : '';
+    const remarks = driverReasonForHistory;
     const latRaw = latitude ?? lat;
     const lngRaw = longitude ?? lng;
     const geoLat = latRaw != null && String(latRaw).trim() !== '' ? parseFloat(latRaw) : NaN;
@@ -1816,7 +1815,7 @@ router.post('/ChangeTaskStatus', validateApiKey, resolveDriver, async (req, res)
 
   try {
     const actor = formatActorFromDriver(req.driver);
-    const remarksForClassify = reason != null && String(reason).trim() ? String(reason).trim() : '';
+    const remarksForClassify = driverReasonForHistory;
     await notifyDashboardAfterMtTaskHistoryRow(pool, {
       taskId: tid,
       orderId: task.order_id,
@@ -2164,6 +2163,55 @@ router.post(
     next();
   }
 );
+
+/**
+ * Clear proof of receipt or delivery while the task is still active (same status gate as UploadTaskProof).
+ * Body: task_id, proof_type=receipt|delivery (JSON or form fields).
+ */
+router.post('/DeleteTaskProof', validateApiKey, resolveDriver, async (req, res) => {
+  const body = req.body || {};
+  const tid = parseInt(body.task_id ?? body.taskId ?? body.task_id, 10);
+  const parsedPt = parseProofTypeParam(body.proof_type ?? body.proofType);
+  if (!tid) return error(res, 'task_id required');
+  if (parsedPt == null) return error(res, 'proof_type required (receipt or delivery)');
+  const [[task]] = await pool.query(
+    'SELECT task_id, order_id, driver_id, status FROM mt_driver_task WHERE task_id = ? LIMIT 1',
+    [tid]
+  );
+  if (!task || task.driver_id !== req.driver.id) {
+    return error(res, 'Task not found or not assigned to you');
+  }
+  if (!taskStatusAllowsProofReceipt(task.status)) {
+    return error(res, 'Proof cannot be removed or replaced for this task status');
+  }
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+    const names = await selectDriverTaskProofFileNames(conn, tid, parsedPt);
+    await deleteDriverTaskProofSlot(conn, tid, parsedPt);
+    await conn.commit();
+    const uploadsRoot = getUploadsRoot();
+    const extraDirs = [path.join(uploadsRoot, 'task_photos'), path.join(uploadsRoot, 'driver')];
+    for (const n of names) {
+      const base = sanitizeTaskProofFileName(n);
+      if (!base) continue;
+      const tryPaths = [path.join(taskProofDir, base), ...extraDirs.map((d) => path.join(d, base))];
+      for (const full of tryPaths) {
+        try {
+          if (fs.existsSync(full)) fs.unlinkSync(full);
+        } catch (_) {}
+      }
+    }
+    return success(res, { ok: true, task_id: tid, proof_type: parsedPt });
+  } catch (e) {
+    try {
+      await conn.rollback();
+    } catch (_) {}
+    return error(res, e.message || 'Failed to delete proof');
+  } finally {
+    conn.release();
+  }
+});
 
 // Log map API usage to mt_driver_mapsapicall (map_provider, api_functions, api_response, date_created, date_call, ip_address)
 router.post('/LogMapApiCall', validateApiKey, optionalDriver, async (req, res) => {

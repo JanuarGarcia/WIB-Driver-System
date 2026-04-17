@@ -4,6 +4,44 @@ const PUBLIC_BASE_URL = (process.env.BASE_URL || '').replace(/\/$/, '');
 
 /** @typedef {'receipt'|'delivery'} TaskProofKind */
 
+/**
+ * Normalize task / order status for proof + terminal checks (matches driver.js legacy helper).
+ * @param {unknown} s
+ * @returns {string}
+ */
+function normalizeTaskStatusKeyForProof(s) {
+  return String(s || '')
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, '')
+    .replace(/_/g, '');
+}
+
+/** Receipt / delivery uploads blocked once delivery is done or the job is closed negatively. */
+const PROOF_UPLOAD_BLOCKED_STATUS_KEYS = new Set([
+  'successful',
+  'completed',
+  'delivered',
+  'cancelled',
+  'canceled',
+  'failed',
+  'declined',
+]);
+
+/**
+ * @param {unknown} statusRaw
+ * @returns {boolean}
+ */
+function taskStatusAllowsProofReceipt(statusRaw) {
+  const k = normalizeTaskStatusKeyForProof(statusRaw);
+  return !PROOF_UPLOAD_BLOCKED_STATUS_KEYS.has(k);
+}
+
+/** Delivery proof: same gate as receipt (rider may replace either until terminal). */
+function taskStatusAllowsProofDelivery(statusRaw) {
+  return taskStatusAllowsProofReceipt(statusRaw);
+}
+
 const VALID_PROOF_TYPES = new Set(['receipt', 'delivery']);
 
 /**
@@ -226,15 +264,47 @@ async function deleteDriverTaskProofSlot(executor, taskId, proofKind) {
     if (kind === 'receipt') {
       await executor.query('DELETE FROM mt_driver_task_photo WHERE task_id = ? AND proof_type = ?', [taskId, 'receipt']);
     } else {
-      await executor.query('DELETE FROM mt_driver_task_photo WHERE task_id = ? AND proof_type = ?', [
-        taskId,
-        'delivery',
-      ]);
+      await executor.query(
+        'DELETE FROM mt_driver_task_photo WHERE task_id = ? AND (proof_type = ? OR proof_type IS NULL)',
+        [taskId, 'delivery']
+      );
     }
   } catch (e) {
     if (e.code === 'ER_BAD_FIELD_ERROR') {
       /* Column proof_type missing — legacy DB keeps multiple rows; do not delete. */
       return;
+    }
+    throw e;
+  }
+}
+
+/**
+ * Photo basenames to unlink before `deleteDriverTaskProofSlot` (delivery includes legacy NULL proof_type).
+ * @param {import('mysql2/promise').Pool|import('mysql2/promise').PoolConnection} executor
+ * @param {number} taskId
+ * @param {'receipt'|'delivery'} proofKind
+ * @returns {Promise<string[]>}
+ */
+async function selectDriverTaskProofFileNames(executor, taskId, proofKind) {
+  const kind = proofKind === 'receipt' ? 'receipt' : 'delivery';
+  try {
+    if (kind === 'receipt') {
+      const [rows] = await executor.query(
+        'SELECT photo_name FROM mt_driver_task_photo WHERE task_id = ? AND proof_type = ?',
+        [taskId, 'receipt']
+      );
+      return (rows || []).map((r) => String(r.photo_name || '').trim()).filter(Boolean);
+    }
+    const [rows] = await executor.query(
+      'SELECT photo_name FROM mt_driver_task_photo WHERE task_id = ? AND (proof_type = ? OR proof_type IS NULL)',
+      [taskId, 'delivery']
+    );
+    return (rows || []).map((r) => String(r.photo_name || '').trim()).filter(Boolean);
+  } catch (e) {
+    if (e.code === 'ER_BAD_FIELD_ERROR') {
+      if (kind === 'receipt') return [];
+      const [rows] = await executor.query('SELECT photo_name FROM mt_driver_task_photo WHERE task_id = ?', [taskId]);
+      return (rows || []).map((r) => String(r.photo_name || '').trim()).filter(Boolean);
     }
     throw e;
   }
@@ -326,8 +396,12 @@ module.exports = {
   sanitizeTaskProofFileName,
   insertDriverTaskPhotoRow,
   deleteDriverTaskProofSlot,
+  selectDriverTaskProofFileNames,
   parseProofTypeParam,
   defaultProofTypeWhenOmitted,
   normalizeStoredProofType,
   inferProofTypeFromFileGroups,
+  normalizeTaskStatusKeyForProof,
+  taskStatusAllowsProofReceipt,
+  taskStatusAllowsProofDelivery,
 };

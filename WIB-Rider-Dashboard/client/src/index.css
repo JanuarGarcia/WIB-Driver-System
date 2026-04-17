@@ -2062,6 +2062,30 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
 .task-detail-status-badge.status-red { background: var(--color-danger-bg); color: var(--color-danger); }
 .task-detail-status-badge.status-amber { background: var(--color-warning-bg); color: var(--color-warning); }
 .task-detail-status-badge.status-default { background: var(--bg-card); color: var(--text-secondary); border: 1px solid var(--border-soft); }
+
+.task-detail-rider-reason {
+  grid-column: 1 / -1;
+  margin: 0.75rem 0 0.5rem;
+  padding: 0.75rem 1rem;
+  border-radius: 8px;
+  border: 1px solid var(--border-soft);
+  background: var(--color-danger-bg, rgba(220, 53, 69, 0.08));
+}
+.task-detail-rider-reason-title {
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--text-muted);
+  margin-bottom: 0.35rem;
+}
+.task-detail-rider-reason-body {
+  font-size: 0.9rem;
+  line-height: 1.45;
+  color: var(--text-primary);
+  white-space: pre-wrap;
+}
+
 /* Actions column: outline-style buttons (Edit / View / Assign) */
 .table-actions { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
 .table-actions button {

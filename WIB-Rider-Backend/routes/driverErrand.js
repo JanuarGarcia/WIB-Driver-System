@@ -60,25 +60,18 @@ const {
   fetchErrandProofsForOrder,
   countErrandProofForOrder,
   insertErrandProofRow,
+  deleteErrandProofSlot,
+  unlinkErrandProofFiles,
 } = require('../lib/errandProof');
-const { parseProofTypeParam, defaultProofTypeWhenOmitted } = require('../lib/taskProof');
+const { parseProofTypeParam, defaultProofTypeWhenOmitted, taskStatusAllowsProofReceipt } = require('../lib/taskProof');
+const { errandCanonicalRequiresRiderReason, validateRiderOutcomeReason } = require('../lib/riderOutcomeReason');
 const { insertStOrdernewHistoryRow } = require('../lib/errandHistoryInsert');
 
 const router = express.Router();
 
-function normalizeErrandOrderStatusKey(row) {
-  const raw = row?.delivery_status ?? row?.status ?? row?.DeliveryStatus ?? '';
-  return String(raw || '')
-    .toLowerCase()
-    .trim()
-    .replace(/\s+/g, '')
-    .replace(/_/g, '');
-}
-
 function errandOrderAllowsProofUpload(row) {
-  const k = normalizeErrandOrderStatusKey(row);
-  const blocked = ['successful', 'completed', 'delivered', 'cancelled', 'failed', 'declined'];
-  return !blocked.includes(k);
+  const raw = row?.delivery_status ?? row?.status ?? row?.DeliveryStatus ?? '';
+  return taskStatusAllowsProofReceipt(raw);
 }
 
 const errandProofDir = path.join(getUploadsRoot(), 'errand');
@@ -215,6 +208,8 @@ async function buildDetailPayloadForOrder(orderId) {
   }));
   payload.task_photos = taskPhotos;
   payload.proof_images = proofs.map((p) => p.proof_url).filter(Boolean);
+  const st = payload.delivery_status ?? payload.status ?? payload.deliveryStatus;
+  payload.proof_editable = taskStatusAllowsProofReceipt(st);
   return payload;
 }
 
@@ -488,6 +483,12 @@ router.post('/ChangeErrandOrderStatus', validateApiKey, resolveDriver, async (re
   if (!canonical) {
     return error(res, 'Invalid status');
   }
+  let driverReasonForHistory = reason != null && String(reason).trim() ? String(reason).trim() : '';
+  if (errandCanonicalRequiresRiderReason(canonical)) {
+    const vr = validateRiderOutcomeReason(reason);
+    if (!vr.ok) return error(res, vr.error);
+    driverReasonForHistory = vr.reason;
+  }
   const sNorm = effectiveRaw.trim().toLowerCase();
   const driverId = req.driver.id;
   const latRaw = latitude ?? lat;
@@ -519,7 +520,7 @@ router.post('/ChangeErrandOrderStatus', validateApiKey, resolveDriver, async (re
       if (!result.affectedRows) {
         return error(res, 'Update failed');
       }
-      await appendErrandDriverHistory(errandWibPool, orderId, canonical, reason, latRaw, lngRaw);
+      await appendErrandDriverHistory(errandWibPool, orderId, canonical, driverReasonForHistory, latRaw, lngRaw);
       await updateErrandOrderPaymentFields(errandWibPool, orderId, payment_type, payment_status);
       try {
         const lbl = await errandOrderNotifyLabel(errandWibPool, orderId);
@@ -563,7 +564,7 @@ router.post('/ChangeErrandOrderStatus', validateApiKey, resolveDriver, async (re
     if (!result.affectedRows) {
       return error(res, 'Update failed');
     }
-    await appendErrandDriverHistory(errandWibPool, orderId, canonical, reason, latRaw, lngRaw);
+    await appendErrandDriverHistory(errandWibPool, orderId, canonical, driverReasonForHistory, latRaw, lngRaw);
     await updateErrandOrderPaymentFields(errandWibPool, orderId, payment_type, payment_status);
     try {
       const lbl = await errandOrderNotifyLabel(errandWibPool, orderId);
@@ -590,7 +591,7 @@ router.post('/ChangeErrandOrderStatus', validateApiKey, resolveDriver, async (re
         orderUuid: null,
         canonical,
         extras: {
-          reason: reason != null ? String(reason) : undefined,
+          reason: driverReasonForHistory || undefined,
           otpCode: otp != null && String(otp).trim() !== '' ? String(otp).trim() : undefined,
           proofBase64: proof != null && String(proof).trim() !== '' ? String(proof).trim() : undefined,
           imageType:
@@ -703,5 +704,34 @@ router.post(
     next();
   }
 );
+
+/**
+ * Clear proof of receipt or delivery for an errand / Mangan order (same status gate as upload).
+ * Body: order_id (or errand task id convention), proof_type=receipt|delivery
+ */
+router.post('/DeleteErrandOrderProof', validateApiKey, resolveDriver, async (req, res) => {
+  const orderId = parseErrandOrderId(req.body);
+  if (!orderId) return error(res, 'order_id required (or negative errand task_id)');
+  const rawProofType = req.body?.proof_type ?? req.body?.proofType;
+  const parsedPt = parseProofTypeParam(rawProofType);
+  if (rawProofType != null && String(rawProofType).trim() !== '' && parsedPt === null) {
+    return error(res, 'Invalid proof_type; use receipt or delivery');
+  }
+  if (parsedPt == null) return error(res, 'proof_type required (receipt or delivery)');
+  const driverId = req.driver.id;
+  try {
+    const row = await loadErrandOrderRow(orderId);
+    if (!row) return error(res, 'Order not found');
+    if (orderDriverId(row) !== driverId) return error(res, 'Order not assigned to you');
+    if (!errandOrderAllowsProofUpload(row)) {
+      return error(res, 'Proof cannot be removed or replaced for this order status');
+    }
+    const removed = await deleteErrandProofSlot(errandWibPool, orderId, driverId, parsedPt);
+    unlinkErrandProofFiles(errandProofDir, removed);
+    return success(res, { ok: true, order_id: orderId, errand_order_id: orderId, proof_type: parsedPt });
+  } catch (e) {
+    return error(res, e.message || 'Failed to delete proof');
+  }
+});
 
 module.exports = router;

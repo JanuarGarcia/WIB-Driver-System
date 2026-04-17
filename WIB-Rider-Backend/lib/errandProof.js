@@ -1,4 +1,5 @@
 const path = require('path');
+const fs = require('fs');
 const { normalizeStoredProofType } = require('./taskProof');
 
 /** Canonical ErrandWib proof table; created automatically on boot if missing (see ensureErrandProofTable). */
@@ -289,11 +290,73 @@ async function insertErrandProofRow(errandPool, orderId, driverId, photoName, pr
   }
 }
 
+/**
+ * Remove one proof slot for an order (rider app "clear photo"). Returns removed disk filename when known.
+ * @param {import('mysql2/promise').Pool} errandPool
+ * @param {number} orderId
+ * @param {number} driverId
+ * @param {'receipt'|'delivery'} proofKind
+ * @returns {Promise<string[]>} basenames that were removed (for unlink)
+ */
+async function deleteErrandProofSlot(errandPool, orderId, driverId, proofKind) {
+  const pt = proofKind === 'receipt' ? 'receipt' : 'delivery';
+  const schema = await detectProofSchema(errandPool);
+  if (!schema) return [];
+  const tbl = quoteIdent(schema.table);
+  const photoCol = quoteIdent(schema.photoCol);
+  try {
+    if (schema.hasProofType) {
+      const [[row]] = await errandPool.query(
+        `SELECT ${photoCol} AS photo_name FROM ${tbl} WHERE order_id = ? AND driver_id = ? AND proof_type = ? LIMIT 1`,
+        [orderId, driverId, pt]
+      );
+      const name = row?.photo_name != null ? String(row.photo_name).trim() : '';
+      await errandPool.query(`DELETE FROM ${tbl} WHERE order_id = ? AND driver_id = ? AND proof_type = ?`, [
+        orderId,
+        driverId,
+        pt,
+      ]);
+      return name ? [name] : [];
+    }
+    if (pt === 'receipt') return [];
+    const [[row]] = await errandPool.query(
+      `SELECT ${photoCol} AS photo_name FROM ${tbl} WHERE order_id = ? AND driver_id = ? LIMIT 1`,
+      [orderId, driverId]
+    );
+    const name = row?.photo_name != null ? String(row.photo_name).trim() : '';
+    await errandPool.query(`DELETE FROM ${tbl} WHERE order_id = ? AND driver_id = ?`, [orderId, driverId]);
+    return name ? [name] : [];
+  } catch (e) {
+    if (e.code === 'ER_BAD_FIELD_ERROR') {
+      proofSchemaCache = null;
+      return deleteErrandProofSlot(errandPool, orderId, driverId, proofKind);
+    }
+    throw e;
+  }
+}
+
+/**
+ * @param {string} uploadsErrandDir Absolute path to errand upload directory (same as multer dest).
+ * @param {string[]} basenames
+ */
+function unlinkErrandProofFiles(uploadsErrandDir, basenames) {
+  for (const base of basenames || []) {
+    const safe = path.basename(String(base || '').replace(/\\/g, '/'));
+    if (!safe || safe === '.' || safe === '..') continue;
+    const full = path.join(uploadsErrandDir, safe);
+    try {
+      if (fs.existsSync(full)) fs.unlinkSync(full);
+    } catch (_) {}
+  }
+}
+
 module.exports = {
   buildErrandProofImageUrl,
   fetchErrandProofsForOrder,
   countErrandProofForOrder,
   insertErrandProofRow,
+  deleteErrandProofSlot,
+  unlinkErrandProofFiles,
   detectProofSchema,
   ensureErrandProofTable,
   CANONICAL_ERRAND_PROOF_TABLE,
