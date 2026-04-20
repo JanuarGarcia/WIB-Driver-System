@@ -107,6 +107,19 @@ async function reassignTask(req, res) {
       console.error('Failed to send notification:', notificationResult.error);
     }
 
+    // Log the notification in mt_mobile2_push_logs
+    const logSql = `
+      INSERT INTO mt_mobile2_push_logs (driver_id, title, message, data, date_created)
+      VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+    `;
+
+    await pool.query(logSql, [
+      newRiderId,
+      notificationTitle,
+      notificationBody,
+      JSON.stringify(notificationData)
+    ]);
+
     return res.json({ code: 1, msg: 'Task reassigned successfully', details: { taskId, newRiderId, status: 'assigned' } });
   } catch (error) {
     console.error('Error in reassignTask:', error);
