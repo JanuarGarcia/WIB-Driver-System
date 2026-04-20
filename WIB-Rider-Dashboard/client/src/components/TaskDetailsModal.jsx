@@ -2124,7 +2124,7 @@ export default function TaskDetailsModal({
                     <button type="button" className="btn btn-primary" onClick={openAssignModal} disabled={actionLoading}>Assign driver</button>
                   </>
                 )}
-                {(String(task.status || '').toLowerCase() !== 'unassigned') && !assignOpen && (
+                {(String(task.status || '').toLowerCase() !== 'unassigned' && !['delivered', 'successful'].includes(String(task.status || '').toLowerCase()) && task.orderType !== 'mangan') && !assignOpen && (
                   <button type="button" className="btn btn-primary" onClick={openAssignModal} disabled={actionLoading}>
                     Re-assign Agent
                   </button>
