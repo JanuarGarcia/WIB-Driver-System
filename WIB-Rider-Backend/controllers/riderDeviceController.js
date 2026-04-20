@@ -86,7 +86,7 @@ async function reassignTask(req, res) {
     const sql = `
       UPDATE mt_driver_task
       SET reassigned_to = ?, reassigned_by = ?, reassign_reason = ?, status = 'assigned', date_modified = CURRENT_TIMESTAMP
-      WHERE id = ? AND status IN ('declined', 'canceled')
+      WHERE id = ? AND status IN ('declined', 'canceled', 'failed')
     `;
 
     const [result] = await pool.query(sql, [newRiderId, adminId, reason, taskId]);
