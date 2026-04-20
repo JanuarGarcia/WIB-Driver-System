@@ -7,5 +7,6 @@ const riderDeviceController = require('../controllers/riderDeviceController');
 
 router.post('/devices/register', requireRiderAuth, riderDeviceController.register);
 router.post('/devices/unregister', requireRiderAuth, riderDeviceController.unregister);
+router.post('/tasks/reassign', requireRiderAuth, riderDeviceController.reassignTask);
 
 module.exports = router;

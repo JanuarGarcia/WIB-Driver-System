@@ -66,4 +66,32 @@ async function unregister(req, res) {
   }
 }
 
-module.exports = { register, unregister };
+async function reassignTask(req, res) {
+  try {
+    const { taskId, newRiderId, reason } = req.body;
+    const adminId = req.rider.driverId; // Assuming admin is authenticated as a rider
+
+    if (!taskId || !newRiderId) {
+      return res.status(400).json({ code: 2, msg: 'taskId and newRiderId are required' });
+    }
+
+    const sql = `
+      UPDATE mt_driver_task
+      SET reassigned_to = ?, reassigned_by = ?, reassign_reason = ?, date_modified = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `;
+
+    const [result] = await pool.query(sql, [newRiderId, adminId, reason, taskId]);
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ code: 2, msg: 'Task not found or no changes made' });
+    }
+
+    return res.json({ code: 1, msg: 'Task reassigned successfully' });
+  } catch (error) {
+    console.error('Error in reassignTask:', error);
+    return res.status(500).json({ code: 2, msg: 'Failed to reassign task', error });
+  }
+}
+
+module.exports = { register, unregister, reassignTask };
