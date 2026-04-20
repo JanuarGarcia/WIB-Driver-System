@@ -86,13 +86,13 @@ async function reassignTask(req, res) {
     const sql = `
       UPDATE mt_driver_task
       SET reassigned_to = ?, reassigned_by = ?, reassign_reason = ?, status = 'assigned', date_modified = CURRENT_TIMESTAMP
-      WHERE id = ? AND status IN ('declined', 'canceled', 'failed')
+      WHERE id = ?
     `;
 
     const [result] = await pool.query(sql, [newRiderId, adminId, reason, taskId]);
 
     if (result.affectedRows === 0) {
-      return res.status(400).json({ code: 2, msg: 'Task cannot be reassigned. Ensure it is in declined or canceled status.' });
+      return res.status(404).json({ code: 2, msg: 'Task not found or no changes made' });
     }
 
     // Send notification to the new rider
