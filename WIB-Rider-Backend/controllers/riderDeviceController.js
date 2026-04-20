@@ -75,19 +75,39 @@ async function reassignTask(req, res) {
       return res.status(400).json({ code: 2, msg: 'taskId and newRiderId are required' });
     }
 
+    // Fetch the current task details
+    const [[task]] = await pool.query('SELECT status FROM mt_driver_task WHERE id = ?', [taskId]);
+
+    if (!task) {
+      return res.status(404).json({ code: 2, msg: 'Task not found' });
+    }
+
+    // Update the task status and reassign to the new rider
     const sql = `
       UPDATE mt_driver_task
-      SET reassigned_to = ?, reassigned_by = ?, reassign_reason = ?, date_modified = CURRENT_TIMESTAMP
-      WHERE id = ?
+      SET reassigned_to = ?, reassigned_by = ?, reassign_reason = ?, status = 'assigned', date_modified = CURRENT_TIMESTAMP
+      WHERE id = ? AND status IN ('declined', 'canceled')
     `;
 
     const [result] = await pool.query(sql, [newRiderId, adminId, reason, taskId]);
 
     if (result.affectedRows === 0) {
-      return res.status(404).json({ code: 2, msg: 'Task not found or no changes made' });
+      return res.status(400).json({ code: 2, msg: 'Task cannot be reassigned. Ensure it is in declined or canceled status.' });
     }
 
-    return res.json({ code: 1, msg: 'Task reassigned successfully' });
+    // Send notification to the new rider
+    const { sendPushToDriver } = require('../services/fcm');
+    const notificationTitle = 'Task Reassigned';
+    const notificationBody = `You have been assigned a new task (ID: ${taskId}).`;
+    const notificationData = { taskId, reason };
+
+    const notificationResult = await sendPushToDriver(newRiderId, notificationTitle, notificationBody, notificationData);
+
+    if (!notificationResult.success) {
+      console.error('Failed to send notification:', notificationResult.error);
+    }
+
+    return res.json({ code: 1, msg: 'Task reassigned successfully', details: { taskId, newRiderId, status: 'assigned' } });
   } catch (error) {
     console.error('Error in reassignTask:', error);
     return res.status(500).json({ code: 2, msg: 'Failed to reassign task', error });
