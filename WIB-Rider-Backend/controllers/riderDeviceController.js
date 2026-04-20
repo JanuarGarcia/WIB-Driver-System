@@ -82,7 +82,7 @@ async function reassignTask(req, res) {
       return res.status(404).json({ code: 2, msg: 'Task not found' });
     }
 
-    // Update the task status and reassign to the new rider
+    // Always update status to 'assigned' on reassignment
     const sql = `
       UPDATE mt_driver_task
       SET reassigned_to = ?, reassigned_by = ?, reassign_reason = ?, status = 'assigned', date_modified = CURRENT_TIMESTAMP
@@ -95,13 +95,20 @@ async function reassignTask(req, res) {
       return res.status(404).json({ code: 2, msg: 'Task not found or no changes made' });
     }
 
-    // Send notification to the new rider
-    const { sendPushToDriver } = require('../services/fcm');
-    const notificationTitle = 'Task Reassigned';
-    const notificationBody = `You have been assigned a new task (ID: ${taskId}).`;
-    const notificationData = { taskId, reason };
+    // Improved notification payload for reassigned tasks
+    const notificationData = {
+      type: 'reassigned_task',
+      taskId,
+      reason
+      // Add orderId if available and needed by the app
+    };
 
-    const notificationResult = await sendPushToDriver(newRiderId, notificationTitle, notificationBody, notificationData);
+    const notificationResult = await sendPushToDriver(
+      newRiderId,
+      'Task Reassigned',
+      `You have been assigned a new task (ID: ${taskId}).`,
+      notificationData
+    );
 
     if (!notificationResult.success) {
       console.error('Failed to send notification:', notificationResult.error);
@@ -112,11 +119,10 @@ async function reassignTask(req, res) {
       INSERT INTO mt_mobile2_push_logs (driver_id, title, message, data, date_created)
       VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
     `;
-
     await pool.query(logSql, [
       newRiderId,
-      notificationTitle,
-      notificationBody,
+      'Task Reassigned',
+      `You have been assigned a new task (ID: ${taskId}).`,
       JSON.stringify(notificationData)
     ]);
 
