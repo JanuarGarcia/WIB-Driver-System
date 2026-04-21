@@ -121,21 +121,41 @@ export default function App() {
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
 
+  // Read notification popup toggle from localStorage (default true)
+  const [showNotificationPopup, setShowNotificationPopup] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const local = localStorage.getItem('showNotificationPopup');
+      if (local !== null) return local === 'true';
+    }
+    return true;
+  });
+
+  useEffect(() => {
+    const onStorage = () => {
+      const local = localStorage.getItem('showNotificationPopup');
+      setShowNotificationPopup(local !== null ? local === 'true' : true);
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, []);
+
   return (
     <div className="app-layout">
-      <ToastContainer
-        position="bottom-right"
-        theme={theme === 'dark' ? 'dark' : 'light'}
-        autoClose={12500}
-        newestOnTop
-        pauseOnFocusLoss={false}
-        closeOnClick
-        rtl={false}
-        limit={12}
-        toastClassName="rider-notif-toast"
-        bodyClassName="rider-notif-toast-body"
-        progressClassName="rider-notif-toast-progress"
-      />
+      {showNotificationPopup && (
+        <ToastContainer
+          position="bottom-right"
+          theme={theme === 'dark' ? 'dark' : 'light'}
+          autoClose={12500}
+          newestOnTop
+          pauseOnFocusLoss={false}
+          closeOnClick
+          rtl={false}
+          limit={12}
+          toastClassName="rider-notif-toast"
+          bodyClassName="rider-notif-toast-body"
+          progressClassName="rider-notif-toast-progress"
+        />
+      )}
       {sidebarOpen && (
         <div
           className="sidebar-backdrop"

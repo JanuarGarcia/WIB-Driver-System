@@ -119,6 +119,15 @@ export default function Settings() {
   const [enabledSignup, setEnabledSignup] = useState(false);
   const [enabledAddPhotoTakePicture, setEnabledAddPhotoTakePicture] = useState(true);
   const [enabledResizePicture, setEnabledResizePicture] = useState(true);
+  // Notification popup toggle
+  const [showNotificationPopup, setShowNotificationPopup] = useState(() => {
+    // Try to load from settings or localStorage (for first load)
+    if (typeof window !== 'undefined') {
+      const local = localStorage.getItem('showNotificationPopup');
+      if (local !== null) return local === 'true';
+    }
+    return true; // default ON
+  });
   const [resizePictureWidth, setResizePictureWidth] = useState('500');
   const [resizePictureHeight, setResizePictureHeight] = useState('600');
   const [deviceVibration, setDeviceVibration] = useState('3000');
@@ -160,6 +169,19 @@ export default function Settings() {
       api('merchants').then((list) => setMerchants(Array.isArray(list) ? list : [])).catch(() => setMerchants([])),
     ]).finally(() => setLoading(false));
   }, []);
+
+  // Sync showNotificationPopup with settings and localStorage
+  useEffect(() => {
+    if (settings && typeof settings.show_notification_popup !== 'undefined') {
+      setShowNotificationPopup(settings.show_notification_popup === '1');
+    }
+  }, [settings.show_notification_popup]);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('showNotificationPopup', showNotificationPopup);
+    }
+  }, [showNotificationPopup]);
 
   useEffect(() => {
     if (activeTab === 'map-settings') {
@@ -265,6 +287,7 @@ export default function Settings() {
       task_critical_options_enabled: taskCriticalOptionsEnabled ? '1' : '0',
       task_critical_options_minutes: String(taskCriticalOptionsMinutes ?? '').trim() || '5',
       privacy_policy_link: String(privacyPolicyLink ?? '').trim(),
+      show_notification_popup: showNotificationPopup ? '1' : '0',
     };
     api('settings', { method: 'PUT', body: JSON.stringify(payload) })
       .then(() => { setMessage('Settings saved.'); fetchSettings(); })
@@ -422,6 +445,21 @@ export default function Settings() {
           <form onSubmit={handleGeneralSubmit}>
             <div className="settings-section">
               <h2 className="settings-section-title">General</h2>
+              <div className="settings-form-row">
+                <label htmlFor="show_notification_popup">Show Notification Popup</label>
+                <div className="settings-field">
+                  <label className="settings-checkbox-label">
+                    <input
+                      type="checkbox"
+                      id="show_notification_popup"
+                      name="show_notification_popup"
+                      checked={showNotificationPopup}
+                      onChange={e => setShowNotificationPopup(e.target.checked)}
+                    />
+                    <span>Enable notification popup</span>
+                  </label>
+                </div>
+              </div>
               <div className="settings-form-row">
                 <label htmlFor="website_title">Website title</label>
                 <div className="settings-field">
