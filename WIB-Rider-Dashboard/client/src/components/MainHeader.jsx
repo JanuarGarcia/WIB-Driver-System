@@ -166,7 +166,7 @@ export default function MainHeader({ onMenuClick, onOpenNewTask }) {
 
   return (
     <header className="main-header">
-      <div className="main-header-left" style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap' }}>
+      <div className="main-header-left" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <button
           type="button"
           className="main-header-burger"
@@ -178,22 +178,24 @@ export default function MainHeader({ onMenuClick, onOpenNewTask }) {
             <path d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z" />
           </svg>
         </button>
-        <select
-          className="main-header-team-select"
-          aria-label="Team filter"
-          title="Filter dashboard data by delivery team"
-          value={selectedTeamId}
-          onChange={(e) => setSelectedTeamId(e.target.value)}
-          style={{ marginRight: 8 }}
-        >
-          <option value="">All Team</option>
-          {(teams || []).map((t) => (
-            <option key={t.id} value={String(t.id)}>
-              {t.name || `Team ${t.id}`}
-            </option>
-          ))}
-        </select>
-        <h1 className="main-header-title" style={{ margin: 0, fontSize: '1.2rem', whiteSpace: 'nowrap' }}>{title}</h1>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <select
+            className="main-header-team-select"
+            aria-label="Team filter"
+            title="Filter dashboard data by delivery team"
+            value={selectedTeamId}
+            onChange={(e) => setSelectedTeamId(e.target.value)}
+            style={{ marginRight: 0 }}
+          >
+            <option value="">All Team</option>
+            {(teams || []).map((t) => (
+              <option key={t.id} value={String(t.id)}>
+                {t.name || `Team ${t.id}`}
+              </option>
+            ))}
+          </select>
+          <h1 className="main-header-title" style={{ margin: 0, fontSize: '1.2rem', whiteSpace: 'nowrap' }}>{title}</h1>
+        </div>
       </div>
       <div className="main-header-actions">
         {onOpenNewTask ? (
