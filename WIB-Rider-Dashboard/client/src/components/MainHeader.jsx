@@ -166,7 +166,7 @@ export default function MainHeader({ onMenuClick, onOpenNewTask }) {
 
   return (
     <header className="main-header">
-      <div className="main-header-left">
+      <div className="main-header-left" style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap' }}>
         <button
           type="button"
           className="main-header-burger"
@@ -184,6 +184,7 @@ export default function MainHeader({ onMenuClick, onOpenNewTask }) {
           title="Filter dashboard data by delivery team"
           value={selectedTeamId}
           onChange={(e) => setSelectedTeamId(e.target.value)}
+          style={{ marginRight: 8 }}
         >
           <option value="">All Team</option>
           {(teams || []).map((t) => (
@@ -192,7 +193,7 @@ export default function MainHeader({ onMenuClick, onOpenNewTask }) {
             </option>
           ))}
         </select>
-        <h1 className="main-header-title">{title}</h1>
+        <h1 className="main-header-title" style={{ margin: 0, fontSize: '1.2rem', whiteSpace: 'nowrap' }}>{title}</h1>
       </div>
       <div className="main-header-actions">
         {onOpenNewTask ? (
