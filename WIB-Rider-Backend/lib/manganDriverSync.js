@@ -74,10 +74,12 @@ function canonicalToAction(canonical) {
 }
 
 /**
+ * @param {import('mysql2/promise').Pool|null|undefined} mainPool Primary pool (optional `mt_driver` fallback creds)
  * @param {import('mysql2/promise').Pool} errandPool Mangan/ErrandWib pool (must contain st_driver + st_ordernew)
  * @param {number} manganDriverId st_driver.driver_id
+ * @param {number|null|undefined} wibDriverId mt_driver.driver_id when known
  */
-async function resolveManganCredentials(errandPool, manganDriverId) {
+async function resolveManganCredentials(mainPool, errandPool, manganDriverId, wibDriverId) {
   const userCol = (process.env.MANGAN_ST_DRIVER_USER_COL || 'wib_sync_username').trim() || 'wib_sync_username';
   const passCol = (process.env.MANGAN_ST_DRIVER_PASS_COL || 'wib_sync_password').trim() || 'wib_sync_password';
   try {
@@ -90,10 +92,29 @@ async function resolveManganCredentials(errandPool, manganDriverId) {
     if (row?.u && row?.p) {
       return { username: String(row.u).trim(), password: String(row.p) };
     }
-    // Fallback: try native Mangan driver email/password columns (often hashed; works only if /driver/login expects hashed input).
-    if (row?.email && row?.password) {
-      return { username: String(row.email).trim(), password: String(row.password) };
+    const fallbackNativeCreds =
+      row?.email && row?.password
+        ? { username: String(row.email).trim(), password: String(row.password) }
+        : null;
+    const primaryDriverId = Number.isFinite(Number(wibDriverId)) && Number(wibDriverId) > 0 ? Number(wibDriverId) : manganDriverId;
+    if (mainPool && Number.isFinite(primaryDriverId) && primaryDriverId > 0) {
+      const mainUserCol = (process.env.MANGAN_MT_DRIVER_USER_COL || 'mangan_api_username').trim() || 'mangan_api_username';
+      const mainPassCol = (process.env.MANGAN_MT_DRIVER_PASS_COL || 'mangan_api_password').trim() || 'mangan_api_password';
+      try {
+        const [[mainRow]] = await mainPool.query(
+          `SELECT \`${mainUserCol}\` AS u, \`${mainPassCol}\` AS p
+           FROM mt_driver WHERE driver_id = ? LIMIT 1`,
+          [primaryDriverId]
+        );
+        if (mainRow?.u && mainRow?.p) {
+          return { username: String(mainRow.u).trim(), password: String(mainRow.p) };
+        }
+      } catch (e) {
+        if (e.code !== 'ER_BAD_FIELD_ERROR' && e.code !== 'ER_NO_SUCH_TABLE') throw e;
+      }
     }
+    // Last DB fallback: try native Mangan driver email/password columns (often hashed; works only if /driver/login expects hashed input).
+    if (fallbackNativeCreds) return fallbackNativeCreds;
   } catch (e) {
     if (e.code !== 'ER_BAD_FIELD_ERROR') throw e;
   }
@@ -254,7 +275,11 @@ async function syncErrandStatusToMangan(opts) {
   if (!orderUuid) return { skipped: true, reason: 'no_order_uuid' };
   if (!manganDriverId) return { skipped: true, reason: 'no_assigned_mangan_driver' };
 
-  const creds = await resolveManganCredentials(errandPool, manganDriverId);
+  const driverIdForPrimaryCreds =
+    opts?.driver?.id != null && Number.isFinite(Number(opts.driver.id)) && Number(opts.driver.id) > 0
+      ? Number(opts.driver.id)
+      : manganDriverId;
+  const creds = await resolveManganCredentials(opts.mainPool, errandPool, manganDriverId, driverIdForPrimaryCreds);
   if (!creds) {
     return { skipped: true, reason: 'no_credentials' };
   }

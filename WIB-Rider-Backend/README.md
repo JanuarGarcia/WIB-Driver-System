@@ -60,7 +60,8 @@ To enable it:
 
 - **Env**: set `MANGAN_DRIVER_SYNC_ENABLED=1`
 - **Base URL**: (optional) `MANGAN_DRIVER_API_BASE_URL=https://order.wheninbaguioeat.com`
-- **Credentials** (recommended): run `sql/mt_driver_mangan_credentials.sql` on the primary DB and set `mt_driver.mangan_api_username` + `mt_driver.mangan_api_password` for each driver.
+- **Credentials** (recommended): run `sql/st_driver_wib_sync_credentials.sql` on the ErrandWib / Mangan DB and set `st_driver.wib_sync_username` + `st_driver.wib_sync_password` for each rider.
+- **Primary DB fallback credentials**: if you already store the Mangan rider login on the WIB primary DB, run `sql/mt_driver_mangan_credentials.sql` and set `mt_driver.mangan_api_username` + `mt_driver.mangan_api_password`. The sync now uses those when `st_driver` does not have explicit WIB sync credentials.
 - **Dev-only fallback login**: alternatively set `MANGAN_SYNC_FALLBACK_USERNAME` / `MANGAN_SYNC_FALLBACK_PASSWORD` (only works if that Mangan driver is assigned to the order, because the PHP API verifies `driver_id`).
 
 Notes:

@@ -21,6 +21,9 @@ describe('rider push fallback behavior', () => {
       if (/INSERT\s+INTO\s+`?mt_rider_push_logs`?/i.test(text)) {
         return [{ insertId: 123 }];
       }
+      if (/INSERT\s+INTO\s+mt_driver_pushlog/i.test(text)) {
+        return [{ insertId: 456 }];
+      }
       if (/UPDATE\s+`?mt_rider_push_logs`?/i.test(text)) {
         return [{}];
       }
@@ -34,7 +37,16 @@ describe('rider push fallback behavior', () => {
     const maybeDisableBadRiderToken = jest.fn().mockResolvedValue(undefined);
 
     jest.doMock('../config/db', () => ({ pool: { query } }));
-    jest.doMock('../services/fcm', () => ({ sendPushToDevice }));
+    jest.doMock('../services/fcm', () => ({
+      sendPushToDevice,
+      logDriverInboxNotification: jest.fn(async (poolArg, payload) => {
+        await poolArg.query(
+          `INSERT INTO mt_driver_pushlog (driver_id, push_title, push_message, push_type, task_id, order_id, date_created, date_process, is_read)
+           VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW(), 0)`,
+          [payload.driverId, payload.title, payload.body, payload.pushType, payload.taskId, payload.orderId]
+        );
+      }),
+    }));
     jest.doMock('../lib/riderPushFailureHelpers', () => ({ maybeDisableBadRiderToken }));
 
     const svc = require('../services/riderOrderPushService');
@@ -59,6 +71,10 @@ describe('rider push fallback behavior', () => {
         }),
       })
     );
+    expect(query).toHaveBeenCalledWith(
+      expect.stringMatching(/INSERT\s+INTO\s+mt_driver_pushlog/i),
+      [7, 'Assigned', 'Task body', 'rider_order_assigned', null, 88]
+    );
     expect(maybeDisableBadRiderToken).not.toHaveBeenCalled();
   });
 
@@ -70,6 +86,9 @@ describe('rider push fallback behavior', () => {
       }
       if (/SELECT\s+device_id\s+FROM\s+mt_driver/i.test(text)) {
         return [[{ device_id: 'driver-token' }]];
+      }
+      if (/INSERT\s+INTO\s+mt_driver_pushlog/i.test(text)) {
+        return [{ insertId: 987 }];
       }
       if (/FROM\s+mt_option/i.test(text)) {
         return [[{ value: JSON.stringify({ project_id: 'x', client_email: 'x@y.z', private_key: '-----BEGIN PRIVATE KEY-----\\nabc\\n-----END PRIVATE KEY-----\\n' }) }]];
@@ -119,6 +138,10 @@ describe('rider push fallback behavior', () => {
           order_id: '202',
         }),
       })
+    );
+    expect(query).toHaveBeenCalledWith(
+      expect.stringMatching(/INSERT\s+INTO\s+mt_driver_pushlog/i),
+      [9, 'Task assigned', 'Body', 'task_assigned', 101, 202]
     );
   });
 });

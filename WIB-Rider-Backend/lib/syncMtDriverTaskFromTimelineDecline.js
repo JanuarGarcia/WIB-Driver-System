@@ -30,6 +30,86 @@ function statusForTimelineCategory(cat) {
   return null;
 }
 
+function normalizeHistoryBlobKey(v) {
+  return String(v || '')
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, '')
+    .replace(/_/g, '');
+}
+
+function rowLooksLikeActiveResetAfterTerminal(row) {
+  const cat = String(classifyTimelineHistoryForDashboardNotify(row) || '')
+    .toLowerCase()
+    .trim();
+  if (cat === 'accepted' || cat === 'ready_for_pickup' || cat === 'preparing' || cat === 'started' || cat === 'inprogress' || cat === 'created') {
+    return true;
+  }
+
+  const keys = [row && row.status, row && row.description, row && row.remarks, row && row.reason, row && row.notes]
+    .map(normalizeHistoryBlobKey)
+    .filter(Boolean);
+
+  return keys.some(
+    (key) =>
+      key === 'new' ||
+      key === 'created' ||
+      key === 'queued' ||
+      key === 'unassigned' ||
+      key === 'assigned' ||
+      key === 'acknowledged' ||
+      key === 'accepted' ||
+      key === 'accept' ||
+      key === 'driverassigned' ||
+      key === 'orderassigned' ||
+      key === 'started' ||
+      key === 'inprogress' ||
+      key === 'preparing' ||
+      key === 'readyforpickup' ||
+      key === 'readypickup' ||
+      key.includes('reassigned')
+  );
+}
+
+function historyRowComesAfter(candidate, reference) {
+  if (!candidate || typeof candidate !== 'object') return false;
+  if (!reference || typeof reference !== 'object') return true;
+
+  const refTime = reference.date_created ? new Date(reference.date_created).getTime() : NaN;
+  const candTime = candidate.date_created ? new Date(candidate.date_created).getTime() : NaN;
+  if (Number.isFinite(refTime) && Number.isFinite(candTime) && candTime !== refTime) return candTime > refTime;
+
+  const refId = reference.id != null ? Number(reference.id) : NaN;
+  const candId = candidate.id != null ? Number(candidate.id) : NaN;
+  if (Number.isFinite(refId) && Number.isFinite(candId) && candId !== refId) return candId > refId;
+
+  if (Number.isFinite(refTime) && !Number.isFinite(candTime)) return false;
+  if (!Number.isFinite(refTime) && Number.isFinite(candTime)) return true;
+  if (Number.isFinite(refId) && !Number.isFinite(candId)) return false;
+  if (!Number.isFinite(refId) && Number.isFinite(candId)) return true;
+  return false;
+}
+
+async function hasLaterActiveResetHistory(pool, taskId, historyRow) {
+  try {
+    const [rows] = await pool.query(
+      `SELECT id, status, description, remarks, reason, notes, date_created
+       FROM mt_order_history
+       WHERE task_id = ?
+       ORDER BY date_created ASC, id ASC`,
+      [taskId]
+    );
+    for (const row of rows || []) {
+      if (!historyRowComesAfter(row, historyRow)) continue;
+      if (rowLooksLikeActiveResetAfterTerminal(row)) return true;
+    }
+  } catch (e) {
+    if (e.code === 'ER_NO_SUCH_TABLE' || e.code === 'ER_BAD_FIELD_ERROR') return false;
+    throw e;
+  }
+  return false;
+}
+
 /**
  * @param {import('mysql2/promise').Pool} pool
  * @param {number} taskId
@@ -42,6 +122,7 @@ async function syncMtDriverTaskFromTerminalTimelineHistory(pool, taskId, history
   const cat = classifyTimelineHistoryForDashboardNotify(historyRow);
   const target = statusForTimelineCategory(cat);
   if (!target) return { updated: false };
+  if (await hasLaterActiveResetHistory(pool, tid, historyRow)) return { updated: false };
 
   let cur;
   try {

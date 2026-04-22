@@ -1,7 +1,7 @@
 'use strict';
 
 const { pool } = require('../config/db');
-const { sendPushToDevice } = require('./fcm');
+const { sendPushToDevice, logDriverInboxNotification } = require('./fcm');
 const { maybeDisableBadRiderToken } = require('../lib/riderPushFailureHelpers');
 
 const DEVICE_TABLE = 'mt_rider_device_reg';
@@ -183,6 +183,14 @@ async function sendRiderOrderPush(opts) {
         throw new Error(result.error || 'FCM send failed');
       }
       await finalizePushLog(logId, 'sent', JSON.stringify(result || {}), null);
+      await logDriverInboxNotification(pool, {
+        driverId,
+        title,
+        body,
+        pushType,
+        taskId: null,
+        orderId,
+      });
     } catch (e) {
       console.error('sendRiderOrderPush.device_error', {
         orderId,

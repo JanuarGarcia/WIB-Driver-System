@@ -3807,13 +3807,6 @@ router.put('/tasks/:id/assign', express.json(), async (req, res) => {
       );
     } catch (_) {}
     try {
-      await pool.query(
-        `INSERT INTO mt_driver_pushlog (driver_id, push_title, push_message, push_type, task_id, order_id, date_created, date_process, is_read)
-         VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW(), 0)`,
-        [driverId, riderPushTitle, task.task_description || `Task #${taskId}`, 'task_assigned', taskId, task.order_id || null]
-      );
-    } catch (_) {}
-    try {
       const pushData = {
         task_id: String(taskId),
         type: 'task_assigned',
@@ -4789,11 +4782,7 @@ router.post('/drivers/:id/send-push', async (req, res) => {
       return res.status(400).json({ error: result.error || 'Failed to send push' });
     }
     try {
-      await pool.query(
-        `INSERT INTO mt_driver_pushlog (driver_id, push_title, push_message, push_type, task_id, order_id, date_created, date_process, is_read)
-         VALUES (?, ?, ?, 'admin_push', NULL, NULL, NOW(), NOW(), 0)`,
-        [driverId, pushTitle, pushMessage]
-      );
+      /* inbox logging handled in sendPushToDriver */
     } catch (_) {
       /* optional — rider app inbox still gets FCM */
     }

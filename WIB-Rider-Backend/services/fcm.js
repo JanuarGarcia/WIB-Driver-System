@@ -106,6 +106,32 @@ async function initFirebase() {
   }
 }
 
+function toPositiveInt(v) {
+  const n = parseInt(String(v), 10);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+async function logDriverInboxNotification(pool, { driverId, title, body, pushType, taskId, orderId }) {
+  const did = toPositiveInt(driverId);
+  if (!did) return;
+  try {
+    await pool.query(
+      `INSERT INTO mt_driver_pushlog (driver_id, push_title, push_message, push_type, task_id, order_id, date_created, date_process, is_read)
+       VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW(), 0)`,
+      [
+        did,
+        String(title != null ? title : '').trim() || 'Notification',
+        String(body != null ? body : '').trim() || String(title != null ? title : '').trim() || 'Notification',
+        String(pushType != null ? pushType : '').trim() || 'admin_push',
+        toPositiveInt(taskId),
+        toPositiveInt(orderId),
+      ]
+    );
+  } catch (_) {
+    /* optional */
+  }
+}
+
 async function sendPushToDriver(driverId, title, body, data = {}) {
   const { pool } = require('../config/db');
   const token = await resolveDriverFcmToken(pool, driverId);
@@ -123,7 +149,18 @@ async function sendPushToDriver(driverId, title, body, data = {}) {
   ) {
     payloadData.screen = 'task_detail';
   }
-  return sendPushToFcmToken(token, title, body, payloadData, { useCustomerAndroidChannel: false });
+  const result = await sendPushToFcmToken(token, title, body, payloadData, { useCustomerAndroidChannel: false });
+  if (result && result.success) {
+    await logDriverInboxNotification(pool, {
+      driverId,
+      title,
+      body,
+      pushType: payloadData.push_type || payloadData.type,
+      taskId: payloadData.task_id ?? payloadData.taskId,
+      orderId: payloadData.order_id ?? payloadData.orderId ?? payloadData.errand_order_id,
+    });
+  }
+  return result;
 }
 
 async function sendPushToAllDrivers(title, body, data = {}) {
@@ -233,6 +270,7 @@ async function sendPushToDevice(token, opts = {}) {
 module.exports = {
   initFirebase,
   resetFirebase,
+  logDriverInboxNotification,
   sendPushToDriver,
   sendPushToAllDrivers,
   sendPushToFcmToken,
