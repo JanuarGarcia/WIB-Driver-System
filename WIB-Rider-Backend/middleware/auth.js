@@ -8,16 +8,49 @@ function getApiKey(req) {
   return req.query?.api_key || req.body?.api_key || null;
 }
 
+function normalizeDriverTokenCandidate(raw) {
+  if (raw == null) return null;
+  let t = String(raw).trim();
+  if (!t) return null;
+  t = t.replace(/^(?:Bearer|Token)\s+/i, '').trim();
+  t = t.replace(/^['"]+|['"]+$/g, '').trim();
+  return t || null;
+}
+
 /** Session token from query, JSON body, or Authorization: Bearer (trimmed). */
 function getDriverTokenFromRequest(req) {
-  const raw =
-    req.query?.token ??
-    req.body?.token ??
-    req.body?.access_token ??
-    (req.headers.authorization && req.headers.authorization.replace(/^Bearer\s+/i, ''));
-  if (raw == null || raw === '') return null;
-  const t = String(raw).trim();
-  return t || null;
+  const candidates = [
+    req.query?.token,
+    req.query?.access_token,
+    req.query?.auth_token,
+    req.query?.driver_token,
+    req.query?.session_token,
+    req.query?.driverToken,
+    req.query?.accessToken,
+    req.query?.authToken,
+    req.query?.sessionToken,
+    req.body?.token,
+    req.body?.access_token,
+    req.body?.auth_token,
+    req.body?.driver_token,
+    req.body?.session_token,
+    req.body?.driverToken,
+    req.body?.accessToken,
+    req.body?.authToken,
+    req.body?.sessionToken,
+    req.headers?.authorization,
+    req.headers?.Authorization,
+    req.headers?.['x-access-token'],
+    req.headers?.['x-auth-token'],
+    req.headers?.['x-session-token'],
+    req.headers?.['x-driver-token'],
+    req.headers?.token,
+  ];
+  for (const raw of candidates) {
+    const token = normalizeDriverTokenCandidate(raw);
+    if (token) return token;
+  }
+  return null;
 }
 
 /** Validate api_key against stored API Hash Key (mt_option.driver_api_hash_key). Call after body is parsed. */
@@ -66,4 +99,11 @@ async function optionalDriver(req, res, next) {
   next();
 }
 
-module.exports = { validateApiKey, resolveDriver, optionalDriver, getApiKey, getDriverTokenFromRequest };
+module.exports = {
+  validateApiKey,
+  resolveDriver,
+  optionalDriver,
+  getApiKey,
+  getDriverTokenFromRequest,
+  normalizeDriverTokenCandidate,
+};

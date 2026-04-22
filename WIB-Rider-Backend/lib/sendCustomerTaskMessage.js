@@ -321,8 +321,17 @@ async function sendCustomerTaskMessage(pool, errandWibPool, driver, body) {
 
   const dataPayload = {
     push_type: pushType,
+    type: pushType,
     task_id: String(storedTaskId),
     message_id: String(messageId),
+    show_popup: '1',
+    popup_enabled: 'true',
+    popup_title: pushTitle,
+    popup_message: notifyBody,
+    popup_type: pushType,
+    local_notification_title: pushTitle,
+    local_notification_body: notifyBody,
+    local_notification_type: pushType,
   };
   if (standardOrderId != null && standardOrderId > 0) {
     dataPayload.order_id = String(standardOrderId);
@@ -337,9 +346,19 @@ async function sendCustomerTaskMessage(pool, errandWibPool, driver, body) {
   });
 
   const logJson = JSON.stringify({
+    source: 'driver_customer_message',
     ok: pushResult.success,
     messageId: pushResult.messageId || null,
     error: pushResult.error || null,
+    push_type: pushType,
+    show_popup: 1,
+    popup_enabled: true,
+    popup_title: pushTitle,
+    popup_message: notifyBody,
+    popup_type: pushType,
+    local_notification_title: pushTitle,
+    local_notification_body: notifyBody,
+    local_notification_type: pushType,
   });
 
   await insertMtMobile2PushLog(pool, {

@@ -275,7 +275,7 @@ function interpretCustomerDispatchResponseBody(text) {
  * @param {{ clientId: number, orderId: number, title: string, message: string }} args
  * @returns {Promise<{ ok?: boolean, skipped?: string, status?: number, body?: string, error?: string, httpOk?: boolean, fcmSent?: number|null, customerSkipped?: string|null }>}
  */
-async function postCustomerDispatchOrder({ clientId, orderId, title, message }) {
+async function postCustomerDispatchOrder({ clientId, orderId, title, message, pushType }) {
   const { baseUrl, baseUrlSource, secret, ok, reason } = getCustomerDispatchConfig();
   if (!ok) {
     return {
@@ -299,12 +299,16 @@ async function postCustomerDispatchOrder({ clientId, orderId, title, message }) 
     order_id: String(oid),
     title: String(title || 'Order update').trim() || 'Order update',
     message: String(message != null ? message : '').trim(),
+    type: String(pushType || 'order_update').trim() || 'order_update',
+    push_type: String(pushType || 'order_update').trim() || 'order_update',
     show_popup: 1,
     popup_enabled: true,
     popup_title: String(title || 'Order update').trim() || 'Order update',
     popup_message: String(message != null ? message : '').trim(),
+    popup_type: String(pushType || 'order_update').trim() || 'order_update',
     local_notification_title: String(title || 'Order update').trim() || 'Order update',
     local_notification_body: String(message != null ? message : '').trim(),
+    local_notification_type: String(pushType || 'order_update').trim() || 'order_update',
   });
 
   const controller = new AbortController();
@@ -407,8 +411,10 @@ async function recordDispatchOrderPushLog(pool, meta) {
       popup_enabled: true,
       popup_title: title,
       popup_message: message,
+      popup_type: pushKind,
       local_notification_title: title,
       local_notification_body: message,
+      local_notification_type: pushKind,
       base_url: dispatchResult.baseUrl ?? null,
       base_url_source: dispatchResult.baseUrlSource ?? null,
       dispatch_url: dispatchResult.dispatchUrl ?? null,
@@ -473,6 +479,7 @@ function notifyCustomerRiderAssignedForFoodTaskFireAndForget(pool, ctx) {
         orderId: oid,
         title: COPY_RIDER_ASSIGNED.title,
         message: COPY_RIDER_ASSIGNED.message,
+        pushType: 'rider_assigned',
       });
       if (!result.ok) logDispatchFailure(logBase, clientId, result);
       await recordDispatchOrderPushLog(pool, {
@@ -551,6 +558,7 @@ function notifyCustomerFoodTaskStatusPushFireAndForget(pool, ctx) {
         orderId: oid,
         title: copy.title,
         message: copy.message,
+        pushType: pushKind,
       });
       if (!result.ok) logDispatchFailure(logBase, clientId, result);
       await recordDispatchOrderPushLog(pool, {
