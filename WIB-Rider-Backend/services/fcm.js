@@ -1,3 +1,8 @@
+'use strict';
+
+const fs = require('fs');
+const path = require('path');
+
 let admin = null;
 let app = null;
 
@@ -88,12 +93,38 @@ async function initFirebase() {
   if (app) return app;
   const { pool } = require('../config/db');
   try {
-    const [[row]] = await pool.query(
-      "SELECT option_value AS value FROM mt_option WHERE option_name = 'fcm_service_account_json' LIMIT 1"
-    );
-    const raw = row?.value;
-    if (!raw || !String(raw).trim()) return null;
-    const serviceAccount = JSON.parse(raw);
+    let serviceAccount = null;
+
+    try {
+      const [[row]] = await pool.query(
+        "SELECT option_value AS value FROM mt_option WHERE option_name = 'fcm_service_account_json' LIMIT 1"
+      );
+      const raw = row?.value;
+      if (raw && String(raw).trim()) {
+        serviceAccount = JSON.parse(raw);
+      }
+    } catch (e) {
+      if (e.code !== 'ER_NO_SUCH_TABLE' && e.code !== 'ER_BAD_FIELD_ERROR') {
+        console.warn('FCM DB config load failed:', e.message);
+      }
+    }
+
+    if (!serviceAccount) {
+      const rawPath = String(process.env.FIREBASE_SERVICE_ACCOUNT_PATH || '').trim();
+      if (rawPath) {
+        const candidates = path.isAbsolute(rawPath)
+          ? [rawPath]
+          : [path.resolve(process.cwd(), rawPath), path.resolve(__dirname, '..', rawPath)];
+        for (const candidate of candidates) {
+          if (!fs.existsSync(candidate)) continue;
+          const rawJson = fs.readFileSync(candidate, 'utf8');
+          serviceAccount = JSON.parse(rawJson);
+          break;
+        }
+      }
+    }
+
+    if (!serviceAccount) return null;
     admin = require('firebase-admin');
     if (!admin.apps.length) {
       admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });

@@ -7,6 +7,7 @@
 
 const { insertMtMobile2PushLog } = require('./mtMobile2PushLogs');
 const { fetchClientFcmTokenAndDeviceRef } = require('./customerFcmToken');
+const { sendPushToFcmToken } = require('../services/fcm');
 const {
   fetchMobile2DeviceRegContextForClient,
   fetchMtClientDisplayName,
@@ -348,6 +349,102 @@ async function postCustomerDispatchOrder({ clientId, orderId, title, message, pu
   }
 }
 
+async function resolveDirectCustomerPushTarget(pool, clientId) {
+  const [mobile2, legacy] = await Promise.all([
+    fetchMobile2DeviceRegContextForClient(pool, clientId),
+    fetchClientFcmTokenAndDeviceRef(pool, 'mt_client', clientId),
+  ]);
+
+  if (mobile2?.deviceId) {
+    return {
+      token: String(mobile2.deviceId).trim(),
+      deviceRef:
+        mobile2.installUuid && String(mobile2.installUuid).trim()
+          ? String(mobile2.installUuid).trim()
+          : legacy?.deviceRef || null,
+      devicePlatform:
+        mobile2.devicePlatform && String(mobile2.devicePlatform).trim()
+          ? String(mobile2.devicePlatform).trim()
+          : null,
+      source: 'mt_mobile2_device_reg',
+    };
+  }
+
+  return {
+    token: legacy?.token && String(legacy.token).trim() ? String(legacy.token).trim() : null,
+    deviceRef: legacy?.deviceRef && String(legacy.deviceRef).trim() ? String(legacy.deviceRef).trim() : null,
+    devicePlatform: null,
+    source: legacy?.token ? 'mt_client' : 'none',
+  };
+}
+
+async function sendDirectCustomerOrderPush(pool, { clientId, orderId, taskId, title, message, pushType }) {
+  const target = await resolveDirectCustomerPushTarget(pool, clientId);
+  if (!target.token) {
+    return {
+      ok: false,
+      directFcmAttempted: true,
+      directFcmOk: false,
+      directFcmSkipped: 'no_device_token',
+      directTargetSource: target.source,
+    };
+  }
+
+  const payload = {
+    type: String(pushType || 'order_update').trim() || 'order_update',
+    push_type: String(pushType || 'order_update').trim() || 'order_update',
+    order_id: String(orderId),
+    task_id: String(taskId),
+    screen: 'order_detail',
+    click_action: 'FLUTTER_NOTIFICATION_CLICK',
+    show_popup: '1',
+    popup_enabled: 'true',
+    popup_title: String(title || 'Order update').trim() || 'Order update',
+    popup_message: String(message != null ? message : '').trim(),
+    popup_type: String(pushType || 'order_update').trim() || 'order_update',
+    local_notification_title: String(title || 'Order update').trim() || 'Order update',
+    local_notification_body: String(message != null ? message : '').trim(),
+    local_notification_type: String(pushType || 'order_update').trim() || 'order_update',
+  };
+
+  const pushResult = await sendPushToFcmToken(target.token, title, message, payload, {
+    useCustomerAndroidChannel: true,
+  });
+
+  return {
+    ok: pushResult.success === true,
+    directFcmAttempted: true,
+    directFcmOk: pushResult.success === true,
+    directFcmMessageId: pushResult.messageId || null,
+    directFcmError: pushResult.error || null,
+    directTargetSource: target.source,
+  };
+}
+
+async function withDirectCustomerPushFallback(pool, payload, dispatchResult) {
+  if (dispatchResult.ok === true) {
+    return {
+      ...dispatchResult,
+      deliveryPath: 'customer_api',
+      fallbackToDirectFcm: false,
+    };
+  }
+
+  const direct = await sendDirectCustomerOrderPush(pool, payload);
+  return {
+    ...dispatchResult,
+    ok: direct.ok === true,
+    deliveryPath: direct.ok === true ? 'direct_fcm' : null,
+    fallbackToDirectFcm: true,
+    directFcmAttempted: direct.directFcmAttempted === true,
+    directFcmOk: direct.directFcmOk === true,
+    directFcmMessageId: direct.directFcmMessageId || null,
+    directFcmError: direct.directFcmError || null,
+    directFcmSkipped: direct.directFcmSkipped || null,
+    directTargetSource: direct.directTargetSource || null,
+  };
+}
+
 function logDispatchFailure(logBase, clientId, result) {
   const snippet =
     result.body != null
@@ -362,6 +459,9 @@ function logDispatchFailure(logBase, clientId, result) {
     http_ok: result.httpOk === true,
     fcm_sent: result.fcmSent != null ? result.fcmSent : undefined,
     customer_skipped: result.customerSkipped || undefined,
+    direct_fcm_attempted: result.directFcmAttempted === true,
+    direct_fcm_ok: result.directFcmOk === true,
+    direct_target_source: result.directTargetSource || undefined,
     detail: snippet,
   });
 }
@@ -415,6 +515,14 @@ async function recordDispatchOrderPushLog(pool, meta) {
       local_notification_title: title,
       local_notification_body: message,
       local_notification_type: pushKind,
+      delivery_path: dispatchResult.deliveryPath ?? null,
+      fallback_to_direct_fcm: dispatchResult.fallbackToDirectFcm === true,
+      direct_fcm_attempted: dispatchResult.directFcmAttempted === true,
+      direct_fcm_ok: dispatchResult.directFcmOk === true,
+      direct_fcm_message_id: dispatchResult.directFcmMessageId ?? null,
+      direct_fcm_error: dispatchResult.directFcmError ?? null,
+      direct_fcm_skipped: dispatchResult.directFcmSkipped ?? null,
+      direct_target_source: dispatchResult.directTargetSource ?? null,
       base_url: dispatchResult.baseUrl ?? null,
       base_url_source: dispatchResult.baseUrlSource ?? null,
       dispatch_url: dispatchResult.dispatchUrl ?? null,
@@ -465,22 +573,30 @@ function notifyCustomerRiderAssignedForFoodTaskFireAndForget(pool, ctx) {
   const oid = ctx.orderId != null ? parseInt(String(ctx.orderId), 10) : NaN;
   if (!Number.isFinite(oid) || oid <= 0) return;
 
-  const cfg = getCustomerDispatchConfig();
-  if (!cfg.baseUrl) return;
-
   (async () => {
     const logBase = { task_id: taskId, order_id: oid, push: 'rider_assigned', prev_driver_id: prevId, new_driver_id: nextId };
     try {
       const clientId = await fetchFoodOrderClientId(pool, oid);
       if (!clientId) return;
 
-      const result = await postCustomerDispatchOrder({
-        clientId,
-        orderId: oid,
-        title: COPY_RIDER_ASSIGNED.title,
-        message: COPY_RIDER_ASSIGNED.message,
-        pushType: 'rider_assigned',
-      });
+      const result = await withDirectCustomerPushFallback(
+        pool,
+        {
+          clientId,
+          orderId: oid,
+          taskId,
+          title: COPY_RIDER_ASSIGNED.title,
+          message: COPY_RIDER_ASSIGNED.message,
+          pushType: 'rider_assigned',
+        },
+        await postCustomerDispatchOrder({
+          clientId,
+          orderId: oid,
+          title: COPY_RIDER_ASSIGNED.title,
+          message: COPY_RIDER_ASSIGNED.message,
+          pushType: 'rider_assigned',
+        })
+      );
       if (!result.ok) logDispatchFailure(logBase, clientId, result);
       await recordDispatchOrderPushLog(pool, {
         clientId,
@@ -533,9 +649,6 @@ function notifyCustomerFoodTaskStatusPushFireAndForget(pool, ctx) {
   const oid = ctx.orderId != null ? parseInt(String(ctx.orderId), 10) : NaN;
   if (!Number.isFinite(oid) || oid <= 0) return;
 
-  const cfg = getCustomerDispatchConfig();
-  if (!cfg.baseUrl) return;
-
   const copy =
     pushKind === 'acknowledged'
       ? COPY_ACKNOWLEDGED
@@ -553,13 +666,24 @@ function notifyCustomerFoodTaskStatusPushFireAndForget(pool, ctx) {
       const clientId = await fetchFoodOrderClientId(pool, oid);
       if (!clientId) return;
 
-      const result = await postCustomerDispatchOrder({
-        clientId,
-        orderId: oid,
-        title: copy.title,
-        message: copy.message,
-        pushType: pushKind,
-      });
+      const result = await withDirectCustomerPushFallback(
+        pool,
+        {
+          clientId,
+          orderId: oid,
+          taskId,
+          title: copy.title,
+          message: copy.message,
+          pushType: pushKind,
+        },
+        await postCustomerDispatchOrder({
+          clientId,
+          orderId: oid,
+          title: copy.title,
+          message: copy.message,
+          pushType: pushKind,
+        })
+      );
       if (!result.ok) logDispatchFailure(logBase, clientId, result);
       await recordDispatchOrderPushLog(pool, {
         clientId,
