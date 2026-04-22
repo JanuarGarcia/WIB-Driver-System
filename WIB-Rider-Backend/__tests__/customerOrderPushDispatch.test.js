@@ -25,9 +25,11 @@ describe('customer order push dispatch', () => {
     });
     const fetchMtClientDisplayName = jest.fn().mockResolvedValue('Test Customer');
     const resolvePushLogTriggerId = jest.fn().mockResolvedValue(77);
+    const sendPushToFcmToken = jest.fn().mockResolvedValue({ success: true, messageId: 'direct-msg-1' });
 
     jest.doMock('../lib/mtMobile2PushLogs', () => ({ insertMtMobile2PushLog }));
     jest.doMock('../lib/customerFcmToken', () => ({ fetchClientFcmTokenAndDeviceRef }));
+    jest.doMock('../services/fcm', () => ({ sendPushToFcmToken }));
     jest.doMock('../lib/mobile2DeviceRegLookup', () => ({
       fetchMobile2DeviceRegContextForClient,
       fetchMtClientDisplayName,
@@ -76,6 +78,23 @@ describe('customer order push dispatch', () => {
       })
     );
 
+    expect(sendPushToFcmToken).toHaveBeenCalledWith(
+      'new-token',
+      'DELIVERY DRIVER STARTED',
+      expect.any(String),
+      expect.objectContaining({
+        order_id: '99',
+        task_id: '88',
+        push_type: 'driver_started',
+        type: 'driver_started',
+        click_action: 'FLUTTER_NOTIFICATION_CLICK',
+        show_popup: '1',
+        popup_enabled: 'true',
+        popup_type: 'driver_started',
+      }),
+      { useCustomerAndroidChannel: true }
+    );
+
     expect(insertMtMobile2PushLog).toHaveBeenCalledWith(
       pool,
       expect.objectContaining({
@@ -84,7 +103,99 @@ describe('customer order push dispatch', () => {
         body: expect.any(String),
         pushType: 'order',
         status: 'sent',
-        jsonResponse: expect.stringContaining('"popup_type":"driver_started"'),
+        jsonResponse: expect.stringContaining('"delivery_path":"customer_api+direct_fcm"'),
+      })
+    );
+  });
+
+  test('rider negative status change dispatches a distinct failed notification to both customer paths', async () => {
+    process.env.CUSTOMER_API_BASE_URL = 'https://customer.example.com';
+    process.env.PUSH_DISPATCH_SECRET = 'secret';
+
+    const insertMtMobile2PushLog = jest.fn().mockResolvedValue(undefined);
+    const fetchClientFcmTokenAndDeviceRef = jest.fn().mockResolvedValue({ token: 'legacy-token', deviceRef: 'legacy-ref' });
+    const fetchMobile2DeviceRegContextForClient = jest.fn().mockResolvedValue({
+      deviceId: 'new-token',
+      devicePlatform: 'ios',
+      installUuid: 'install-2',
+      clientFullName: 'Test Customer',
+    });
+    const fetchMtClientDisplayName = jest.fn().mockResolvedValue('Test Customer');
+    const resolvePushLogTriggerId = jest.fn().mockResolvedValue(88);
+    const sendPushToFcmToken = jest.fn().mockResolvedValue({ success: true, messageId: 'direct-msg-2' });
+
+    jest.doMock('../lib/mtMobile2PushLogs', () => ({ insertMtMobile2PushLog }));
+    jest.doMock('../lib/customerFcmToken', () => ({ fetchClientFcmTokenAndDeviceRef }));
+    jest.doMock('../services/fcm', () => ({ sendPushToFcmToken }));
+    jest.doMock('../lib/mobile2DeviceRegLookup', () => ({
+      fetchMobile2DeviceRegContextForClient,
+      fetchMtClientDisplayName,
+      resolvePushLogTriggerId,
+    }));
+
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({ success: true, sent: 1 }),
+    });
+
+    const pool = {
+      query: jest.fn(async (sql) => {
+        const text = String(sql);
+        if (/SELECT client_id FROM mt_order/i.test(text)) {
+          return [[{ client_id: 66 }]];
+        }
+        return [[]];
+      }),
+    };
+
+    const svc = require('../lib/customerOrderPushDispatch');
+    svc.notifyCustomerFoodTaskStatusPushFireAndForget(pool, {
+      taskId: 99,
+      orderId: 100,
+      prevStatusRaw: 'started',
+      newStatusRaw: 'failed',
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const [, fetchOpts] = global.fetch.mock.calls[0];
+    const body = JSON.parse(fetchOpts.body);
+    expect(body).toEqual(
+      expect.objectContaining({
+        client_id: '66',
+        order_id: '100',
+        push_type: 'failed',
+        type: 'failed',
+        show_popup: 1,
+        popup_type: 'failed',
+        local_notification_type: 'failed',
+      })
+    );
+
+    expect(sendPushToFcmToken).toHaveBeenCalledWith(
+      'new-token',
+      'DELIVERY FAILED',
+      expect.any(String),
+      expect.objectContaining({
+        order_id: '100',
+        task_id: '99',
+        push_type: 'failed',
+        type: 'failed',
+        popup_type: 'failed',
+        local_notification_type: 'failed',
+      }),
+      { useCustomerAndroidChannel: true }
+    );
+
+    expect(insertMtMobile2PushLog).toHaveBeenCalledWith(
+      pool,
+      expect.objectContaining({
+        clientId: 66,
+        title: 'DELIVERY FAILED',
+        pushType: 'order',
+        status: 'sent',
+        jsonResponse: expect.stringContaining('"popup_type":"failed"'),
       })
     );
   });

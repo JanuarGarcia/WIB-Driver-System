@@ -47,6 +47,21 @@ const COPY_COMPLETE = {
     "Thank you for supporting our rider via WhenInBaguio app. Each order contributes significantly to the welfare of our rider's family.",
 };
 
+const COPY_CANCELLED = {
+  title: 'ORDER CANCELLED',
+  message: 'Your delivery order has been cancelled. Please check the app for the latest update.',
+};
+
+const COPY_DECLINED = {
+  title: 'ORDER DECLINED',
+  message: 'Your delivery order was declined. Please open the app to view the latest status.',
+};
+
+const COPY_FAILED = {
+  title: 'DELIVERY FAILED',
+  message: 'We were unable to complete your delivery. Please check the app for the latest update.',
+};
+
 function isEffectivelyUnassignedDriverId(driverId) {
   if (driverId == null || driverId === '') return true;
   const n = parseInt(String(driverId), 10);
@@ -79,6 +94,14 @@ function statusImpliesAcknowledged(raw) {
 function statusImpliesComplete(raw) {
   const c = compactStatusKey(raw);
   return c === 'successful' || c === 'delivered' || c === 'completed';
+}
+
+function exactCustomerNegativePushKind(raw) {
+  const n = String(normalizeFoodTaskStatusKey(raw) || '').toLowerCase().trim();
+  if (n === 'cancelled' || n === 'canceled' || n === 'unassigned') return 'cancelled';
+  if (n === 'declined' || n === 'rejected') return 'declined';
+  if (n === 'failed') return 'failed';
+  return null;
 }
 
 /**
@@ -445,6 +468,29 @@ async function withDirectCustomerPushFallback(pool, payload, dispatchResult) {
   };
 }
 
+async function withCustomerApiAndDirectFcm(pool, payload, dispatchResult) {
+  const direct = await sendDirectCustomerOrderPush(pool, payload);
+  return {
+    ...dispatchResult,
+    ok: dispatchResult.ok === true || direct.ok === true,
+    deliveryPath:
+      dispatchResult.ok === true && direct.ok === true
+        ? 'customer_api+direct_fcm'
+        : dispatchResult.ok === true
+          ? 'customer_api'
+          : direct.ok === true
+            ? 'direct_fcm'
+            : null,
+    fallbackToDirectFcm: dispatchResult.ok !== true,
+    directFcmAttempted: direct.directFcmAttempted === true,
+    directFcmOk: direct.directFcmOk === true,
+    directFcmMessageId: direct.directFcmMessageId || null,
+    directFcmError: direct.directFcmError || null,
+    directFcmSkipped: direct.directFcmSkipped || null,
+    directTargetSource: direct.directTargetSource || null,
+  };
+}
+
 function logDispatchFailure(logBase, clientId, result) {
   const snippet =
     result.body != null
@@ -579,7 +625,7 @@ function notifyCustomerRiderAssignedForFoodTaskFireAndForget(pool, ctx) {
       const clientId = await fetchFoodOrderClientId(pool, oid);
       if (!clientId) return;
 
-      const result = await withDirectCustomerPushFallback(
+      const result = await withCustomerApiAndDirectFcm(
         pool,
         {
           clientId,
@@ -614,7 +660,7 @@ function notifyCustomerRiderAssignedForFoodTaskFireAndForget(pool, ctx) {
 }
 
 /**
- * Customer order pushes: prep, started-only, inprogress-only, arrived, complete — one dispatch per transition into each stage.
+ * Customer order pushes: prep, started-only, inprogress-only, arrived, complete, and distinct negative outcomes.
  *
  * @param {import('mysql2/promise').Pool} pool
  * @param {{ taskId: number, orderId: unknown, prevStatusRaw: unknown, newStatusRaw: unknown }} ctx
@@ -626,6 +672,8 @@ function notifyCustomerFoodTaskStatusPushFireAndForget(pool, ctx) {
 
   const prevS = stageForCustomerFoodStatusPush(prev);
   const nextS = stageForCustomerFoodStatusPush(next);
+  const prevNegativeKind = exactCustomerNegativePushKind(prev);
+  const nextNegativeKind = exactCustomerNegativePushKind(next);
 
   let pushKind = null;
   if (nextS === 'prep' && prevS !== 'prep' && prevS !== 'negative') {
@@ -643,6 +691,8 @@ function notifyCustomerFoodTaskStatusPushFireAndForget(pool, ctx) {
     pushKind = 'driver_arrived';
   } else if (nextS === 'complete' && prevS !== 'complete' && prevS !== 'negative') {
     pushKind = 'complete';
+  } else if (nextS === 'negative' && nextNegativeKind && prevNegativeKind !== nextNegativeKind) {
+    pushKind = nextNegativeKind;
   }
   if (!pushKind) return;
 
@@ -658,7 +708,13 @@ function notifyCustomerFoodTaskStatusPushFireAndForget(pool, ctx) {
           ? COPY_DRIVER_IN_PROGRESS
           : pushKind === 'driver_arrived'
             ? COPY_DRIVER_ARRIVED
-            : COPY_COMPLETE;
+            : pushKind === 'cancelled'
+              ? COPY_CANCELLED
+              : pushKind === 'declined'
+                ? COPY_DECLINED
+                : pushKind === 'failed'
+                  ? COPY_FAILED
+                  : COPY_COMPLETE;
 
   (async () => {
     const logBase = { task_id: taskId, order_id: oid, push: pushKind };
@@ -666,7 +722,7 @@ function notifyCustomerFoodTaskStatusPushFireAndForget(pool, ctx) {
       const clientId = await fetchFoodOrderClientId(pool, oid);
       if (!clientId) return;
 
-      const result = await withDirectCustomerPushFallback(
+      const result = await withCustomerApiAndDirectFcm(
         pool,
         {
           clientId,
