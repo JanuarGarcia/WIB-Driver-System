@@ -143,5 +143,73 @@ describe('rider push fallback behavior', () => {
       expect.stringMatching(/INSERT\s+INTO\s+mt_driver_pushlog/i),
       [9, 'Task assigned', 'Body', 'task_assigned', 101, 202]
     );
+    expect(send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          push_nonce: expect.any(String),
+        }),
+      })
+    );
+  });
+
+  test('sendPushToDriver falls back to a simpler inbox insert when mt_driver_pushlog schema lacks date_process', async () => {
+    let insertAttempt = 0;
+    const query = jest.fn(async (sql) => {
+      const text = String(sql);
+      if (/FROM\s+mt_rider_device_reg/i.test(text)) {
+        return [[]];
+      }
+      if (/SELECT\s+device_id\s+FROM\s+mt_driver/i.test(text)) {
+        return [[{ device_id: 'driver-token' }]];
+      }
+      if (/INSERT\s+INTO\s+mt_driver_pushlog/i.test(text)) {
+        insertAttempt += 1;
+        if (insertAttempt === 1) {
+          const err = new Error('Unknown column date_process');
+          err.code = 'ER_BAD_FIELD_ERROR';
+          throw err;
+        }
+        return [{ insertId: 321 }];
+      }
+      if (/FROM\s+mt_option/i.test(text)) {
+        return [[{ value: JSON.stringify({ project_id: 'x', client_email: 'x@y.z', private_key: '-----BEGIN PRIVATE KEY-----\\nabc\\n-----END PRIVATE KEY-----\\n' }) }]];
+      }
+      return [[]];
+    });
+
+    const send = jest.fn().mockResolvedValue('msg-2');
+    const initializeApp = jest.fn();
+    const cert = jest.fn(() => ({}));
+
+    jest.doMock('../config/db', () => ({ pool: { query } }));
+    jest.unmock('../services/fcm');
+    jest.doMock('firebase-admin', () => ({
+      apps: [],
+      initializeApp,
+      credential: { cert },
+      messaging: undefined,
+      __esModule: false,
+      default: undefined,
+    }));
+
+    const fcm = require('../services/fcm');
+    const firebaseAdmin = require('firebase-admin');
+    firebaseAdmin.initializeApp.mockImplementation(() => {
+      firebaseAdmin.apps.push({});
+    });
+    firebaseAdmin.messaging = () => ({ send });
+    firebaseAdmin.apps[0] = { messaging: () => ({ send }) };
+
+    const res = await fcm.sendPushToDriver(9, 'Retry insert', 'Body', { type: 'admin_push' });
+
+    expect(res).toEqual({ success: true, messageId: 'msg-2' });
+    expect(query).toHaveBeenCalledWith(
+      expect.stringMatching(/INSERT\s+INTO\s+mt_driver_pushlog .*date_process/i),
+      [9, 'Retry insert', 'Body', 'admin_push', null, null]
+    );
+    expect(query).toHaveBeenCalledWith(
+      expect.stringMatching(/INSERT\s+INTO\s+mt_driver_pushlog .*is_read/i),
+      [9, 'Retry insert', 'Body', 'admin_push', null, null]
+    );
   });
 });

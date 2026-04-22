@@ -111,24 +111,57 @@ function toPositiveInt(v) {
   return Number.isFinite(n) && n > 0 ? n : null;
 }
 
+async function insertDriverInboxRow(pool, params) {
+  const variants = [
+    {
+      sql: `INSERT INTO mt_driver_pushlog (driver_id, push_title, push_message, push_type, task_id, order_id, date_created, date_process, is_read)
+            VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW(), 0)`,
+      values: [params.driverId, params.title, params.body, params.pushType, params.taskId, params.orderId],
+    },
+    {
+      sql: `INSERT INTO mt_driver_pushlog (driver_id, push_title, push_message, push_type, task_id, order_id, date_created, is_read)
+            VALUES (?, ?, ?, ?, ?, ?, NOW(), 0)`,
+      values: [params.driverId, params.title, params.body, params.pushType, params.taskId, params.orderId],
+    },
+    {
+      sql: `INSERT INTO mt_driver_pushlog (driver_id, push_title, push_message, push_type, task_id, order_id, date_created)
+            VALUES (?, ?, ?, ?, ?, ?, NOW())`,
+      values: [params.driverId, params.title, params.body, params.pushType, params.taskId, params.orderId],
+    },
+    {
+      sql: `INSERT INTO mt_driver_pushlog (driver_id, push_title, push_message, push_type, date_created)
+            VALUES (?, ?, ?, ?, NOW())`,
+      values: [params.driverId, params.title, params.body, params.pushType],
+    },
+  ];
+
+  for (const variant of variants) {
+    try {
+      const [result] = await pool.query(variant.sql, variant.values);
+      return result && result.insertId ? Number(result.insertId) : null;
+    } catch (e) {
+      if (e.code === 'ER_NO_SUCH_TABLE') return null;
+      if (e.code === 'ER_BAD_FIELD_ERROR') continue;
+      throw e;
+    }
+  }
+  return null;
+}
+
 async function logDriverInboxNotification(pool, { driverId, title, body, pushType, taskId, orderId }) {
   const did = toPositiveInt(driverId);
-  if (!did) return;
+  if (!did) return null;
   try {
-    await pool.query(
-      `INSERT INTO mt_driver_pushlog (driver_id, push_title, push_message, push_type, task_id, order_id, date_created, date_process, is_read)
-       VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW(), 0)`,
-      [
-        did,
-        String(title != null ? title : '').trim() || 'Notification',
-        String(body != null ? body : '').trim() || String(title != null ? title : '').trim() || 'Notification',
-        String(pushType != null ? pushType : '').trim() || 'admin_push',
-        toPositiveInt(taskId),
-        toPositiveInt(orderId),
-      ]
-    );
+    return await insertDriverInboxRow(pool, {
+      driverId: did,
+      title: String(title != null ? title : '').trim() || 'Notification',
+      body: String(body != null ? body : '').trim() || String(title != null ? title : '').trim() || 'Notification',
+      pushType: String(pushType != null ? pushType : '').trim() || 'admin_push',
+      taskId: toPositiveInt(taskId),
+      orderId: toPositiveInt(orderId),
+    });
   } catch (_) {
-    /* optional */
+    return null;
   }
 }
 
@@ -137,6 +170,9 @@ async function sendPushToDriver(driverId, title, body, data = {}) {
   const token = await resolveDriverFcmToken(pool, driverId);
   if (!token) return { success: false, error: 'No device token' };
   const payloadData = data && typeof data === 'object' ? { ...data } : {};
+  if (payloadData.push_nonce == null) {
+    payloadData.push_nonce = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  }
   if (payloadData.type != null && payloadData.push_type == null) {
     payloadData.push_type = payloadData.type;
   }

@@ -1851,10 +1851,42 @@ router.post('/ChangeTaskStatus', validateApiKey, resolveDriver, async (req, res)
 });
 
 router.post('/GetNotifications', validateApiKey, resolveDriver, async (req, res) => {
-  const [rows] = await pool.query(
-    'SELECT push_id, push_title, push_message, push_type, date_created, is_read, task_id, order_id FROM mt_driver_pushlog WHERE driver_id = ? ORDER BY date_created DESC LIMIT 100',
-    [req.driver.id]
-  );
+  let rows = [];
+  try {
+    const [driverRows] = await pool.query(
+      'SELECT push_id, push_title, push_message, push_type, date_created, is_read, task_id, order_id FROM mt_driver_pushlog WHERE driver_id = ? ORDER BY date_created DESC LIMIT 100',
+      [req.driver.id]
+    );
+    rows = Array.isArray(driverRows) ? driverRows : [];
+  } catch (e) {
+    if (e.code !== 'ER_NO_SUCH_TABLE' && e.code !== 'ER_BAD_FIELD_ERROR') throw e;
+  }
+
+  if (!rows.length) {
+    try {
+      const [fallbackRows] = await pool.query(
+        `SELECT
+           id AS push_id,
+           push_title,
+           push_body AS push_message,
+           push_type,
+           date_created,
+           0 AS is_read,
+           NULL AS task_id,
+           order_id
+         FROM mt_rider_push_logs
+         WHERE driver_id = ?
+           AND status = 'sent'
+         ORDER BY date_created DESC
+         LIMIT 100`,
+        [req.driver.id]
+      );
+      rows = Array.isArray(fallbackRows) ? fallbackRows : [];
+    } catch (e) {
+      if (e.code !== 'ER_NO_SUCH_TABLE' && e.code !== 'ER_BAD_FIELD_ERROR') throw e;
+    }
+  }
+
   const data = rows.map((r) => ({
     ...r,
     date_created: r.date_created ? new Date(r.date_created).toISOString() : null,
