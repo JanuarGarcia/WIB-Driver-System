@@ -90,9 +90,13 @@ async function reassignTask(req, res) {
     `;
 
     const [result] = await pool.query(sql, [newRiderId, adminId, reason, taskId]);
-
+    // Always send notification, even if no DB row was changed (e.g., reassign to same rider)
     if (result.affectedRows === 0) {
-      return res.status(404).json({ code: 2, msg: 'Task not found or no changes made' });
+      // Check if the task exists (to avoid sending for missing task)
+      const [[existingTask]] = await pool.query('SELECT id FROM mt_driver_task WHERE id = ?', [taskId]);
+      if (!existingTask) {
+        return res.status(404).json({ code: 2, msg: 'Task not found' });
+      }
     }
 
     // Improved notification payload for reassigned tasks
