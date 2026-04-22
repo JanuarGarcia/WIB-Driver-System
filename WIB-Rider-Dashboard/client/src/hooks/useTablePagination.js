@@ -1,11 +1,11 @@
 import { useState, useMemo, useEffect } from 'react';
 
-export const PAGE_SIZE_OPTIONS = [5, 10, 15];
+export const PAGE_SIZE_OPTIONS = [5, 10, 20];
 
 /**
  * Hook for client-side table pagination.
  * @param {Array} items - Full array of items to paginate
- * @param {number} defaultPageSize - Default rows per page (5, 10, or 15)
+ * @param {number} defaultPageSize - Default rows per page (5, 10, or 20)
  * @param {{ initialPage?: number, initialPageSize?: number, page?: number, pageSize?: number, onPageChange?: (n: number) => void, onPageSizeChange?: (n: number) => void }} options - Initial state or controlled (page/pageSize + callbacks) e.g. from URL
  * @returns {Object} { paginatedItems, pageSize, setPageSize, currentPage, setCurrentPage, totalPages, totalItems, startRow, endRow }
  */

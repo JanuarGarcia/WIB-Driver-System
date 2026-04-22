@@ -57,6 +57,10 @@ function formatStatusTime(isoOrDate) {
   return d.toLocaleTimeString('en-US', { hour12: true, hour: '2-digit', minute: '2-digit', second: '2-digit' });
 }
 
+function driverDisplayName(d) {
+  return d.full_name || [d.first_name, d.last_name].filter(Boolean).join(' ') || d.username || '—';
+}
+
 function complianceBadgeInfo(d) {
   const required = Number(d?.compliance_required) === 1 || d?.compliance_required === true;
   const status = String(d?.compliance_status ?? '').toLowerCase().trim();
@@ -394,22 +398,27 @@ export default function Drivers() {
     setViewDriver({ ...d, id });
   };
 
+  const allOnPageSelected =
+    paginatedDrivers.length > 0 && paginatedDrivers.every((d) => selectedDriverIds.has(d.id ?? d.driver_id));
+
   return (
     <div className="listing-section drivers-listing">
       <div className="listing-tasks-header">
         <div className="listing-toolbar">
-          <button type="button" className="btn btn-primary" onClick={openCreateDriver}>
-            Add driver
-          </button>
-          <button type="button" className="btn btn-sm" onClick={() => fetchDrivers()} disabled={loading} title="Refresh list">
-            Refresh
-          </button>
-          <button type="button" className="btn btn-sm" onClick={exportAgentsCsv} disabled={loading || filteredDrivers.length === 0} title="Export filtered list as CSV">
-            Export agents
-          </button>
-          <button type="button" className="btn btn-sm btn-primary" onClick={openBulkPush} disabled={loading} title="Send push to all or selected drivers">
-            Send bulk push
-          </button>
+          <div className="drivers-toolbar-actions">
+            <button type="button" className="btn btn-primary" onClick={openCreateDriver}>
+              Add driver
+            </button>
+            <button type="button" className="btn btn-sm" onClick={() => fetchDrivers()} disabled={loading} title="Refresh list">
+              Refresh
+            </button>
+            <button type="button" className="btn btn-sm" onClick={exportAgentsCsv} disabled={loading || filteredDrivers.length === 0} title="Export filtered list as CSV">
+              Export agents
+            </button>
+            <button type="button" className="btn btn-sm btn-primary" onClick={openBulkPush} disabled={loading} title="Send push to all or selected drivers">
+              Send bulk push
+            </button>
+          </div>
           <div className="listing-toolbar-right">
             <div className="filter-pills">
               {STATUS_FILTERS.map((f) => (
@@ -437,12 +446,121 @@ export default function Drivers() {
       {loading && <div className="loading">Loading…</div>}
       {!loading && (
         <div className="listing-table-card">
+          <div className="drivers-mobile-summary" aria-live="polite">
+            <div className="drivers-mobile-summary-copy">
+              <span className="drivers-mobile-summary-count">{filteredDrivers.length}</span>
+              <span className="drivers-mobile-summary-label">drivers found</span>
+              <span className="drivers-mobile-summary-sep">•</span>
+              <span className="drivers-mobile-summary-selected">{selectedDriverIds.size} selected</span>
+            </div>
+            <button type="button" className="btn btn-sm" onClick={selectAllOnPage} disabled={paginatedDrivers.length === 0}>
+              {allOnPageSelected ? 'Clear page' : 'Select page'}
+            </button>
+          </div>
           <TableSortControls
             sortOptions={DRIVER_SORT_OPTIONS.map(({ key, label }) => ({ key, label }))}
             sortKey={sortKey}
             sortOrder={sortOrder}
             onSortChange={setSort}
           />
+          <div className="drivers-mobile-list">
+            {paginatedDrivers.map((d) => {
+              const rowId = d.id ?? d.driver_id;
+              const isPending = String(d.status || '').toLowerCase() === 'pending';
+              const compliance = complianceBadgeInfo(d);
+              return (
+                <article key={`mobile-${rowId}`} className="drivers-mobile-card">
+                  <div className="drivers-mobile-card-top">
+                    <label className="drivers-mobile-card-select">
+                      <input
+                        type="checkbox"
+                        className="drivers-checkbox"
+                        aria-label={`Select ${driverDisplayName(d)}`}
+                        checked={selectedDriverIds.has(rowId)}
+                        onChange={() => toggleDriverSelection(rowId)}
+                      />
+                      <span>Select</span>
+                    </label>
+                    <div className="drivers-mobile-card-title-group">
+                      <div className="drivers-mobile-card-title-row">
+                        <h3 className="drivers-mobile-card-title">{driverDisplayName(d)}</h3>
+                        <span className="drivers-mobile-card-id">#{rowId ?? '—'}</span>
+                      </div>
+                      <div className="drivers-mobile-card-subtitle">
+                        <span>{d.username ?? '—'}</span>
+                        <span>•</span>
+                        <span>{d.team_name ?? 'No team'}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="drivers-mobile-card-status">
+                    <div className="driver-status-cell">
+                      <span className="driver-status-date">{formatStatusDate(d.status_updated_at) ?? '—'}</span>
+                      <span className="driver-status-time">{formatStatusTime(d.status_updated_at) ?? '—'}</span>
+                    </div>
+                    <div className="drivers-mobile-card-tags">
+                      <span className={`tag ${driverStatusClass(d.status)}`}>
+                        {(d.status || 'active').toLowerCase()}
+                      </span>
+                      {d.on_duty ? <span className="tag status-green">On duty</span> : <span className="tag status-default">Off duty</span>}
+                      {compliance && (
+                        <span className="tag status-red" title={compliance.title}>
+                          {compliance.label}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="drivers-mobile-card-grid">
+                    <div className="drivers-mobile-card-field">
+                      <span className="drivers-mobile-card-label">Email</span>
+                      <span className="drivers-mobile-card-value">{d.email ?? '—'}</span>
+                    </div>
+                    <div className="drivers-mobile-card-field">
+                      <span className="drivers-mobile-card-label">Phone</span>
+                      <span className="drivers-mobile-card-value">{d.phone ?? '—'}</span>
+                    </div>
+                    <div className="drivers-mobile-card-field">
+                      <span className="drivers-mobile-card-label">Vehicle</span>
+                      <span className="drivers-mobile-card-value">{d.vehicle ?? '—'}</span>
+                    </div>
+                    <div className="drivers-mobile-card-field">
+                      <span className="drivers-mobile-card-label">Device</span>
+                      <span className="drivers-mobile-card-value">{d.device ?? '—'}</span>
+                    </div>
+                  </div>
+
+                  <div className="drivers-mobile-card-actions">
+                    {isPending && (
+                      <>
+                        <button type="button" className="btn btn-sm btn-success" onClick={() => setDriverStatus(d, 'active')} title="Approve signup">Approve</button>
+                        <button type="button" className="btn btn-sm btn-danger" onClick={() => setDriverStatus(d, 'blocked')} title="Deny signup">Deny</button>
+                      </>
+                    )}
+                    <button type="button" className="btn btn-sm btn-outline-view" onClick={() => openViewDriver(d)} title="View profile and tasks">
+                      View
+                    </button>
+                    <button type="button" className="btn btn-sm" onClick={() => setDriverOnDuty(d, !d.on_duty)} title={d.on_duty ? 'Set off duty' : 'Set on duty'}>
+                      {d.on_duty ? 'On duty' : 'Off'}
+                    </button>
+                    <button type="button" className="btn btn-sm" onClick={() => setDriverCompliance(d, 'flag')} title="Require office reporting/remittance">
+                      Office hold
+                    </button>
+                    <button type="button" className="btn btn-sm" onClick={() => setDriverCompliance(d, 'clear')} title="Mark as reported/complied">
+                      Clear hold
+                    </button>
+                    <button type="button" className="btn btn-sm" onClick={() => openEditDriver(d)}>Edit</button>
+                    <button type="button" className="btn btn-primary btn-sm" onClick={() => openSendPush(d)} title="Send push">Send push</button>
+                    <button type="button" className="btn btn-sm" onClick={() => deleteDriver(d)} disabled={driverSaving}>Delete</button>
+                  </div>
+                </article>
+              );
+            })}
+            {filteredDrivers.length === 0 && (
+              <p className="listing-empty-msg">No drivers match the current filters.</p>
+            )}
+          </div>
           <div className="listing-table-wrap">
             <table>
               <thead>
@@ -452,7 +570,7 @@ export default function Drivers() {
                       type="checkbox"
                       className="drivers-checkbox"
                       aria-label="Select all on page"
-                      checked={paginatedDrivers.length > 0 && paginatedDrivers.every((d) => selectedDriverIds.has(d.id ?? d.driver_id))}
+                      checked={allOnPageSelected}
                       onChange={selectAllOnPage}
                     />
                   </th>
@@ -486,7 +604,7 @@ export default function Drivers() {
                   </td>
                   <td>{rowId ?? '—'}</td>
                   <td>{d.username ?? '—'}</td>
-                  <td className="driver-name-cell">{d.full_name || [d.first_name, d.last_name].filter(Boolean).join(' ') || d.username || '—'}</td>
+                  <td className="driver-name-cell">{driverDisplayName(d)}</td>
                   <td>{d.email ?? '—'}</td>
                   <td>{d.phone ?? '—'}</td>
                   <td>{d.team_name ?? '—'}</td>
