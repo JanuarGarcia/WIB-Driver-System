@@ -1266,6 +1266,21 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
   display: flex;
   align-items: center;
   gap: 0.75rem;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.main-header-brand-group {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.main-header-team-select-wrap {
+  position: relative;
+  flex: 0 1 13.5rem;
+  min-width: 9.5rem;
+  max-width: min(15rem, 42vw);
 }
 .main-header-burger {
   width: 40px;
@@ -1286,22 +1301,32 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
   color: var(--color-primary);
 }
 .main-header-team-select {
+  width: 100%;
   padding: 0.45rem 2.1rem 0.45rem 0.75rem;
   border: 2px solid var(--border-soft);
   border-radius: 8px;
   background: var(--bg-card);
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12' fill='none'%3E%3Cpath d='M2.5 4.5L6 8l3.5-3.5' stroke='%238a8f98' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
-  background-repeat: no-repeat;
-  background-position: right 0.8rem center;
-  background-size: 0.75rem;
   color: var(--text-dark);
   font-size: 0.9rem;
   cursor: pointer;
-  min-width: 120px;
   font-weight: 500;
   appearance: none;
   -webkit-appearance: none;
   -moz-appearance: none;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.main-header-team-select-caret {
+  position: absolute;
+  top: 50%;
+  right: 0.8rem;
+  transform: translateY(-50%);
+  color: var(--text-muted);
+  pointer-events: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 .main-header-team-select:focus {
   outline: none;
@@ -1310,16 +1335,21 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
 }
 .main-header-team-select option { background: var(--bg-card); color: var(--text-dark); }
 .main-header-title {
-  margin-left: 1.3rem;
+  margin: 0;
   font-size: 1.3rem;
-  font-weight: 400;
+  font-weight: 600;
   color: var(--text-dark);
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .main-header-actions {
   display: flex;
   align-items: center;
   gap: 0.65rem;
   justify-content: flex-end;
+  flex: 0 0 auto;
 }
 .main-header-actions .btn-add-task {
   padding: 0.45rem 0.75rem;
@@ -10356,7 +10386,8 @@ tr:hover { background: var(--bg-hover) !important; }
     box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
   }
   .main-header-left { gap: 0.5rem; align-items: center; }
-  .main-header-title { font-size: 1rem; font-weight: 600; color: var(--text-dark); margin: 0; }
+  .main-header-brand-group { gap: 0.5rem; }
+  .main-header-title { font-size: 1rem; font-weight: 600; color: var(--text-dark); }
   .main-header-actions { gap: 0.4rem; }
   .main-header-actions .btn-add-task {
     padding: 0.45rem 0.85rem;
@@ -10370,9 +10401,9 @@ tr:hover { background: var(--bg-hover) !important; }
     border-radius: 9px;
     font-size: 0.8125rem;
     padding: 0.45rem 2rem 0.45rem 0.7rem;
-    background-position: right 0.72rem center;
-    background-size: 0.7rem;
   }
+  .main-header-team-select-wrap { flex-basis: 11rem; min-width: 8.75rem; max-width: min(12rem, 48vw); }
+  .main-header-team-select-caret { right: 0.72rem; }
   .dashboard-layout .tasks-panel { max-height: none; }
   .dashboard-layout .agent-panel { max-height: none; min-height: 0; }
   .dashboard-layout .panel.tasks-panel .tasks-panel-header { padding: 0.55rem 0.7rem; }
@@ -10563,8 +10594,10 @@ tr:hover { background: var(--bg-hover) !important; }
   .send-push-modal-close { min-width: 44px; min-height: 44px; }
 }
 @media (max-width: 480px) {
-  .main-header-left { flex-wrap: wrap; gap: 0.35rem; }
-  .main-header-title { width: 100%; margin-left: 0; margin-top: 0.25rem; font-size: 0.95rem; }
+  .main-header-left { flex-wrap: nowrap; gap: 0.35rem; }
+  .main-header-brand-group { gap: 0.45rem; }
+  .main-header-team-select-wrap { flex-basis: 10rem; min-width: 8rem; max-width: 10.25rem; }
+  .main-header-title { width: auto; margin-top: 0; font-size: 0.95rem; }
   .main-header-actions { flex-wrap: wrap; }
   .modal-tabs { flex-wrap: wrap; padding: 0 1rem; }
   .modal-tabs button { padding: 0.65rem 1rem; min-height: 44px; }

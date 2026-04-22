@@ -166,7 +166,7 @@ export default function MainHeader({ onMenuClick, onOpenNewTask }) {
 
   return (
     <header className="main-header">
-      <div className="main-header-left" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+      <div className="main-header-left">
         <button
           type="button"
           className="main-header-burger"
@@ -178,23 +178,29 @@ export default function MainHeader({ onMenuClick, onOpenNewTask }) {
             <path d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z" />
           </svg>
         </button>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <select
-            className="main-header-team-select"
-            aria-label="Team filter"
-            title="Filter dashboard data by delivery team"
-            value={selectedTeamId}
-            onChange={(e) => setSelectedTeamId(e.target.value)}
-            style={{ marginRight: 0 }}
-          >
-            <option value="">All Team</option>
-            {(teams || []).map((t) => (
-              <option key={t.id} value={String(t.id)}>
-                {t.name || `Team ${t.id}`}
-              </option>
-            ))}
-          </select>
-          <h1 className="main-header-title" style={{ margin: 0, fontSize: '1.2rem', whiteSpace: 'nowrap' }}>{title}</h1>
+        <div className="main-header-brand-group">
+          <div className="main-header-team-select-wrap">
+            <select
+              className="main-header-team-select"
+              aria-label="Team filter"
+              title="Filter dashboard data by delivery team"
+              value={selectedTeamId}
+              onChange={(e) => setSelectedTeamId(e.target.value)}
+            >
+              <option value="">All Team</option>
+              {(teams || []).map((t) => (
+                <option key={t.id} value={String(t.id)}>
+                  {t.name || `Team ${t.id}`}
+                </option>
+              ))}
+            </select>
+            <span className="main-header-team-select-caret" aria-hidden="true">
+              <svg width="14" height="14" viewBox="0 0 12 12" fill="none">
+                <path d="M2.5 4.5L6 8l3.5-3.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </span>
+          </div>
+          <h1 className="main-header-title">{title}</h1>
         </div>
       </div>
       <div className="main-header-actions">
