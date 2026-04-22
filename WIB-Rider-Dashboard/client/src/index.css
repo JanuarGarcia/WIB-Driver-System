@@ -1286,15 +1286,22 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
   color: var(--color-primary);
 }
 .main-header-team-select {
-  padding: 0.45rem 0.75rem;
+  padding: 0.45rem 2.1rem 0.45rem 0.75rem;
   border: 2px solid var(--border-soft);
   border-radius: 8px;
   background: var(--bg-card);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12' fill='none'%3E%3Cpath d='M2.5 4.5L6 8l3.5-3.5' stroke='%238a8f98' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.8rem center;
+  background-size: 0.75rem;
   color: var(--text-dark);
   font-size: 0.9rem;
   cursor: pointer;
   min-width: 120px;
   font-weight: 500;
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
 }
 .main-header-team-select:focus {
   outline: none;
@@ -1569,7 +1576,34 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
   background: var(--bg-elevated);
   flex-shrink: 0;
 }
+.rider-notif-panel__header-main {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  min-width: 0;
+  flex: 1;
+}
 .rider-notif-panel__header-text { min-width: 0; }
+.rider-notif-panel__back {
+  display: none;
+  align-items: center;
+  gap: 0.35rem;
+  flex-shrink: 0;
+  min-height: 2.25rem;
+  padding: 0.35rem 0.65rem;
+  border-radius: 8px;
+  border: 1px solid var(--border-soft);
+  background: transparent;
+  color: var(--text-dark);
+  font-size: 0.75rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.rider-notif-panel__back:hover {
+  background: var(--bg-hover, rgba(0, 0, 0, 0.04));
+  border-color: var(--border-medium);
+}
 .rider-notif-panel__title {
   margin: 0;
   font-size: 1rem;
@@ -10045,6 +10079,9 @@ tr:hover { background: var(--bg-hover) !important; }
 
 /* Mobile: tab switcher and single-panel view – polished UI using system design */
 @media (max-width: 768px) {
+  .dashboard-layout {
+    margin: 0;
+  }
   .dashboard-mobile-tabs {
     display: flex;
     position: sticky;
@@ -10052,8 +10089,8 @@ tr:hover { background: var(--bg-hover) !important; }
     z-index: 10;
     background: var(--bg-card);
     border-bottom: 1px solid var(--border-soft);
-    padding: 0.65rem 0.75rem;
-    gap: 0.5rem;
+    padding: 0.5rem 0.65rem;
+    gap: 0.45rem;
     flex-shrink: 0;
     grid-column: 1 / -1;
     grid-area: unset;
@@ -10061,13 +10098,13 @@ tr:hover { background: var(--bg-hover) !important; }
   }
   .dashboard-mobile-tab {
     flex: 1;
-    min-height: 46px;
-    padding: 0.65rem 0.6rem;
-    font-size: 0.9375rem;
+    min-height: 42px;
+    padding: 0.55rem 0.55rem;
+    font-size: 0.9rem;
     font-weight: 600;
     letter-spacing: 0.02em;
     border: none;
-    border-radius: 10px;
+    border-radius: 9px;
     background: var(--bg-elevated);
     color: var(--text-muted);
     cursor: pointer;
@@ -10109,19 +10146,31 @@ tr:hover { background: var(--bg-hover) !important; }
     flex: 1;
     min-height: 0;
   }
+  .dashboard-layout[data-mobile-section="map"] .dashboard-map-wrap,
+  .dashboard-layout[data-mobile-section="map"] .dashboard-map-inner,
+  .dashboard-layout[data-mobile-section="map"] .dashboard-map-wrap .map-container,
+  .dashboard-layout[data-mobile-section="map"] .dashboard-map-wrap .leaflet-map-wrap,
+  .dashboard-layout[data-mobile-section="map"] .dashboard-map-wrap .leaflet-map,
+  .dashboard-layout[data-mobile-section="map"] .dashboard-map-wrap .leaflet-container {
+    width: 100%;
+    max-width: 100%;
+    left: 0;
+    right: 0;
+    margin: 0 auto;
+  }
   /* Tasks panel mobile: clearer hierarchy, comfortable spacing */
   .dashboard-layout .panel.tasks-panel .tasks-panel-header {
-    padding: 0.85rem 0.85rem;
-    min-height: 56px;
+    padding: 0.65rem 0.75rem;
+    min-height: 48px;
     border-radius: 0;
     flex-wrap: wrap;
-    row-gap: 0.55rem;
-    column-gap: 0.5rem;
+    row-gap: 0.4rem;
+    column-gap: 0.45rem;
     align-items: center;
   }
   .dashboard-layout .panel.tasks-panel .tasks-panel-header-title {
     flex: 0 0 auto;
-    font-size: 1.05rem;
+    font-size: 0.98rem;
     order: 1;
   }
   .dashboard-layout .panel.tasks-panel .tasks-panel-header-controls {
@@ -10138,9 +10187,9 @@ tr:hover { background: var(--bg-hover) !important; }
     max-width: 100%;
   }
   .dashboard-layout .panel.tasks-panel .tasks-panel-header .tasks-panel-view-switch-seg {
-    min-height: 40px;
-    padding: 0.3rem 0.7rem;
-    font-size: 0.75rem;
+    min-height: 36px;
+    padding: 0.25rem 0.62rem;
+    font-size: 0.72rem;
     font-weight: 500;
   }
   .dashboard-layout .tasks-panel-sort-dropdown {
@@ -10163,27 +10212,27 @@ tr:hover { background: var(--bg-hover) !important; }
   }
   .dashboard-layout .panel.tasks-panel .tasks-panel-header-date,
   .dashboard-layout .panel.tasks-panel .tasks-panel-date-text {
-    font-size: 0.9375rem;
+    font-size: 0.875rem;
     font-weight: 500;
   }
   .dashboard-layout .tasks-panel-sort-indicator {
-    padding: 0.55rem 0.85rem;
-    font-size: 0.8125rem;
+    padding: 0.45rem 0.75rem;
+    font-size: 0.75rem;
     background: var(--color-primary-tint);
     border-bottom: 1px solid var(--border-soft);
   }
   .dashboard-layout .panel.tasks-panel .panel-stats {
-    padding: 0.65rem 0.85rem;
-    gap: 0.6rem;
+    padding: 0.45rem 0.75rem;
+    gap: 0.5rem;
     background: var(--bg-card);
     border-bottom: 1px solid var(--border-soft);
   }
   .dashboard-layout .panel.tasks-panel .panel-stats .panel-stats-item {
     min-width: 5rem;
-    min-height: 48px;
-    padding: 0.7rem 0.5rem;
-    gap: 0.35rem;
-    border-radius: 10px;
+    min-height: 42px;
+    padding: 0.5rem 0.4rem;
+    gap: 0.25rem;
+    border-radius: 9px;
     transition: background 0.2s;
     touch-action: manipulation;
   }
@@ -10191,16 +10240,16 @@ tr:hover { background: var(--bg-hover) !important; }
     background: var(--bg-hover);
   }
   .dashboard-layout .panel.tasks-panel .panel-stats .panel-stats-number {
-    font-size: 1.625rem;
+    font-size: 1.35rem;
     font-weight: 700;
   }
   .dashboard-layout .panel.tasks-panel .panel-stats .panel-stats-label {
-    font-size: 0.6875rem;
+    font-size: 0.63rem;
     letter-spacing: 0.06em;
   }
   .dashboard-layout .panel.tasks-panel .panel-body {
-    padding: 0.75rem 0.85rem;
-    gap: 0.6rem;
+    padding: 0.55rem 0.75rem 0.75rem;
+    gap: 0.5rem;
     background: var(--bg-panel);
     -webkit-overflow-scrolling: touch;
   }
@@ -10209,8 +10258,8 @@ tr:hover { background: var(--bg-hover) !important; }
     -webkit-overflow-scrolling: touch;
   }
   .dashboard-layout .task-card-v2 {
-    padding: 1rem 1rem;
-    border-radius: 12px;
+    padding: 0.85rem 0.85rem;
+    border-radius: 11px;
     border: 1px solid var(--border-soft);
     background: var(--bg-card);
     box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
@@ -10224,18 +10273,18 @@ tr:hover { background: var(--bg-hover) !important; }
     font-weight: 600;
   }
   .dashboard-layout .task-card-v2 .btn-assign-driver {
-    padding: 0.55rem 1rem;
-    font-size: 0.875rem;
-    border-radius: 10px;
+    padding: 0.5rem 0.85rem;
+    font-size: 0.8125rem;
+    border-radius: 9px;
     font-weight: 600;
-    margin-top: 0.25rem;
+    margin-top: 0.15rem;
   }
   .dashboard-layout .task-card-v2-footer {
-    margin-top: 0.85rem;
-    padding-top: 0.75rem;
+    margin-top: 0.65rem;
+    padding-top: 0.6rem;
   }
   .dashboard-layout .task-card-list {
-    gap: 0.75rem;
+    gap: 0.55rem;
   }
   [data-theme="dark"] .dashboard-layout .task-card-v2 {
     background: var(--bg-surface-2);
@@ -10298,8 +10347,8 @@ tr:hover { background: var(--bg-hover) !important; }
 @media (max-width: 576px) {
   .main { padding-left: 0.75rem; padding-right: 0.75rem; padding-left: max(0.75rem, env(safe-area-inset-left)); padding-right: max(0.75rem, env(safe-area-inset-right)); }
   .main-header {
-    padding: 0.6rem 0.85rem;
-    gap: 0.6rem;
+    padding: 0.45rem 0.7rem;
+    gap: 0.45rem;
     min-height: auto;
     flex-wrap: wrap;
     background: var(--bg-card);
@@ -10307,27 +10356,29 @@ tr:hover { background: var(--bg-hover) !important; }
     box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
   }
   .main-header-left { gap: 0.5rem; align-items: center; }
-  .main-header-title { font-size: 1.0625rem; font-weight: 600; color: var(--text-dark); margin: 0; }
-  .main-header-actions { gap: 0.5rem; }
+  .main-header-title { font-size: 1rem; font-weight: 600; color: var(--text-dark); margin: 0; }
+  .main-header-actions { gap: 0.4rem; }
   .main-header-actions .btn-add-task {
-    padding: 0.55rem 1rem;
-    font-size: 0.9375rem;
+    padding: 0.45rem 0.85rem;
+    font-size: 0.875rem;
     font-weight: 600;
-    min-height: 44px;
-    border-radius: 10px;
+    min-height: 40px;
+    border-radius: 9px;
     box-shadow: 0 1px 3px rgba(79, 99, 45, 0.25);
   }
   .main-header-team-select {
-    border-radius: 10px;
-    font-size: 0.875rem;
-    padding: 0.5rem 0.75rem;
+    border-radius: 9px;
+    font-size: 0.8125rem;
+    padding: 0.45rem 2rem 0.45rem 0.7rem;
+    background-position: right 0.72rem center;
+    background-size: 0.7rem;
   }
   .dashboard-layout .tasks-panel { max-height: none; }
   .dashboard-layout .agent-panel { max-height: none; min-height: 0; }
-  .dashboard-layout .panel.tasks-panel .tasks-panel-header { padding: 0.6rem 0.75rem; }
-  .dashboard-layout .panel.tasks-panel .panel-body { padding: 0.65rem 0.75rem; }
-  .dashboard-layout .task-card-v2 { padding: 0.9rem 0.85rem; border-radius: 10px; }
-  .task-card-v2 { padding: 0.75rem 0.9rem; }
+  .dashboard-layout .panel.tasks-panel .tasks-panel-header { padding: 0.55rem 0.7rem; }
+  .dashboard-layout .panel.tasks-panel .panel-body { padding: 0.5rem 0.7rem 0.7rem; }
+  .dashboard-layout .task-card-v2 { padding: 0.8rem 0.8rem; border-radius: 10px; }
+  .task-card-v2 { padding: 0.72rem 0.82rem; }
   .agent-card { padding: 0.5rem 0; }
   .panel.agent-panel .panel-header.agent-header {
     padding: 0.6rem 0.75rem;
@@ -10353,6 +10404,17 @@ tr:hover { background: var(--bg-hover) !important; }
   .agent-detail-modal-card { max-width: 95%; margin: 0.5rem; }
   .panel-stats-item { min-height: 44px; padding: 0.5rem 0.4rem; border-radius: 8px; }
   .task-card-details { min-height: 44px; padding: 0.5rem 0.75rem; }
+  .dashboard-layout .task-card-list { gap: 0.5rem; }
+  .dashboard-layout .panel.tasks-panel .panel-stats {
+    padding: 0.4rem 0.7rem;
+    gap: 0.45rem;
+  }
+  .dashboard-layout .panel.tasks-panel .panel-stats .panel-stats-item {
+    min-height: 40px;
+    padding: 0.42rem 0.35rem;
+  }
+  .dashboard-layout .panel.tasks-panel .panel-stats .panel-stats-number { font-size: 1.2rem; }
+  .dashboard-layout .panel.tasks-panel .panel-stats .panel-stats-label { font-size: 0.6rem; }
 }
 
 /* ----- Mobile: ensure all app functionality works on phone ----- */
@@ -10456,22 +10518,27 @@ tr:hover { background: var(--bg-hover) !important; }
   .table-pagination-btn { min-width: 44px; min-height: 44px; }
   .listing-toolbar { flex-direction: column; align-items: stretch; gap: 0.75rem; }
   .rider-notif-panel {
-    width: min(100vw - 1.25rem, 400px);
+    width: min(100vw - 1.75rem, 400px);
     max-height: min(75vh, 480px);
     right: 0;
     left: auto;
   }
-  /* Notifications dropdown: use a fixed “sheet” on mobile so it never renders off-screen. */
+  /* Notifications dropdown: center a contained mobile card instead of using a full-screen sheet. */
   .rider-notif-panel {
     position: fixed;
-    top: calc(env(safe-area-inset-top) + 0.5rem);
-    left: max(0.5rem, env(safe-area-inset-left));
-    right: max(0.5rem, env(safe-area-inset-right));
-    bottom: max(0.5rem, env(safe-area-inset-bottom));
-    width: auto;
-    max-height: none;
+    top: 50%;
+    left: 50%;
+    right: auto;
+    bottom: auto;
+    width: min(calc(100vw - max(1.5rem, calc(env(safe-area-inset-left) + env(safe-area-inset-right) + 1rem))), 400px);
+    max-width: calc(100vw - max(1.5rem, calc(env(safe-area-inset-left) + env(safe-area-inset-right) + 1rem)));
+    max-height: min(calc(100dvh - max(2rem, calc(env(safe-area-inset-top) + env(safe-area-inset-bottom) + 1.5rem))), 620px);
     border-radius: 14px;
+    transform: translate(-50%, -50%);
   }
+  .rider-notif-panel__back { display: inline-flex; }
+  .rider-notif-panel__header { align-items: center; }
+  .rider-notif-panel__header-main { align-items: center; }
   .btn { min-height: 44px; padding: 0.5rem 0.85rem; }
   .btn-sm { min-height: 40px; padding: 0.45rem 0.75rem; }
   .page { padding: 1rem; padding-left: max(1rem, env(safe-area-inset-left)); padding-right: max(1rem, env(safe-area-inset-right)); }

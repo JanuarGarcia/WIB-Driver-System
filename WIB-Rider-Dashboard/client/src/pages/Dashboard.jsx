@@ -505,9 +505,11 @@ export default function Dashboard() {
       requestAnimationFrame(bump);
     });
     const t = setTimeout(bump, 200);
+    const t2 = setTimeout(bump, 420);
     return () => {
       cancelAnimationFrame(r0);
       clearTimeout(t);
+      clearTimeout(t2);
     };
   }, [mobileSection]);
 

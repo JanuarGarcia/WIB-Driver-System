@@ -1,18 +1,26 @@
+import {
+  parseActorFromNotificationMessage,
+  formatNotificationMessageForDisplay,
+  parseTaskIdFromNotificationMessage,
+  dispatchOpenTaskFromNotification,
+  buildNotificationDedupeKey,
+  notificationOrderKind,
+} from '../utils/riderNotificationNavigate';
+
 function formatWhen(iso) {
-  if (!iso) return '—';
+  if (!iso) return '-';
   const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return '—';
+  if (Number.isNaN(d.getTime())) return '-';
   return d.toLocaleString(undefined, {
     dateStyle: 'medium',
     timeStyle: 'short',
   });
 }
 
-/** Short relative label + full string for title tooltip */
 function formatRelative(iso) {
-  if (!iso) return { short: '—', full: '' };
+  if (!iso) return { short: '-', full: '' };
   const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return { short: '—', full: '' };
+  if (Number.isNaN(d.getTime())) return { short: '-', full: '' };
   const now = Date.now();
   const diffSec = Math.round((now - d.getTime()) / 1000);
   const full = d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
@@ -23,9 +31,6 @@ function formatRelative(iso) {
   return { short: d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }), full };
 }
 
-/**
- * Map API `type` to display label + CSS modifier for accent color.
- */
 function typeMeta(type, title, message) {
   const t = (type || '').toString().trim().toLowerCase();
   const titleText = String(title || '').toLowerCase();
@@ -39,6 +44,7 @@ function typeMeta(type, title, message) {
       messageText.includes('mangan order') ||
       messageText.includes('order #') ||
       messageText.includes('task #'));
+
   switch (t) {
     case 'new_task':
       return isNewOrder
@@ -64,18 +70,6 @@ function typeMeta(type, title, message) {
   }
 }
 
-import {
-  parseActorFromNotificationMessage,
-  formatNotificationMessageForDisplay,
-  parseTaskIdFromNotificationMessage,
-  dispatchOpenTaskFromNotification,
-  buildNotificationDedupeKey,
-  notificationOrderKind,
-} from '../utils/riderNotificationNavigate';
-
-/**
- * Dropdown list of session notifications — WIB dashboard styling.
- */
 export default function NotificationPanel({ items, pollError, onMarkAllRead, onClosePanel }) {
   const count = items?.length ?? 0;
 
@@ -87,11 +81,25 @@ export default function NotificationPanel({ items, pollError, onMarkAllRead, onC
         </div>
       ) : null}
       <header className="rider-notif-panel__header">
-        <div className="rider-notif-panel__header-text">
-          <h2 className="rider-notif-panel__title">Notifications</h2>
-          <p className="rider-notif-panel__subtitle">
-            {count === 0 ? 'You’re all caught up' : `${count} in this session`}
-          </p>
+        <div className="rider-notif-panel__header-main">
+          <button
+            type="button"
+            className="rider-notif-panel__back"
+            onClick={onClosePanel}
+            aria-label="Close notifications"
+            title="Back"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M15 18l-6-6 6-6" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+            <span>Back</span>
+          </button>
+          <div className="rider-notif-panel__header-text">
+            <h2 className="rider-notif-panel__title">Notifications</h2>
+            <p className="rider-notif-panel__subtitle">
+              {count === 0 ? "You're all caught up" : `${count} in this session`}
+            </p>
+          </div>
         </div>
         <button
           type="button"
@@ -166,9 +174,7 @@ export default function NotificationPanel({ items, pollError, onMarkAllRead, onC
                             <span className="rider-notif-card__actor-label">By</span> {actor}
                           </p>
                         ) : null}
-                        {messageMain ? (
-                          <p className="rider-notif-card__message">{messageMain}</p>
-                        ) : null}
+                        {messageMain ? <p className="rider-notif-card__message">{messageMain}</p> : null}
                         <span className="rider-notif-card__open-hint">Open task</span>
                       </button>
                     ) : (
@@ -193,9 +199,7 @@ export default function NotificationPanel({ items, pollError, onMarkAllRead, onC
                             <span className="rider-notif-card__actor-label">By</span> {actor}
                           </p>
                         ) : null}
-                        {messageMain ? (
-                          <p className="rider-notif-card__message">{messageMain}</p>
-                        ) : null}
+                        {messageMain ? <p className="rider-notif-card__message">{messageMain}</p> : null}
                       </div>
                     )}
                     <footer className="rider-notif-card__footer">
