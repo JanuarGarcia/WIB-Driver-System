@@ -1,0 +1,123 @@
+'use strict';
+
+describe('rider push fallback behavior', () => {
+  afterEach(() => {
+    jest.resetModules();
+    jest.clearAllMocks();
+  });
+
+  test('sendRiderOrderPush falls back to mt_driver.device_id when mt_rider_device_reg has no rows', async () => {
+    const query = jest.fn(async (sql) => {
+      const text = String(sql);
+      if (/FROM\s+`?mt_option`?/i.test(text)) {
+        return [[{ option_value: JSON.stringify({ enable_push: 1, push_title: 'Assigned', push_body: 'Task body' }) }]];
+      }
+      if (/FROM\s+`?mt_rider_device_reg`?/i.test(text)) {
+        return [[]];
+      }
+      if (/FROM\s+mt_driver/i.test(text)) {
+        return [[{ id: 7, device_id: 'legacy-token', device_platform: 'android' }]];
+      }
+      if (/INSERT\s+INTO\s+`?mt_rider_push_logs`?/i.test(text)) {
+        return [{ insertId: 123 }];
+      }
+      if (/UPDATE\s+`?mt_rider_push_logs`?/i.test(text)) {
+        return [{}];
+      }
+      if (/INSERT\s+INTO\s+mt_rider_order_trigger/i.test(text)) {
+        return [{ insertId: 55 }];
+      }
+      return [[]];
+    });
+
+    const sendPushToDevice = jest.fn().mockResolvedValue({ success: true, messageId: 'm-1' });
+    const maybeDisableBadRiderToken = jest.fn().mockResolvedValue(undefined);
+
+    jest.doMock('../config/db', () => ({ pool: { query } }));
+    jest.doMock('../services/fcm', () => ({ sendPushToDevice }));
+    jest.doMock('../lib/riderPushFailureHelpers', () => ({ maybeDisableBadRiderToken }));
+
+    const svc = require('../services/riderOrderPushService');
+    const out = await svc.sendRiderOrderPush({
+      orderId: 88,
+      driverId: 7,
+      eventKey: 'RIDER_ORDER_ASSIGNED',
+      orderStatus: 'assigned',
+    });
+
+    expect(out).toEqual({ skipped: false });
+    expect(sendPushToDevice).toHaveBeenCalledWith(
+      'legacy-token',
+      expect.objectContaining({
+        title: 'Assigned',
+        body: 'Task body',
+        data: expect.objectContaining({
+          type: 'rider_order_assigned',
+          push_type: 'rider_order_assigned',
+          click_action: 'FLUTTER_NOTIFICATION_CLICK',
+          screen: 'task_detail',
+        }),
+      })
+    );
+    expect(maybeDisableBadRiderToken).not.toHaveBeenCalled();
+  });
+
+  test('sendPushToDriver enriches payload for rider app routing', async () => {
+    const query = jest.fn(async (sql) => {
+      const text = String(sql);
+      if (/FROM\s+mt_rider_device_reg/i.test(text)) {
+        return [[]];
+      }
+      if (/SELECT\s+device_id\s+FROM\s+mt_driver/i.test(text)) {
+        return [[{ device_id: 'driver-token' }]];
+      }
+      if (/FROM\s+mt_option/i.test(text)) {
+        return [[{ value: JSON.stringify({ project_id: 'x', client_email: 'x@y.z', private_key: '-----BEGIN PRIVATE KEY-----\\nabc\\n-----END PRIVATE KEY-----\\n' }) }]];
+      }
+      return [[]];
+    });
+
+    const send = jest.fn().mockResolvedValue('msg-1');
+    const initializeApp = jest.fn();
+    const cert = jest.fn(() => ({}));
+
+    jest.doMock('../config/db', () => ({ pool: { query } }));
+    jest.doMock('firebase-admin', () => ({
+      apps: [],
+      initializeApp,
+      credential: { cert },
+      messaging: undefined,
+      __esModule: false,
+      default: undefined,
+    }));
+
+    const fcm = require('../services/fcm');
+    const firebaseAdmin = require('firebase-admin');
+    firebaseAdmin.initializeApp.mockImplementation(() => {
+      firebaseAdmin.apps.push({});
+    });
+    firebaseAdmin.messaging = () => ({ send });
+    firebaseAdmin.apps[0] = { messaging: () => ({ send }) };
+
+    const res = await fcm.sendPushToDriver(9, 'Task assigned', 'Body', {
+      type: 'task_assigned',
+      task_id: '101',
+      order_id: '202',
+    });
+
+    expect(res).toEqual({ success: true, messageId: 'msg-1' });
+    expect(send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        token: 'driver-token',
+        data: expect.objectContaining({
+          type: 'task_assigned',
+          push_type: 'task_assigned',
+          click_action: 'FLUTTER_NOTIFICATION_CLICK',
+          screen: 'task_detail',
+          task_id: '101',
+          order_id: '202',
+        }),
+      })
+    );
+  });
+});

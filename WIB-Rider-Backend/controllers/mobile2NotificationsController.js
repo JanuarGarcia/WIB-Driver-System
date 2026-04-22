@@ -26,6 +26,23 @@ async function list(req, res) {
   }
 }
 
+async function feed(req, res) {
+  try {
+    const clientId = authClientId(req);
+    if (!clientId) return error(res, 'Invalid token', 2);
+
+    const details = await notificationService.listNotificationFeed(clientId, {
+      limit: req.body?.limit ?? req.query?.limit,
+      after_push_id: req.body?.after_push_id ?? req.body?.afterPushId ?? req.query?.after_push_id ?? req.query?.afterPushId,
+    });
+
+    return res.json({ code: 1, msg: 'ok', details });
+  } catch (e) {
+    console.error('[mobile2.notifications.feed] failed', e);
+    return error(res, 'Failed to fetch notification feed');
+  }
+}
+
 async function markRead(req, res) {
   try {
     const clientId = authClientId(req);
@@ -55,4 +72,4 @@ async function markReadAll(req, res) {
   }
 }
 
-module.exports = { list, markRead, markReadAll };
+module.exports = { list, feed, markRead, markReadAll };

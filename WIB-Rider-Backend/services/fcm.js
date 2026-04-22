@@ -110,7 +110,20 @@ async function sendPushToDriver(driverId, title, body, data = {}) {
   const { pool } = require('../config/db');
   const token = await resolveDriverFcmToken(pool, driverId);
   if (!token) return { success: false, error: 'No device token' };
-  return sendPushToFcmToken(token, title, body, data, { useCustomerAndroidChannel: false });
+  const payloadData = data && typeof data === 'object' ? { ...data } : {};
+  if (payloadData.type != null && payloadData.push_type == null) {
+    payloadData.push_type = payloadData.type;
+  }
+  if (payloadData.click_action == null) {
+    payloadData.click_action = 'FLUTTER_NOTIFICATION_CLICK';
+  }
+  if (
+    payloadData.screen == null &&
+    (payloadData.task_id != null || payloadData.order_id != null || payloadData.errand_order_id != null)
+  ) {
+    payloadData.screen = 'task_detail';
+  }
+  return sendPushToFcmToken(token, title, body, payloadData, { useCustomerAndroidChannel: false });
 }
 
 async function sendPushToAllDrivers(title, body, data = {}) {

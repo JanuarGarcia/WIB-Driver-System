@@ -299,6 +299,12 @@ async function postCustomerDispatchOrder({ clientId, orderId, title, message }) 
     order_id: String(oid),
     title: String(title || 'Order update').trim() || 'Order update',
     message: String(message != null ? message : '').trim(),
+    show_popup: 1,
+    popup_enabled: true,
+    popup_title: String(title || 'Order update').trim() || 'Order update',
+    popup_message: String(message != null ? message : '').trim(),
+    local_notification_title: String(title || 'Order update').trim() || 'Order update',
+    local_notification_body: String(message != null ? message : '').trim(),
   });
 
   const controller = new AbortController();
@@ -397,6 +403,12 @@ async function recordDispatchOrderPushLog(pool, meta) {
       order_id: orderId,
       task_id: taskId,
       push: pushKind,
+      show_popup: 1,
+      popup_enabled: true,
+      popup_title: title,
+      popup_message: message,
+      local_notification_title: title,
+      local_notification_body: message,
       base_url: dispatchResult.baseUrl ?? null,
       base_url_source: dispatchResult.baseUrlSource ?? null,
       dispatch_url: dispatchResult.dispatchUrl ?? null,

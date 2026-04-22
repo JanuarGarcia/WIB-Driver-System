@@ -54,6 +54,8 @@ const FILTERS = [
   { id: 'completed', label: 'Completed' },
 ];
 
+const QUICK_REASSIGNABLE_STATUSES = new Set(['cancelled', 'canceled', 'declined', 'failed']);
+
 const TASK_SORT_OPTIONS = [
   { key: 'task_id', label: 'Ref#', compare: (a, b) => (a.task_id ?? 0) - (b.task_id ?? 0) },
   { key: 'delivery_date', label: 'Complete by', compare: (a, b) => new Date(a.delivery_date || 0) - new Date(b.delivery_date || 0) },
@@ -516,9 +518,15 @@ export default function Tasks() {
                   <td className="tasks-actions-cell">
                     <div className="task-row-actions">
                       <button type="button" className="btn btn-sm btn-ghost" onClick={() => openDetails(t.task_id, t)} title="View details">View</button>
-                      {(t.status || '').toLowerCase() === 'unassigned' && (
-                        <button type="button" className="btn btn-sm btn-primary" onClick={() => setAssignTaskId(t.task_id)}>Assign</button>
-                      )}
+                      {(() => {
+                        const statusNorm = String(t.status || '').toLowerCase();
+                        if (statusNorm !== 'unassigned' && !QUICK_REASSIGNABLE_STATUSES.has(statusNorm)) return null;
+                        return (
+                          <button type="button" className="btn btn-sm btn-primary" onClick={() => setAssignTaskId(t.task_id)}>
+                            {statusNorm === 'unassigned' ? 'Assign' : 'Re-assign'}
+                          </button>
+                        );
+                      })()}
                       {(t.delivery_address || '').trim() && (
                         <a href={`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent((t.delivery_address || '').trim())}`} target="_blank" rel="noopener noreferrer" className="btn btn-sm btn-ghost" title="Open directions">Directions</a>
                       )}

@@ -16,8 +16,30 @@ async function fetchRiderDevices(driverId) {
       AND device_id IS NOT NULL
       AND TRIM(device_id) <> ''
   `;
-  const [rows] = await pool.query(sql, [driverId]);
-  return rows || [];
+  try {
+    const [rows] = await pool.query(sql, [driverId]);
+    if (Array.isArray(rows) && rows.length) return rows;
+  } catch (e) {
+    if (e.code !== 'ER_NO_SUCH_TABLE' && e.code !== 'ER_BAD_FIELD_ERROR') throw e;
+  }
+
+  // Backward-compatible fallback for rider apps that still update mt_driver.device_id on login/re-register
+  // but do not yet call /api/riders/devices/register.
+  try {
+    const [legacyRows] = await pool.query(
+      `SELECT driver_id AS id, device_id, device_platform
+       FROM mt_driver
+       WHERE driver_id = ?
+         AND device_id IS NOT NULL
+         AND TRIM(device_id) <> ''
+       LIMIT 1`,
+      [driverId]
+    );
+    return legacyRows || [];
+  } catch (e) {
+    if (e.code === 'ER_NO_SUCH_TABLE' || e.code === 'ER_BAD_FIELD_ERROR') return [];
+    throw e;
+  }
 }
 
 function parseTemplate(raw) {

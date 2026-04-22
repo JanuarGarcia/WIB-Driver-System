@@ -3719,11 +3719,22 @@ router.put('/tasks/:id/assign', express.json(), async (req, res) => {
   if (!Number.isFinite(driverId)) return res.status(400).json({ error: 'driver_id required' });
   try {
     const [[task]] = await pool.query(
-      'SELECT task_id, order_id, task_description, driver_id AS prev_driver_id FROM mt_driver_task WHERE task_id = ?',
+      'SELECT task_id, order_id, task_description, status AS prev_status, driver_id AS prev_driver_id FROM mt_driver_task WHERE task_id = ?',
       [taskId]
     );
     if (!task) return res.status(404).json({ error: 'Task not found' });
     const prevDriverId = task.prev_driver_id;
+    const prevStatusNorm = String(task.prev_status || '').trim().toLowerCase();
+    const wasProblemStatus = ['cancelled', 'canceled', 'declined', 'failed'].includes(prevStatusNorm);
+    const wasAssignedToAnotherDriver =
+      prevDriverId != null &&
+      String(prevDriverId).trim() !== '' &&
+      Number.isFinite(parseInt(String(prevDriverId), 10)) &&
+      parseInt(String(prevDriverId), 10) > 0 &&
+      parseInt(String(prevDriverId), 10) !== driverId;
+    const isReassignment = wasProblemStatus || wasAssignedToAnotherDriver;
+    const assignmentRemarks = isReassignment ? 'Driver reassigned' : 'Driver assigned';
+    const riderPushTitle = isReassignment ? 'Task reassigned' : 'Task assigned';
     // Prefer setting team_id as well (if table has the column). Fall back gracefully.
     try {
       if (teamId && Number.isFinite(teamId)) {
@@ -3741,7 +3752,7 @@ router.put('/tasks/:id/assign', express.json(), async (req, res) => {
     try {
       const oid = task.order_id != null ? parseInt(String(task.order_id), 10) : NaN;
       if (Number.isFinite(oid) && oid > 0) {
-        await updateMtOrderStatusIfDeliveryComplete(pool, oid, 'acknowledged');
+        await updateMtOrderStatusIfDeliveryComplete(pool, oid, 'assigned');
       }
     } catch (_) {
       /* mt_order.status optional — do not fail assignment */
@@ -3751,8 +3762,8 @@ router.put('/tasks/:id/assign', express.json(), async (req, res) => {
       assignHistoryInsertId = await insertMtOrderHistoryRow(pool, {
         orderId: task?.order_id || null,
         taskId,
-        status: 'acknowledged',
-        remarks: 'Driver assigned',
+        status: 'assigned',
+        remarks: assignmentRemarks,
         updateByType: 'admin',
         actorId: req.adminUser?.admin_id ?? null,
         actorDisplayName: formatActorFromAdminUser(req.adminUser),
@@ -3765,12 +3776,12 @@ router.put('/tasks/:id/assign', express.json(), async (req, res) => {
         taskId,
         orderId: task.order_id,
         taskDescription: task.task_description,
-        statusRaw: 'acknowledged',
+        statusRaw: 'assigned',
         actorLabel: formatActorFromAdminUser(req.adminUser),
         historyInsertId: assignHistoryInsertId,
         historyRowForClassify: {
-          status: 'acknowledged',
-          remarks: 'Driver assigned',
+          status: 'assigned',
+          remarks: assignmentRemarks,
           reason: null,
           notes: null,
           update_by_type: 'admin',
@@ -3799,14 +3810,22 @@ router.put('/tasks/:id/assign', express.json(), async (req, res) => {
       await pool.query(
         `INSERT INTO mt_driver_pushlog (driver_id, push_title, push_message, push_type, task_id, order_id, date_created, date_process, is_read)
          VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW(), 0)`,
-        [driverId, 'Task assigned', task.task_description || `Task #${taskId}`, 'task_assigned', taskId, task.order_id || null]
+        [driverId, riderPushTitle, task.task_description || `Task #${taskId}`, 'task_assigned', taskId, task.order_id || null]
       );
     } catch (_) {}
     try {
-      await sendPushToDriver(driverId, 'Task assigned', task.task_description || `Task #${taskId}`, { task_id: String(taskId), type: 'task_assigned' });
+      const pushData = {
+        task_id: String(taskId),
+        type: 'task_assigned',
+        reassigned: isReassignment ? '1' : '0',
+      };
+      if (task.order_id != null && String(task.order_id).trim() !== '') {
+        pushData.order_id = String(task.order_id);
+      }
+      await sendPushToDriver(driverId, riderPushTitle, task.task_description || `Task #${taskId}`, pushData);
     } catch (_) {}
     await notifyAllDashboardAdmins(pool, {
-      title: 'Task assigned',
+      title: riderPushTitle,
       message: task.task_description || `Task #${taskId}`,
       type: 'task_assigned',
     }).catch(() => {});

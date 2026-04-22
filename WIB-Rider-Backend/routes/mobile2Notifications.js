@@ -8,6 +8,8 @@ const router = express.Router();
 
 router.get('/notifications', requireMobile2CustomerAuth, mobile2NotificationsController.list);
 router.post('/notifications', requireMobile2CustomerAuth, mobile2NotificationsController.list);
+router.get('/notifications/feed', requireMobile2CustomerAuth, mobile2NotificationsController.feed);
+router.post('/notifications/feed', requireMobile2CustomerAuth, mobile2NotificationsController.feed);
 router.post('/notifications/read', requireMobile2CustomerAuth, mobile2NotificationsController.markRead);
 router.post('/notifications/read-all', requireMobile2CustomerAuth, mobile2NotificationsController.markReadAll);
 
