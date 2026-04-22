@@ -90,6 +90,18 @@ function historyRowComesAfter(candidate, reference) {
   return false;
 }
 
+function historyRowTimestamp(row) {
+  const ts = row && row.date_created ? new Date(row.date_created).getTime() : NaN;
+  return Number.isFinite(ts) ? ts : NaN;
+}
+
+function taskWasModifiedAfterHistory(taskRow, historyRow) {
+  const historyTs = historyRowTimestamp(historyRow);
+  if (!Number.isFinite(historyTs)) return false;
+  const modifiedTs = taskRow && taskRow.date_modified ? new Date(taskRow.date_modified).getTime() : NaN;
+  return Number.isFinite(modifiedTs) && modifiedTs > historyTs;
+}
+
 async function hasLaterActiveResetHistory(pool, taskId, historyRow) {
   try {
     const [rows] = await pool.query(
@@ -127,7 +139,7 @@ async function syncMtDriverTaskFromTerminalTimelineHistory(pool, taskId, history
   let cur;
   try {
     const [[row]] = await pool.query(
-      'SELECT status, order_id, task_description FROM mt_driver_task WHERE task_id = ? LIMIT 1',
+      'SELECT status, order_id, task_description, date_modified FROM mt_driver_task WHERE task_id = ? LIMIT 1',
       [tid]
     );
     cur = row;
@@ -136,6 +148,7 @@ async function syncMtDriverTaskFromTerminalTimelineHistory(pool, taskId, history
     throw e;
   }
   if (!cur) return { updated: false };
+  if (taskWasModifiedAfterHistory(cur, historyRow)) return { updated: false };
 
   const curKey = normalizeTaskStatusKey(cur.status);
   const skip = new Set(['successful', 'completed', 'delivered', 'declined', 'cancelled', 'canceled', 'failed']);

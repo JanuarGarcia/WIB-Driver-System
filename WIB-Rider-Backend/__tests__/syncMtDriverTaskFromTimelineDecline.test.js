@@ -22,8 +22,8 @@ describe('syncMtDriverTaskFromTerminalTimelineHistory', () => {
           },
         ]];
       }
-      if (/SELECT status, order_id, task_description FROM mt_driver_task/i.test(text)) {
-        return [[{ status: 'assigned', order_id: 174, task_description: 'Test Order' }]];
+      if (/SELECT status, order_id, task_description, date_modified FROM mt_driver_task/i.test(text)) {
+        return [[{ status: 'assigned', order_id: 174, task_description: 'Test Order', date_modified: '2026-04-22T11:23:30.000Z' }]];
       }
       if (/UPDATE mt_driver_task SET status = \?/i.test(text)) {
         return [{ affectedRows: 1 }];
@@ -59,8 +59,8 @@ describe('syncMtDriverTaskFromTerminalTimelineHistory', () => {
       if (/FROM mt_order_history/i.test(text)) {
         return [[]];
       }
-      if (/SELECT status, order_id, task_description FROM mt_driver_task/i.test(text)) {
-        return [[{ status: 'assigned', order_id: 174, task_description: 'Test Order' }]];
+      if (/SELECT status, order_id, task_description, date_modified FROM mt_driver_task/i.test(text)) {
+        return [[{ status: 'assigned', order_id: 174, task_description: 'Test Order', date_modified: '2026-04-22T11:23:30.000Z' }]];
       }
       if (/UPDATE mt_driver_task SET status = \?/i.test(text)) {
         return [{ affectedRows: 1 }];
@@ -91,5 +91,46 @@ describe('syncMtDriverTaskFromTerminalTimelineHistory', () => {
     );
     expect(updateMtOrderStatusIfDeliveryComplete).toHaveBeenCalledWith({ query }, 174, 'declined');
     expect(notifyAllDashboardAdminsFireAndForget).toHaveBeenCalled();
+  });
+
+  test('does not overwrite a reassigned task when mt_driver_task was modified after the terminal history row', async () => {
+    const query = jest.fn(async (sql) => {
+      const text = String(sql);
+      if (/FROM mt_order_history/i.test(text)) {
+        return [[]];
+      }
+      if (/SELECT status, order_id, task_description, date_modified FROM mt_driver_task/i.test(text)) {
+        return [[{
+          status: 'assigned',
+          order_id: 174,
+          task_description: 'Test Order',
+          date_modified: '2026-04-22T11:24:45.000Z',
+        }]];
+      }
+      if (/UPDATE mt_driver_task SET status = \?/i.test(text)) {
+        return [{ affectedRows: 1 }];
+      }
+      return [[]];
+    });
+
+    const updateMtOrderStatusIfDeliveryComplete = jest.fn().mockResolvedValue(undefined);
+    const notifyAllDashboardAdminsFireAndForget = jest.fn();
+
+    jest.doMock('../lib/mtOrderStatusSync', () => ({ updateMtOrderStatusIfDeliveryComplete }));
+    jest.doMock('../lib/dashboardRiderNotify', () => ({
+      foodTaskNotifyFromStatus: jest.fn(() => ({ title: 'x', message: 'y', type: 'declined' })),
+      notifyAllDashboardAdminsFireAndForget,
+    }));
+
+    const { syncMtDriverTaskFromTerminalTimelineHistory } = require('../lib/syncMtDriverTaskFromTimelineDecline');
+    const out = await syncMtDriverTaskFromTerminalTimelineHistory(
+      { query },
+      418244,
+      { id: 21, status: 'declined', remarks: 'Customer unreachable', date_created: '2026-04-22T11:24:00.000Z' }
+    );
+
+    expect(out).toEqual({ updated: false });
+    expect(updateMtOrderStatusIfDeliveryComplete).not.toHaveBeenCalled();
+    expect(notifyAllDashboardAdminsFireAndForget).not.toHaveBeenCalled();
   });
 });
