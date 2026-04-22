@@ -82,6 +82,7 @@ describe('rider push fallback behavior', () => {
     const cert = jest.fn(() => ({}));
 
     jest.doMock('../config/db', () => ({ pool: { query } }));
+    jest.unmock('../services/fcm');
     jest.doMock('firebase-admin', () => ({
       apps: [],
       initializeApp,

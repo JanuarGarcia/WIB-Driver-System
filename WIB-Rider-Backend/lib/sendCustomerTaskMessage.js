@@ -1,6 +1,7 @@
 const { sendPushToFcmToken } = require('../services/fcm');
 const { fetchClientFcmTokenAndDeviceRef } = require('./customerFcmToken');
 const { insertMtMobile2PushLog } = require('./mtMobile2PushLogs');
+const { fetchMobile2DeviceRegContextForClient } = require('./mobile2DeviceRegLookup');
 const { deriveErrandDriverTaskStatus, isTerminal } = require('./errandDriverStatus');
 const { fetchErrandLatestHistoryStatusByOrderIds } = require('./errandOrders');
 
@@ -121,6 +122,31 @@ function errandOrderDriverId(row) {
   if (row.driver_id == null || String(row.driver_id).trim() === '') return null;
   const n = parseInt(String(row.driver_id), 10);
   return Number.isFinite(n) ? n : null;
+}
+
+async function resolveCustomerPushTarget(clientPool, clientTable, clientId) {
+  const legacy = await fetchClientFcmTokenAndDeviceRef(clientPool, clientTable, clientId);
+
+  if (clientTable === 'mt_client') {
+    try {
+      const mobile2 = await fetchMobile2DeviceRegContextForClient(clientPool, clientId);
+      if (mobile2?.deviceId) {
+        return {
+          token: String(mobile2.deviceId).trim(),
+          deviceRef: mobile2.installUuid ? String(mobile2.installUuid).trim() : legacy.deviceRef,
+          devicePlatform: mobile2.devicePlatform ? String(mobile2.devicePlatform).trim() : null,
+          source: 'mt_mobile2_device_reg',
+        };
+      }
+    } catch (_) {}
+  }
+
+  return {
+    token: legacy.token,
+    deviceRef: legacy.deviceRef,
+    devicePlatform: null,
+    source: clientTable,
+  };
 }
 
 function truncNotifyBody(s) {
@@ -271,7 +297,7 @@ async function sendCustomerTaskMessage(pool, errandWibPool, driver, body) {
     }
   }
 
-  const { token: fcmToken, deviceRef } = await fetchClientFcmTokenAndDeviceRef(clientPool, clientTable, clientId);
+  const { token: fcmToken, deviceRef, devicePlatform } = await resolveCustomerPushTarget(clientPool, clientTable, clientId);
   const notifyBody = truncNotifyBody(pushMessage);
 
   let messageId;
@@ -320,6 +346,7 @@ async function sendCustomerTaskMessage(pool, errandWibPool, driver, body) {
     clientId,
     deviceId: fcmToken ? fcmToken.slice(0, 512) : null,
     deviceUiid: deviceRef ? deviceRef.slice(0, 255) : null,
+    devicePlatform: devicePlatform ? devicePlatform.slice(0, 40) : null,
     title: pushTitle,
     body: notifyBody,
     pushType,
@@ -373,4 +400,4 @@ async function sendCustomerTaskNotify(pool, errandWibPool, driver, body) {
   });
 }
 
-module.exports = { sendCustomerTaskMessage, sendCustomerTaskNotify };
+module.exports = { sendCustomerTaskMessage, sendCustomerTaskNotify, resolveCustomerPushTarget };
