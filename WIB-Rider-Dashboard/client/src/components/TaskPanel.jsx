@@ -202,6 +202,18 @@ function directionDisplayLabel(dir) {
   return map[v] ?? dir.trim().split(/\s+/).map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join('-');
 }
 
+function formatTaskWaitingDuration(createdAt) {
+  const created = createdAt ? new Date(createdAt) : null;
+  if (!(created instanceof Date) || Number.isNaN(created.getTime())) {
+    return { minsWaiting: null, waitingLabel: null };
+  }
+  const minsWaiting = Math.max(0, Math.floor((Date.now() - created.getTime()) / 60000));
+  const waitingLabel = minsWaiting >= 60
+    ? `${Math.floor(minsWaiting / 60)} hr ${minsWaiting % 60} mins`
+    : `${minsWaiting}mins`;
+  return { minsWaiting, waitingLabel };
+}
+
 /** Shown when API sets timeline_ready_for_pickup from Activity Timeline (mt_order_history / errand history). */
 function TaskCardReadyForPickupBanner({ className = '' }) {
   return (
@@ -936,9 +948,7 @@ export default function TaskPanel({ onOpenTaskDetails, onFocusTaskOnMap, listRev
           <ul className="task-card-list">
             {(showAllInList ? filtered : filtered.slice(0, 20)).map((t) => {
               const statusNorm = normStatus(t.status);
-              const created = t.date_created ? new Date(t.date_created) : null;
-              const minsWaiting = created ? Math.max(0, Math.floor((Date.now() - created.getTime()) / 60000)) : null;
-              const waitingMins = minsWaiting !== null ? (minsWaiting >= 60 ? `${Math.floor(minsWaiting / 60)} hr ${minsWaiting % 60} mins` : `${minsWaiting}mins`) : null;
+              const { minsWaiting, waitingLabel } = formatTaskWaitingDuration(t.date_created);
               const isUnassigned = statusNorm === 'unassigned';
               const isAssigned = statusNorm === 'assigned';
               const isAcknowledged = statusNorm === 'acknowledged';
@@ -1039,12 +1049,12 @@ export default function TaskPanel({ onOpenTaskDetails, onFocusTaskOnMap, listRev
                       ) : null}
                     </div>
                   )}
-                  {isUnassigned && waitingMins && (
+                  {(isUnassigned || isAssigned) && waitingLabel && (
                     <div className="task-card-v2-waiting">
                       <span className="task-card-v2-icon" aria-hidden="true">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z"/></svg>
                       </span>
-                      <span className="task-card-v2-waiting-duration">{waitingMins}</span> waiting
+                      <span className="task-card-v2-waiting-duration">{waitingLabel}</span> waiting
                     </div>
                   )}
                   {(isAssigned || isAcknowledged || isStarted || isInProgress || isCompleted || isProblemStatus) && (
