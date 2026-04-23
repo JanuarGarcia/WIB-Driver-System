@@ -94,6 +94,10 @@ function assert(cond, msg) {
   }
 }
 
+function bodyPreview(raw, max = 300) {
+  return String(raw || '').replace(/\s+/g, ' ').trim().slice(0, max);
+}
+
 function parseOptionalJson(raw) {
   const s = String(raw || '').trim();
   if (!s) return undefined;
@@ -132,8 +136,18 @@ async function smokeManganBearer(opts) {
     body: loginBody,
   });
 
+  if (!(login.status >= 200 && login.status < 500)) {
+    console.error(
+      `Login HTTP status: ${login.status} location=${login.headers?.location || ''} preview=${bodyPreview(login.raw)}`
+    );
+  }
   assert(login.status >= 200 && login.status < 500, `unexpected login HTTP status ${login.status}`);
-  assert(login.json && typeof login.json === 'object', `expected login JSON, got ${login.raw.slice(0, 300)}`);
+  if (!(login.json && typeof login.json === 'object')) {
+    console.error(
+      `Login non-JSON response: status=${login.status} location=${login.headers?.location || ''} preview=${bodyPreview(login.raw)}`
+    );
+  }
+  assert(login.json && typeof login.json === 'object', `expected login JSON, got ${bodyPreview(login.raw)}`);
   assert(login.json.code === 1, `login failed code=${login.json.code} msg=${login.json.msg || ''}`);
   const token = login.json?.details?.user_token;
   assert(token && String(token).trim(), 'expected details.user_token from /driver/login');
