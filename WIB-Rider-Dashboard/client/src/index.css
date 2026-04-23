@@ -6215,6 +6215,10 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
   width: 7.5rem;
   white-space: nowrap;
 }
+.agent-detail-modal-card--wide .agent-driver-details-table th:nth-child(6),
+.agent-detail-modal-card--wide .agent-driver-details-table td:nth-child(6) {
+  width: 11rem;
+}
 .agent-driver-details-table thead th {
   text-align: left;
   padding: 0.6rem 0.75rem;
@@ -6263,6 +6267,43 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
   border-radius: 4px;
   font-weight: 600;
   text-transform: lowercase;
+}
+.agent-driver-details-proof-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+.agent-driver-details-proof-list--card {
+  width: 100%;
+}
+.agent-driver-details-proof-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  max-width: 100%;
+  padding: 0.2rem 0.45rem 0.2rem 0.2rem;
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  background: var(--bg-surface-1, rgba(0, 0, 0, 0.02));
+  color: var(--text-dark);
+  text-decoration: none;
+  font-size: 0.75rem;
+  line-height: 1.2;
+}
+.agent-driver-details-proof-link:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+.agent-driver-details-proof-thumb {
+  width: 1.8rem;
+  height: 1.8rem;
+  border-radius: 999px;
+  object-fit: cover;
+  border: 1px solid var(--border-soft);
+  flex: 0 0 auto;
+}
+.agent-driver-details-proof-empty {
+  color: var(--text-muted);
 }
 
 /* Driver details: stacked task cards (mobile); table hidden there */

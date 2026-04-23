@@ -1,5 +1,7 @@
 const bcrypt = require('bcryptjs');
 
+const DEFAULT_RIDER_SIGNUP_TEAM_NAME = 'WIB RIDERS';
+
 function isRiderSignupEnabled(settings) {
   if (!settings || typeof settings !== 'object') return false;
   const raw = settings.enabled_signup;
@@ -134,6 +136,21 @@ async function findDriverSignupConflict(pool, payload) {
   return null;
 }
 
+async function resolveDefaultRiderSignupTeamId(pool) {
+  try {
+    const [rows] = await pool.query(
+      'SELECT team_id FROM mt_driver_team WHERE LOWER(TRIM(team_name)) = LOWER(?) ORDER BY team_id ASC LIMIT 1',
+      [DEFAULT_RIDER_SIGNUP_TEAM_NAME]
+    );
+    if (!Array.isArray(rows) || rows.length === 0) return null;
+    const teamId = parseInt(rows[0]?.team_id, 10);
+    return Number.isFinite(teamId) ? teamId : null;
+  } catch (e) {
+    if (e.code === 'ER_NO_SUCH_TABLE' || e.code === 'ER_BAD_FIELD_ERROR') return null;
+    throw e;
+  }
+}
+
 async function createDriverSignup(pool, payload) {
   const username = String(payload?.username || '').trim();
   const password = String(payload?.password || '');
@@ -145,7 +162,8 @@ async function createDriverSignup(pool, payload) {
   const vehicle = String(payload?.vehicle || '').trim() || null;
   const status = normalizeRiderSignupStatus(payload?.status);
   const teamIdRaw = String(payload?.team_id || '').trim();
-  const teamId = teamIdRaw !== '' && Number.isFinite(parseInt(teamIdRaw, 10)) ? parseInt(teamIdRaw, 10) : null;
+  const parsedTeamId = teamIdRaw !== '' && Number.isFinite(parseInt(teamIdRaw, 10)) ? parseInt(teamIdRaw, 10) : null;
+  const teamId = parsedTeamId != null ? parsedTeamId : await resolveDefaultRiderSignupTeamId(pool);
 
   const insertAttempts = [
     {

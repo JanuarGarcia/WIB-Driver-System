@@ -66,6 +66,21 @@ function complianceReasonLabel(reasonRaw) {
   return r ? r : '—';
 }
 
+function taskProofPreviewItems(task) {
+  const items = [];
+  const receiptUrl = task?.proof_receipt_url != null ? String(task.proof_receipt_url).trim() : '';
+  const deliveryUrl = task?.proof_delivery_url != null ? String(task.proof_delivery_url).trim() : '';
+  if (receiptUrl) items.push({ key: 'receipt', label: 'Receipt', url: receiptUrl });
+  if (deliveryUrl) items.push({ key: 'delivery', label: 'Delivery', url: deliveryUrl });
+  if (items.length > 0) return items;
+
+  const fallback = Array.isArray(task?.proof_images) ? task.proof_images.filter(Boolean) : [];
+  if (fallback.length > 0) {
+    return [{ key: 'proof', label: fallback.length > 1 ? `${fallback.length} proofs` : 'Proof', url: fallback[0] }];
+  }
+  return [];
+}
+
 /** Read-only driver details + today's tasks (same UX as Agent panel "Details"). */
 export default function DriverDetailsModal({
   driverId,
@@ -315,12 +330,13 @@ export default function DriverDetailsModal({
                       <th>Type</th>
                       <th>Address</th>
                       <th>Status</th>
+                      <th>Proof</th>
                     </tr>
                   </thead>
                   <tbody>
                     {state.tasks.length === 0 ? (
                       <tr>
-                        <td colSpan={5} className="agent-driver-details-table-empty">
+                        <td colSpan={6} className="agent-driver-details-table-empty">
                           No tasks
                         </td>
                       </tr>
@@ -329,6 +345,7 @@ export default function DriverDetailsModal({
                         const tid = t.task_id ?? t.id;
                         const nameRaw = t.customer_name ?? t.task_description;
                         const typeLabel = driverDetailsOrderTypeLabel(t);
+                        const proofItems = taskProofPreviewItems(t);
                         return (
                           <tr key={driverDetailsTaskRowKey(t)}>
                             <td>
@@ -348,6 +365,32 @@ export default function DriverDetailsModal({
                                 {statusLabel(t.status)}
                               </span>
                             </td>
+                            <td>
+                              <div className="agent-driver-details-proof-list">
+                                {proofItems.length > 0 ? (
+                                  proofItems.map((item) => (
+                                    <a
+                                      key={item.key}
+                                      className="agent-driver-details-proof-link"
+                                      href={item.url}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      title={`Open ${item.label.toLowerCase()} proof`}
+                                    >
+                                      <img
+                                        src={item.url}
+                                        alt={`${item.label} proof`}
+                                        className="agent-driver-details-proof-thumb"
+                                        loading="lazy"
+                                      />
+                                      <span>{item.label}</span>
+                                    </a>
+                                  ))
+                                ) : (
+                                  <span className="agent-driver-details-proof-empty">-</span>
+                                )}
+                              </div>
+                            </td>
                           </tr>
                         );
                       })
@@ -364,6 +407,7 @@ export default function DriverDetailsModal({
                     const tid = t.task_id ?? t.id;
                     const nameRaw = t.customer_name ?? t.task_description;
                     const typeLabel = driverDetailsOrderTypeLabel(t);
+                    const proofItems = taskProofPreviewItems(t);
                     return (
                       <li key={driverDetailsTaskRowKey(t)} className="agent-driver-task-card">
                         <div className="agent-driver-task-card-top">
@@ -389,6 +433,34 @@ export default function DriverDetailsModal({
                         <div className="agent-driver-task-card-row agent-driver-task-card-row--address">
                           <span className="agent-driver-task-card-label">Address</span>
                           <span className="agent-driver-task-card-value">{taskFieldDisplay(t.delivery_address)}</span>
+                        </div>
+                        <div className="agent-driver-task-card-row">
+                          <span className="agent-driver-task-card-label">Proof</span>
+                          <span className="agent-driver-task-card-value">
+                            <span className="agent-driver-details-proof-list agent-driver-details-proof-list--card">
+                              {proofItems.length > 0 ? (
+                                proofItems.map((item) => (
+                                  <a
+                                    key={item.key}
+                                    className="agent-driver-details-proof-link"
+                                    href={item.url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                  >
+                                    <img
+                                      src={item.url}
+                                      alt={`${item.label} proof`}
+                                      className="agent-driver-details-proof-thumb"
+                                      loading="lazy"
+                                    />
+                                    <span>{item.label}</span>
+                                  </a>
+                                ))
+                              ) : (
+                                <span className="agent-driver-details-proof-empty">-</span>
+                              )}
+                            </span>
+                          </span>
                         </div>
                       </li>
                     );

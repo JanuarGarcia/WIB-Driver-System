@@ -88,6 +88,44 @@ describe('riderSignup helpers', () => {
     );
   });
 
+  test('defaults signup team to WIB RIDERS when team_id is missing', async () => {
+    const pool = {
+      query: jest.fn(async (sql, params) => {
+        const text = String(sql);
+        if (/FROM mt_driver_team/i.test(text)) {
+          expect(params).toEqual(['WIB RIDERS']);
+          return [[{ team_id: 12 }]];
+        }
+        if (/INSERT INTO mt_driver/i.test(text)) {
+          expect(params).toContain(12);
+          return [{ insertId: 88 }];
+        }
+        return [[]];
+      }),
+    };
+
+    const created = await createDriverSignup(pool, {
+      username: 'wib-rider',
+      password: 'secret123',
+      first_name: 'Wib',
+      last_name: 'Rider',
+      email: 'wib@example.com',
+      phone: '09171234567',
+      vehicle: 'Motorcycle',
+      status: 'active',
+    });
+
+    expect(created).toEqual({
+      driverId: 88,
+      username: 'wib-rider',
+      status: 'active',
+    });
+    expect(pool.query).toHaveBeenCalledWith(
+      expect.stringMatching(/FROM mt_driver_team WHERE LOWER\(TRIM\(team_name\)\) = LOWER\(\?\)/i),
+      ['WIB RIDERS']
+    );
+  });
+
   test('maps signup status and success messages', () => {
     expect(normalizeRiderSignupStatus('pending')).toBe('pending');
     expect(normalizeRiderSignupStatus('weird')).toBe('active');

@@ -107,6 +107,30 @@ function normalizeManganDedupeTitle(title, type) {
  * Build a dedupe key for "same status, same target" notifications.
  * This is used client-side to collapse duplicate rows where one payload has actor and one does not.
  */
+function normalizeTaskDedupeTitle(title, type) {
+  const t = String(title || '').trim().toLowerCase();
+  const ty = String(type || '').trim().toLowerCase();
+
+  if (ty === 'task_done' || /\b(successful delivery|task delivered|completed|delivered)\b/.test(t)) {
+    return 'milestone_done';
+  }
+  if (ty === 'task_accepted' || /\b(task accepted|accepted|acknowledged)\b/.test(t)) {
+    return 'milestone_accepted';
+  }
+  if (ty === 'ready_pickup' || /\bready for pickup\b/.test(t)) {
+    return 'milestone_ready_for_pickup';
+  }
+  if (ty === 'task_assigned' || ty === 'assign' || /\btask assigned\b/.test(t)) {
+    return 'milestone_assigned';
+  }
+  if (ty === 'default') {
+    if (/\b(declined|rejected)\b/.test(t)) return 'milestone_declined';
+    if (/\b(cancelled|canceled|cancel)\b/.test(t)) return 'milestone_cancelled';
+    if (/\bfailed\b/.test(t)) return 'milestone_failed';
+  }
+  return t;
+}
+
 export function buildNotificationDedupeKey(notification) {
   const n = notification || {};
   const type = String(n.type || '').trim().toLowerCase();
@@ -115,6 +139,8 @@ export function buildNotificationDedupeKey(notification) {
   const targetId = parseTaskIdFromNotificationMessage(message);
   if (targetId != null && targetId < 0) {
     title = normalizeManganDedupeTitle(title, type);
+  } else {
+    title = normalizeTaskDedupeTitle(title, type);
   }
   const actorless = formatNotificationMessageForDisplay(message).toLowerCase();
   const targetPart = targetId != null ? `target:${targetId}` : `msg:${actorless}`;

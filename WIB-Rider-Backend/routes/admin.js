@@ -4861,16 +4861,16 @@ router.get('/drivers/:id/details', async (req, res) => {
     }
 
     const taskSelectAttempts = [
-      `SELECT t.task_id, t.task_description, t.status, t.delivery_date, t.delivery_address, t.customer_name,
+      `SELECT t.task_id, t.order_id, t.task_description, t.status, t.delivery_date, t.delivery_address, t.customer_name,
               t.trans_type, t.date_created
        FROM mt_driver_task t
        WHERE t.driver_id = ? AND (t.delivery_date = ? OR DATE(t.delivery_date) = ?)
        ORDER BY t.task_id DESC`,
-      `SELECT t.task_id, t.task_description, t.status, t.delivery_date, t.delivery_address, t.customer_name, t.trans_type
+      `SELECT t.task_id, t.order_id, t.task_description, t.status, t.delivery_date, t.delivery_address, t.customer_name, t.trans_type
        FROM mt_driver_task t
        WHERE t.driver_id = ? AND (t.delivery_date = ? OR DATE(t.delivery_date) = ?)
        ORDER BY t.task_id DESC`,
-      `SELECT t.task_id, t.task_description, t.status, t.delivery_date, t.delivery_address, t.customer_name
+      `SELECT t.task_id, t.order_id, t.task_description, t.status, t.delivery_date, t.delivery_address, t.customer_name
        FROM mt_driver_task t
        WHERE t.driver_id = ? AND (t.delivery_date = ? OR DATE(t.delivery_date) = ?)
        ORDER BY t.task_id DESC`,
@@ -4908,8 +4908,73 @@ router.get('/drivers/:id/details', async (req, res) => {
       }
     };
 
-    const [foodTasks, errandMapped] = await Promise.all([loadFoodTasks(), loadErrandTasks()]);
-    const errandWithKind = (errandMapped || []).map((r) => ({ ...r, order_kind: 'mangan' }));
+    const attachEmptyProofSummary = (row) => ({
+      ...row,
+      task_photos: Array.isArray(row?.task_photos) ? row.task_photos : [],
+      proof_images: Array.isArray(row?.proof_images) ? row.proof_images : [],
+      proof_receipt_url: row?.proof_receipt_url || null,
+      proof_delivery_url: row?.proof_delivery_url || null,
+    });
+
+    const [foodTasksRaw, errandMapped] = await Promise.all([loadFoodTasks(), loadErrandTasks()]);
+    const foodTasks = await Promise.all(
+      (foodTasksRaw || []).map(async (row) => {
+        const tid = Number(row?.task_id);
+        const oid =
+          row?.order_id != null && String(row.order_id).trim() !== '' ? parseInt(String(row.order_id), 10) : NaN;
+        if (!Number.isFinite(tid) || tid <= 0) return attachEmptyProofSummary(row);
+        try {
+          const pack = await fetchTaskProofPhotosWithUrls(pool, tid, Number.isFinite(oid) && oid > 0 ? oid : null);
+          return { ...row, ...pack };
+        } catch (e) {
+          if (e.code === 'ER_NO_SUCH_TABLE' || e.code === 'ER_BAD_FIELD_ERROR') {
+            return attachEmptyProofSummary(row);
+          }
+          throw e;
+        }
+      })
+    );
+    const errandWithKind = await Promise.all(
+      (errandMapped || []).map(async (row) => {
+        const oid =
+          row?.order_id != null && String(row.order_id).trim() !== ''
+            ? parseInt(String(row.order_id), 10)
+            : row?.st_order_id != null && String(row.st_order_id).trim() !== ''
+              ? parseInt(String(row.st_order_id), 10)
+              : NaN;
+        if (!errandWibPool || !Number.isFinite(oid) || oid <= 0) {
+          return attachEmptyProofSummary({ ...row, order_kind: 'mangan' });
+        }
+        try {
+          const proofs = await fetchErrandProofsForOrder(errandWibPool, oid);
+          const task_photos = proofs.map((p) => ({
+            id: p.id,
+            task_id: row?.task_id ?? null,
+            errand_order_id: oid,
+            photo_name: p.photo_name,
+            date_created: p.date_created,
+            proof_url: p.proof_url,
+            proof_type: p.proof_type,
+          }));
+          const proof_images = proofs.map((p) => p.proof_url).filter(Boolean);
+          const rec = proofs.filter((p) => p.proof_type === 'receipt');
+          const del = proofs.filter((p) => p.proof_type === 'delivery');
+          return {
+            ...row,
+            order_kind: 'mangan',
+            task_photos,
+            proof_images,
+            proof_receipt_url: rec.length ? rec[rec.length - 1].proof_url || null : null,
+            proof_delivery_url: del.length ? del[del.length - 1].proof_url || null : null,
+          };
+        } catch (e) {
+          if (e.code === 'ER_NO_SUCH_TABLE' || e.code === 'ER_BAD_FIELD_ERROR') {
+            return attachEmptyProofSummary({ ...row, order_kind: 'mangan' });
+          }
+          throw e;
+        }
+      })
+    );
     const rowTime = (row) => {
       const t1 = row?.date_created != null ? new Date(row.date_created).getTime() : NaN;
       if (Number.isFinite(t1)) return t1;
