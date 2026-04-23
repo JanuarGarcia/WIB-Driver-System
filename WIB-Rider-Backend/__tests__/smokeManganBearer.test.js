@@ -75,6 +75,8 @@ describe('smokeManganBearer', () => {
 
   test('sends optional Mangan api_key in login and protected POST body', async () => {
     process.env.MANGAN_DRIVER_API_KEY = 'api-key-xyz';
+    process.env.MANGAN_DRIVER_SEND_API_KEY_ON_LOGIN = '1';
+    process.env.MANGAN_DRIVER_SEND_API_KEY_ON_ACTIONS = '1';
 
     const seen = {
       loginBody: null,

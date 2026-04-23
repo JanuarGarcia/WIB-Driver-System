@@ -60,6 +60,14 @@ function getApiKey() {
   return raw != null && String(raw).trim() !== '' ? String(raw).trim() : '';
 }
 
+function includeApiKeyOnLogin() {
+  return truthyEnv(process.env.MANGAN_DRIVER_SEND_API_KEY_ON_LOGIN);
+}
+
+function includeApiKeyOnActions() {
+  return truthyEnv(process.env.MANGAN_DRIVER_SEND_API_KEY_ON_ACTIONS);
+}
+
 function parseCustomMap() {
   const raw = process.env.MANGAN_SYNC_STATUS_MAP_JSON;
   if (!raw || !String(raw).trim()) return null;
@@ -166,7 +174,7 @@ function cacheKey(driverId, username) {
 async function loginMangan(baseUrl, username, password) {
   const apiKey = getApiKey();
   const body = { username, password };
-  if (apiKey) body.api_key = apiKey;
+  if (apiKey && includeApiKeyOnLogin()) body.api_key = apiKey;
   const url = new URL('/driver/login', `${baseUrl}/`);
   const res = await fetch(url, {
     method: 'POST',
@@ -224,7 +232,7 @@ async function postDriverAction(baseUrl, bearer, action, body) {
   const ac = new AbortController();
   const t = setTimeout(() => ac.abort(), timeoutMs);
   const payload = body && typeof body === 'object' ? { ...body } : {};
-  if (apiKey && payload.api_key == null) payload.api_key = apiKey;
+  if (apiKey && includeApiKeyOnActions() && payload.api_key == null) payload.api_key = apiKey;
   try {
     const res = await fetch(url, {
       method: 'POST',

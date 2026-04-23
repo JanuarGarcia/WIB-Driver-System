@@ -96,8 +96,10 @@ describe('manganDriverSync credential resolution', () => {
     });
   });
 
-  test('includes optional api_key in login and protected Mangan action payloads', async () => {
+  test('includes optional api_key in login and protected Mangan action payloads only when enabled', async () => {
     process.env.MANGAN_DRIVER_API_KEY = 'mobile-api-key-123';
+    process.env.MANGAN_DRIVER_SEND_API_KEY_ON_LOGIN = '1';
+    process.env.MANGAN_DRIVER_SEND_API_KEY_ON_ACTIONS = '1';
 
     const errandPool = {
       query: jest.fn(async (sql) => {

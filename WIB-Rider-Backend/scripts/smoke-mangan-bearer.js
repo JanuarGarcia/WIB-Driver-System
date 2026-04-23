@@ -10,7 +10,9 @@
  *
  * Env:
  *   MANGAN_DRIVER_API_BASE_URL - default base URL when 3rd arg omitted
- *   MANGAN_DRIVER_API_KEY - optional legacy mobile API key; when set it is sent as `api_key`
+ *   MANGAN_DRIVER_API_KEY - optional legacy mobile API key
+ *   MANGAN_DRIVER_SEND_API_KEY_ON_LOGIN - set to 1/true/on to include `api_key` on /driver/login
+ *   MANGAN_DRIVER_SEND_API_KEY_ON_ACTIONS - set to 1/true/on to include `api_key` on protected action bodies
  *   MANGAN_SMOKE_PATH - default protected path when 4th arg omitted (default /driver/profile)
  *   MANGAN_SMOKE_METHOD - optional method for protected call (default POST)
  *   MANGAN_SMOKE_BODY - optional JSON body for the protected call
@@ -28,6 +30,20 @@ function normalizeBaseUrl(v) {
 function optionalApiKey() {
   const raw = process.env.MANGAN_DRIVER_API_KEY;
   return raw != null && String(raw).trim() !== '' ? String(raw).trim() : '';
+}
+
+function truthyEnv(v) {
+  if (v == null || v === '') return false;
+  const s = String(v).toLowerCase().trim();
+  return s === '1' || s === 'true' || s === 'yes' || s === 'on';
+}
+
+function includeApiKeyOnLogin() {
+  return truthyEnv(process.env.MANGAN_DRIVER_SEND_API_KEY_ON_LOGIN);
+}
+
+function includeApiKeyOnActions() {
+  return truthyEnv(process.env.MANGAN_DRIVER_SEND_API_KEY_ON_ACTIONS);
 }
 
 function requestJson(urlStr, { method = 'POST', headers = {}, body } = {}) {
@@ -110,7 +126,7 @@ async function smokeManganBearer(opts) {
   const loginUrl = `${baseUrl}/driver/login`;
   console.log(`Login: ${loginUrl}`);
   const loginBody = { username, password };
-  if (apiKey) loginBody.api_key = apiKey;
+  if (apiKey && includeApiKeyOnLogin()) loginBody.api_key = apiKey;
   const login = await requestJson(loginUrl, {
     method: 'POST',
     body: loginBody,
@@ -129,7 +145,7 @@ async function smokeManganBearer(opts) {
     protectedBody && typeof protectedBody === 'object' && !Array.isArray(protectedBody)
       ? { ...protectedBody }
       : protectedBody;
-  if (apiKey && nextBody && typeof nextBody === 'object' && nextBody.api_key == null) {
+  if (apiKey && includeApiKeyOnActions() && nextBody && typeof nextBody === 'object' && nextBody.api_key == null) {
     nextBody.api_key = apiKey;
   }
   const protectedRes = await requestJson(protectedUrl, {
