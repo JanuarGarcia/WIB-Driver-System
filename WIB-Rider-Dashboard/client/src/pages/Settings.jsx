@@ -895,7 +895,7 @@ export default function Settings() {
                 </div>
               </div>
               <div className="settings-form-row">
-                <label>Enabled Signup</label>
+                <label>Show Rider App Register Button</label>
                 <div className="settings-field">
                   <div
                     role="button"
@@ -906,6 +906,7 @@ export default function Settings() {
                     onKeyDown={(e) => e.key === 'Enter' && setEnabledSignup((v) => !v)}
                   />
                   <span className="settings-toggle-label">{enabledSignup ? 'ON' : 'OFF'}</span>
+                  <p className="settings-helper">When ON, the rider app can show a Register button and new rider registrations are created in <code>mt_driver</code>. Turn it OFF to hide registration from the app.</p>
                 </div>
               </div>
               <div className="settings-form-row">
@@ -980,7 +981,10 @@ export default function Settings() {
               </div>
             </div>
             <div className="settings-section">
-              <h2 className="settings-section-title">Driver Signup Settings</h2>
+              <h2 className="settings-section-title">Rider Registration</h2>
+              <p className="settings-helper" style={{ marginBottom: '1rem' }}>
+                These options control how new rider accounts are saved to <code>mt_driver</code> after someone registers from the rider app.
+              </p>
               <div className="settings-form-row">
                 <label htmlFor="signup_status">Set Signup Status</label>
                 <div className="settings-field">
@@ -994,7 +998,7 @@ export default function Settings() {
                     <option value="pending">pending</option>
                     <option value="inactive">inactive</option>
                   </select>
-                  <p className="settings-helper">Set the default status of the driver after signup.</p>
+                  <p className="settings-helper">Choose the default <code>mt_driver.status</code> for new registrations.</p>
                 </div>
               </div>
               <div className="settings-form-row">
@@ -1008,7 +1012,7 @@ export default function Settings() {
                     onChange={(e) => setSignupNotificationEmails(e.target.value)}
                     placeholder="Email address that will receive email once there is new signup"
                   />
-                  <p className="settings-helper">Multiple email must separated by comma.</p>
+                  <p className="settings-helper">Optional. Separate multiple email addresses with commas.</p>
                 </div>
               </div>
             </div>

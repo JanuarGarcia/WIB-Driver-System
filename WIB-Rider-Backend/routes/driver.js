@@ -48,6 +48,14 @@ const { updateMtOrderStatusIfDeliveryComplete } = require('../lib/mtOrderStatusS
 const { buildErrandOrderDetailPayloadForDriver } = require('../lib/errandOrders');
 const { fetchErrandProofsForOrder } = require('../lib/errandProof');
 const {
+  createDriverSignup,
+  findDriverSignupConflict,
+  isRiderSignupEnabled,
+  normalizeRiderSignupStatus,
+  resolveRiderSignupPayload,
+  riderSignupSuccessMessage,
+} = require('../lib/riderSignup');
+const {
   COMPLIANCE_BLOCK_MESSAGE,
   getDriverCompliance,
   isComplianceBlocking,
@@ -1317,6 +1325,11 @@ async function updateOrderPaymentFields(orderId, payment_type, payment_status) {
 router.post('/GetAppSettings', validateApiKey, optionalDriver, async (req, res) => {
   const settings = await getDriverSettingsMap();
   const driver = req.driver;
+  const tokenState = req.driverTokenState === 'valid' || req.driverTokenState === 'invalid' || req.driverTokenState === 'missing'
+    ? req.driverTokenState
+    : 'missing';
+  const signupEnabled = isRiderSignupEnabled(settings);
+  const signupStatus = normalizeRiderSignupStatus(settings.signup_status);
   const appName = (settings.app_name != null && String(settings.app_name).trim() !== '') ? String(settings.app_name).trim() : (settings.website_title || 'WIB Driver');
   const configuredApiKey = settings.driver_api_hash_key || settings.api_hash_key || process.env.API_HASH_KEY || '';
   const envMobileApiUrlRaw = (process.env.MOBILE_API_URL || '').trim();
@@ -1329,7 +1342,16 @@ router.post('/GetAppSettings', validateApiKey, optionalDriver, async (req, res) 
     app_name: appName,
     allow_task_successful_when: settings.allow_task_successful_when || 'picture_proof',
     allow_send_customer_message: isRiderCustomerMessagingEnabled(settings) ? 1 : 0,
+    allow_signup: signupEnabled ? 1 : 0,
+    enabled_signup: signupEnabled ? 1 : 0,
+    show_register_button: signupEnabled ? 1 : 0,
+    signup_status: signupStatus,
+    signup_target: 'mt_driver',
     valid_token: driver != null,
+    token_present: tokenState !== 'missing',
+    invalid_token: tokenState === 'invalid' ? 1 : 0,
+    token_status: tokenState,
+    auth_state: tokenState === 'valid' ? 'authenticated' : 'unauthenticated',
     todays_date: todayStr(),
     todays_date_raw: todayRaw(),
     on_duty: driver?.on_duty ?? 0,
@@ -1360,6 +1382,46 @@ router.post('/GetAppSettings', validateApiKey, optionalDriver, async (req, res) 
   }
   return success(res, details);
 });
+
+async function handleDriverRegister(req, res) {
+  const settings = await getDriverSettingsMap();
+  if (!isRiderSignupEnabled(settings)) {
+    return error(res, 'Registration is currently disabled');
+  }
+
+  const payload = resolveRiderSignupPayload(req.body || {});
+  if (!payload.username) return error(res, 'Username, email, or mobile number is required');
+  if (!payload.password) return error(res, 'Password is required');
+  if (payload.password.trim().length < 6) return error(res, 'Password must be at least 6 characters');
+
+  try {
+    const conflict = await findDriverSignupConflict(pool, payload);
+    if (conflict) return error(res, conflict);
+
+    const created = await createDriverSignup(pool, {
+      ...payload,
+      status: normalizeRiderSignupStatus(settings.signup_status),
+    });
+
+    return success(
+      res,
+      {
+        driver_id: created.driverId,
+        username: created.username,
+        status: created.status,
+        signup_target: 'mt_driver',
+      },
+      riderSignupSuccessMessage(created.status)
+    );
+  } catch (e) {
+    if (e.code === 'ER_DUP_ENTRY') return error(res, 'A rider account with that information already exists');
+    if (e.code === 'ER_NO_SUCH_TABLE') return error(res, 'Driver registration storage is not available');
+    return error(res, e.message || 'Failed to register rider account');
+  }
+}
+
+router.post('/Register', validateApiKey, handleDriverRegister);
+router.post('/register', validateApiKey, handleDriverRegister);
 
 async function getTokenForDriverId(driverId) {
   const [[r]] = await pool.query('SELECT token FROM mt_driver WHERE driver_id = ?', [driverId]);
@@ -1685,7 +1747,7 @@ router.post('/sendCustomerTaskMessage', validateApiKey, resolveDriver, handleSen
 router.post('/NotifyCustomer', validateApiKey, resolveDriver, handleNotifyCustomer);
 router.post('/notifyCustomer', validateApiKey, resolveDriver, handleNotifyCustomer);
 
-router.post('/ChangeTaskStatus', validateApiKey, resolveDriver, async (req, res) => {
+async function handleChangeTaskStatus(req, res) {
   try {
     const compliance = await getDriverCompliance(pool, req.driver.id);
     if (isComplianceBlocking(compliance)) {
@@ -1708,6 +1770,9 @@ router.post('/ChangeTaskStatus', validateApiKey, resolveDriver, async (req, res)
   } = body;
   const tid = parseInt(task_id ?? body.taskId ?? body.task_id, 10);
   if (!tid) return error(res, 'task_id required');
+  if (tid < 0 && typeof driverErrandRoutes.handleChangeErrandOrderStatus === 'function') {
+    return driverErrandRoutes.handleChangeErrandOrderStatus(req, res);
+  }
   const rawForStatus =
     status_raw ??
     body.statusRaw ??
@@ -1848,7 +1913,9 @@ router.post('/ChangeTaskStatus', validateApiKey, resolveDriver, async (req, res)
   });
 
   return success(res, null);
-});
+}
+
+router.post('/ChangeTaskStatus', validateApiKey, resolveDriver, handleChangeTaskStatus);
 
 router.post('/GetNotifications', validateApiKey, resolveDriver, async (req, res) => {
   let rows = [];
@@ -2263,5 +2330,7 @@ router.post('/LogMapApiCall', validateApiKey, optionalDriver, async (req, res) =
 
 const driverErrandRoutes = require('./driverErrand');
 router.use(driverErrandRoutes);
+
+router.handleChangeTaskStatus = handleChangeTaskStatus;
 
 module.exports = router;

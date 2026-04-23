@@ -47,6 +47,7 @@ async function resolveDriver(req, res, next) {
   if (!driver) {
     return error(res, 'Invalid token', 2);
   }
+  req.driverTokenState = 'valid';
   req.driver = driver;
   next();
 }
@@ -55,6 +56,7 @@ async function resolveDriver(req, res, next) {
 async function optionalDriver(req, res, next) {
   const token = getDriverTokenFromRequest(req);
   if (!token) {
+    req.driverTokenState = 'missing';
     req.driver = null;
     return next();
   }
@@ -62,6 +64,7 @@ async function optionalDriver(req, res, next) {
     `SELECT driver_id AS id, username, CONCAT(COALESCE(first_name,''), ' ', COALESCE(last_name,'')) AS full_name, team_id, on_duty FROM mt_driver WHERE token = ?`,
     [token]
   );
+  req.driverTokenState = driver ? 'valid' : 'invalid';
   req.driver = driver || null;
   next();
 }

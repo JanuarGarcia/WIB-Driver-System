@@ -55,6 +55,11 @@ function getBaseUrl() {
   return raw;
 }
 
+function getApiKey() {
+  const raw = process.env.MANGAN_DRIVER_API_KEY;
+  return raw != null && String(raw).trim() !== '' ? String(raw).trim() : '';
+}
+
 function parseCustomMap() {
   const raw = process.env.MANGAN_SYNC_STATUS_MAP_JSON;
   if (!raw || !String(raw).trim()) return null;
@@ -159,11 +164,14 @@ function cacheKey(driverId, username) {
  * @param {string} password
  */
 async function loginMangan(baseUrl, username, password) {
+  const apiKey = getApiKey();
+  const body = { username, password };
+  if (apiKey) body.api_key = apiKey;
   const url = new URL('/driver/login', `${baseUrl}/`);
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-    body: JSON.stringify({ username, password }),
+    body: JSON.stringify(body),
   });
   const text = await res.text();
   let json;
@@ -211,9 +219,12 @@ async function postDriverAction(baseUrl, bearer, action, body) {
     throw new Error(`Invalid Mangan action: ${action}`);
   }
   const url = new URL(`/driver/${action}`, `${baseUrl}/`);
+  const apiKey = getApiKey();
   const timeoutMs = Math.min(Math.max(parseInt(String(process.env.MANGAN_SYNC_TIMEOUT_MS || '20000'), 10) || 20000, 5000), 60000);
   const ac = new AbortController();
   const t = setTimeout(() => ac.abort(), timeoutMs);
+  const payload = body && typeof body === 'object' ? { ...body } : {};
+  if (apiKey && payload.api_key == null) payload.api_key = apiKey;
   try {
     const res = await fetch(url, {
       method: 'POST',
@@ -223,7 +234,7 @@ async function postDriverAction(baseUrl, bearer, action, body) {
         Accept: 'application/json',
         Authorization: `Bearer ${bearer}`,
       },
-      body: JSON.stringify(body),
+      body: JSON.stringify(payload),
     });
     const text = await res.text();
     let json;

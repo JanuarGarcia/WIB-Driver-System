@@ -60,6 +60,7 @@ To enable it:
 
 - **Env**: set `MANGAN_DRIVER_SYNC_ENABLED=1`
 - **Base URL**: (optional) `MANGAN_DRIVER_API_BASE_URL=https://order.wheninbaguioeat.com`
+- **API key**: if the Mangan backoffice “API Access” page shows a mobile API key, set `MANGAN_DRIVER_API_KEY`. The backend sends it as `api_key` on `/driver/login` and the protected driver action calls.
 - **Credentials** (recommended): run `sql/st_driver_wib_sync_credentials.sql` on the ErrandWib / Mangan DB and set `st_driver.wib_sync_username` + `st_driver.wib_sync_password` for each rider.
 - **Primary DB fallback credentials**: if you already store the Mangan rider login on the WIB primary DB, run `sql/mt_driver_mangan_credentials.sql` and set `mt_driver.mangan_api_username` + `mt_driver.mangan_api_password`. The sync now uses those when `st_driver` does not have explicit WIB sync credentials.
 - **Dev-only fallback login**: alternatively set `MANGAN_SYNC_FALLBACK_USERNAME` / `MANGAN_SYNC_FALLBACK_PASSWORD` (only works if that Mangan driver is assigned to the order, because the PHP API verifies `driver_id`).
@@ -83,7 +84,8 @@ Without Git deploy: SSH into **Application root**, `git pull`, `npm install --om
 
 ## API summary
 
-- **Driver API** (`/driver/api`): Login, GetAppSettings, GetProfile, UpdateProfile, UpdateVehicle, ChangeDutyStatus, UpdateDriverLocation, GetTaskByDate, GetTaskDetails, ChangeTaskStatus, reRegisterDevice, joinQueue, leaveQueue, queuePosition, GetNotifications, ClearNotifications, ForgotPassword, ChangePassword, Logout, UploadProfilePhoto. All POST, form-urlencoded; response `{ code, msg, details }`.
+- **Driver API** (`/driver/api`): Login, Register, GetAppSettings, GetProfile, UpdateProfile, UpdateVehicle, ChangeDutyStatus, UpdateDriverLocation, GetTaskByDate, GetTaskDetails, ChangeTaskStatus, reRegisterDevice, joinQueue, leaveQueue, queuePosition, GetNotifications, ClearNotifications, ForgotPassword, ChangePassword, Logout, UploadProfilePhoto. All POST, form-urlencoded; response `{ code, msg, details }`.
+- **Rider registration toggle**: dashboard setting `enabled_signup` controls whether the rider app should show Register. `POST /driver/api/GetAppSettings` now returns `show_register_button`, `allow_signup`, `enabled_signup`, `signup_status`, and `signup_target: "mt_driver"`.
 - **Rider accounts** use **`mt_driver`** (username/password). Optional **`password_bcrypt`** for new vs old rider app compatibility — see [docs/RIDER_OLD_AND_NEW_APP_PASSWORD_COMPAT.md](./docs/RIDER_OLD_AND_NEW_APP_PASSWORD_COMPAT.md) and **`npm run migrate-mt-driver-password-bcrypt`**.
 - **Optional** `mt_client` email login: set **`DRIVER_LOGIN_MT_CLIENT_FALLBACK=1`** and migrate **`mt_driver.client_id`**; see [docs/DRIVER_LOGIN_UNIFIED_ACCOUNTS.md](./docs/DRIVER_LOGIN_UNIFIED_ACCOUNTS.md) and **`POST /admin/api/drivers/promote-from-client`**.
 - **Admin API** (`/admin/api`): GET/PUT settings, GET stats/drivers, GET drivers/locations, GET/POST tasks, PUT tasks/:id/assign, GET drivers, POST drivers/promote-from-client, GET push-logs.

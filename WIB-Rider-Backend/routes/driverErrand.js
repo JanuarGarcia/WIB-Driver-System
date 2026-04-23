@@ -394,7 +394,7 @@ router.post('/GetErrandOrderDetails', validateApiKey, resolveDriver, async (req,
   }
 });
 
-router.post('/AcceptErrandOrder', validateApiKey, resolveDriver, async (req, res) => {
+async function handleAcceptErrandOrder(req, res) {
   try {
     const compliance = await getDriverCompliance(pool, req.driver.id);
     if (isComplianceBlocking(compliance)) {
@@ -454,9 +454,11 @@ router.post('/AcceptErrandOrder', validateApiKey, resolveDriver, async (req, res
     }
     return error(res, e.message || 'Accept failed');
   }
-});
+}
 
-router.post('/ChangeErrandOrderStatus', validateApiKey, resolveDriver, async (req, res) => {
+router.post('/AcceptErrandOrder', validateApiKey, resolveDriver, handleAcceptErrandOrder);
+
+async function handleChangeErrandOrderStatus(req, res) {
   try {
     const compliance = await getDriverCompliance(pool, req.driver.id);
     if (isComplianceBlocking(compliance)) {
@@ -608,7 +610,9 @@ router.post('/ChangeErrandOrderStatus', validateApiKey, resolveDriver, async (re
   } catch (e) {
     return error(res, e.message || 'Status update failed');
   }
-});
+}
+
+router.post('/ChangeErrandOrderStatus', validateApiKey, resolveDriver, handleChangeErrandOrderStatus);
 
 router.post(
   '/UploadErrandOrderProof',
@@ -733,5 +737,8 @@ router.post('/DeleteErrandOrderProof', validateApiKey, resolveDriver, async (req
     return error(res, e.message || 'Failed to delete proof');
   }
 });
+
+router.handleAcceptErrandOrder = handleAcceptErrandOrder;
+router.handleChangeErrandOrderStatus = handleChangeErrandOrderStatus;
 
 module.exports = router;

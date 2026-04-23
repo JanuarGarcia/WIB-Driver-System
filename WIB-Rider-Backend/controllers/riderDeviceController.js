@@ -1,6 +1,86 @@
 'use strict';
 
 const { pool } = require('../config/db');
+const { sendPushToDriver } = require('../services/fcm');
+
+function toPositiveInt(value) {
+  const n = parseInt(String(value), 10);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+async function fetchDriverTask(taskId) {
+  const tid = toPositiveInt(taskId);
+  if (!tid) return null;
+
+  const attempts = [
+    [
+      'SELECT task_id, order_id, task_description, status AS prev_status, driver_id AS prev_driver_id FROM mt_driver_task WHERE task_id = ? LIMIT 1',
+      [tid],
+    ],
+    [
+      'SELECT id AS task_id, order_id, task_description, status AS prev_status, driver_id AS prev_driver_id FROM mt_driver_task WHERE id = ? LIMIT 1',
+      [tid],
+    ],
+  ];
+
+  for (const [sql, params] of attempts) {
+    try {
+      const [[row]] = await pool.query(sql, params);
+      if (row) return row;
+    } catch (e) {
+      if (e.code === 'ER_BAD_FIELD_ERROR') continue;
+      throw e;
+    }
+  }
+
+  return null;
+}
+
+async function updateDriverTaskAssignment({ taskId, newRiderId, actorId, reason }) {
+  const tid = toPositiveInt(taskId);
+  const did = toPositiveInt(newRiderId);
+  const aid = toPositiveInt(actorId);
+  if (!tid || !did) return { affectedRows: 0 };
+
+  const attempts = [
+    [
+      `UPDATE mt_driver_task
+       SET driver_id = ?, reassigned_to = ?, reassigned_by = ?, reassign_reason = ?, status = 'assigned', date_modified = CURRENT_TIMESTAMP
+       WHERE task_id = ?`,
+      [did, did, aid, reason || null, tid],
+    ],
+    [
+      `UPDATE mt_driver_task
+       SET driver_id = ?, status = 'assigned', date_modified = CURRENT_TIMESTAMP
+       WHERE task_id = ?`,
+      [did, tid],
+    ],
+    [
+      `UPDATE mt_driver_task
+       SET driver_id = ?, reassigned_to = ?, reassigned_by = ?, reassign_reason = ?, status = 'assigned', date_modified = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [did, did, aid, reason || null, tid],
+    ],
+    [
+      `UPDATE mt_driver_task
+       SET driver_id = ?, status = 'assigned', date_modified = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [did, tid],
+    ],
+  ];
+
+  for (const [sql, params] of attempts) {
+    try {
+      const [result] = await pool.query(sql, params);
+      return result || { affectedRows: 0 };
+    } catch (e) {
+      if (e.code === 'ER_BAD_FIELD_ERROR') continue;
+      throw e;
+    }
+  }
+
+  return { affectedRows: 0 };
+}
 
 async function register(req, res) {
   try {
@@ -68,69 +148,65 @@ async function unregister(req, res) {
 
 async function reassignTask(req, res) {
   try {
-    const { taskId, newRiderId, reason } = req.body;
-    const adminId = req.rider.driverId; // Assuming admin is authenticated as a rider
+    const taskId = toPositiveInt(req.body?.task_id ?? req.body?.taskId);
+    const newRiderId = toPositiveInt(req.body?.new_rider_id ?? req.body?.newRiderId);
+    const reason = req.body?.reason != null ? String(req.body.reason).trim() : '';
+    const adminId = req.rider.driverId;
 
     if (!taskId || !newRiderId) {
       return res.status(400).json({ code: 2, msg: 'taskId and newRiderId are required' });
     }
 
-    // Fetch the current task details
-    const [[task]] = await pool.query('SELECT status FROM mt_driver_task WHERE id = ?', [taskId]);
-
+    const task = await fetchDriverTask(taskId);
     if (!task) {
       return res.status(404).json({ code: 2, msg: 'Task not found' });
     }
 
-    // Always update status to 'assigned' on reassignment
-    const sql = `
-      UPDATE mt_driver_task
-      SET reassigned_to = ?, reassigned_by = ?, reassign_reason = ?, status = 'assigned', date_modified = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `;
-
-    const [result] = await pool.query(sql, [newRiderId, adminId, reason, taskId]);
-    // Always send notification, even if no DB row was changed (e.g., reassign to same rider)
-    if (result.affectedRows === 0) {
-      // Check if the task exists (to avoid sending for missing task)
-      const [[existingTask]] = await pool.query('SELECT id FROM mt_driver_task WHERE id = ?', [taskId]);
+    const result = await updateDriverTaskAssignment({
+      taskId,
+      newRiderId,
+      actorId: adminId,
+      reason,
+    });
+    if (Number(result?.affectedRows || 0) === 0) {
+      const existingTask = await fetchDriverTask(taskId);
       if (!existingTask) {
         return res.status(404).json({ code: 2, msg: 'Task not found' });
       }
     }
 
-    // Improved notification payload for reassigned tasks
+    const normalizedTaskId = toPositiveInt(task.task_id) || taskId;
+    const orderId = toPositiveInt(task.order_id);
     const notificationData = {
-      type: 'reassigned_task',
-      taskId,
-      reason
-      // Add orderId if available and needed by the app
+      task_id: String(normalizedTaskId),
+      type: 'task_assigned',
+      reassigned: '1',
     };
+    if (orderId) notificationData.order_id = String(orderId);
+    if (reason) notificationData.reason = reason;
 
     const notificationResult = await sendPushToDriver(
       newRiderId,
-      'Task Reassigned',
-      `You have been assigned a new task (ID: ${taskId}).`,
+      'Task reassigned',
+      task.task_description || `Task #${normalizedTaskId}`,
       notificationData
     );
 
     if (!notificationResult.success) {
-      console.error('Failed to send notification:', notificationResult.error);
+      console.error('riderDeviceController.reassignTask push', notificationResult.error);
     }
 
-    // Log the notification in mt_mobile2_push_logs
-    const logSql = `
-      INSERT INTO mt_mobile2_push_logs (driver_id, title, message, data, date_created)
-      VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
-    `;
-    await pool.query(logSql, [
-      newRiderId,
-      'Task Reassigned',
-      `You have been assigned a new task (ID: ${taskId}).`,
-      JSON.stringify(notificationData)
-    ]);
-
-    return res.json({ code: 1, msg: 'Task reassigned successfully', details: { taskId, newRiderId, status: 'assigned' } });
+    return res.json({
+      code: 1,
+      msg: 'Task reassigned successfully',
+      details: {
+        task_id: normalizedTaskId,
+        new_rider_id: newRiderId,
+        status: 'assigned',
+        push_sent: notificationResult.success === true,
+        ...(orderId ? { order_id: orderId } : {}),
+      },
+    });
   } catch (error) {
     console.error('Error in reassignTask:', error);
     return res.status(500).json({ code: 2, msg: 'Failed to reassign task', error });

@@ -15,6 +15,7 @@ describe('manganDriverSync credential resolution', () => {
     jest.clearAllMocks();
     process.env.MANGAN_DRIVER_SYNC_ENABLED = '1';
     process.env.MANGAN_DRIVER_API_BASE_URL = 'https://order.example.test';
+    delete process.env.MANGAN_DRIVER_API_KEY;
     delete process.env.MANGAN_SYNC_FALLBACK_USERNAME;
     delete process.env.MANGAN_SYNC_FALLBACK_PASSWORD;
   });
@@ -92,6 +93,63 @@ describe('manganDriverSync credential resolution', () => {
     expect(String(fetchMock.mock.calls[1][0])).toBe('https://order.example.test/driver/acceptorder');
     expect(JSON.parse(String(fetchMock.mock.calls[1][1].body))).toEqual({
       order_uuid: 'uuid-123',
+    });
+  });
+
+  test('includes optional api_key in login and protected Mangan action payloads', async () => {
+    process.env.MANGAN_DRIVER_API_KEY = 'mobile-api-key-123';
+
+    const errandPool = {
+      query: jest.fn(async (sql) => {
+        const text = String(sql);
+        if (/FROM st_ordernew/i.test(text)) {
+          return [[{ order_uuid: 'uuid-456', driver_id: 12 }]];
+        }
+        if (/FROM st_driver/i.test(text)) {
+          return [[{ u: 'driver@example.com', p: 'driver-pass', email: null, password: null }]];
+        }
+        throw new Error(`Unexpected errandPool query: ${text}`);
+      }),
+    };
+
+    const fetchMock = jest
+      .fn()
+      .mockResolvedValueOnce({
+        status: 200,
+        text: async () =>
+          JSON.stringify({
+            code: 1,
+            details: { user_token: makeJwt(4102444800) },
+          }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({ code: 1, details: { ok: true } }),
+      });
+    global.fetch = fetchMock;
+
+    const { syncErrandStatusToMangan } = require('../lib/manganDriverSync');
+    const out = await syncErrandStatusToMangan({
+      mainPool: null,
+      errandPool,
+      driver: { id: 12 },
+      orderId: 99,
+      orderUuid: null,
+      canonical: 'successful',
+      extras: { otpCode: '4321' },
+    });
+
+    expect(out).toEqual(expect.objectContaining({ ok: true, action: 'orderdelivered' }));
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1].body))).toEqual({
+      username: 'driver@example.com',
+      password: 'driver-pass',
+      api_key: 'mobile-api-key-123',
+    });
+    expect(JSON.parse(String(fetchMock.mock.calls[1][1].body))).toEqual({
+      order_uuid: 'uuid-456',
+      otp_code: '4321',
+      api_key: 'mobile-api-key-123',
     });
   });
 });
