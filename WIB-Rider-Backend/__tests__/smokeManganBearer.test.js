@@ -14,6 +14,7 @@ describe('smokeManganBearer', () => {
       loginBody: null,
       authHeader: null,
       protectedBody: null,
+      shiftAuthHeader: null,
     };
     const token = 'mock-user-token';
 
@@ -38,6 +39,13 @@ describe('smokeManganBearer', () => {
           return;
         }
 
+        if (req.method === 'POST' && req.url === '/driver/shift') {
+          seen.shiftAuthHeader = req.headers.authorization || null;
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ code: 1, details: { schedule_uuid: 'schedule-uuid-1' } }));
+          return;
+        }
+
         res.writeHead(404, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ code: 0, msg: 'not found' }));
       });
@@ -53,11 +61,17 @@ describe('smokeManganBearer', () => {
 
     try {
       const { smokeManganBearer } = require('../scripts/smoke-mangan-bearer');
-      await smokeManganBearer({
+      const out = await smokeManganBearer({
         username: 'demo-driver',
         password: 'demo-pass',
         baseUrl: `http://127.0.0.1:${port}`,
         protectedPath: '/driver/profile',
+      });
+      expect(out).toEqual({
+        baseUrl: `http://127.0.0.1:${port}`,
+        userToken: token,
+        driverUuid: 'driver-uuid-1',
+        scheduleUuid: 'schedule-uuid-1',
       });
     } finally {
       console.log = originalLog;
@@ -70,6 +84,7 @@ describe('smokeManganBearer', () => {
       password: 'demo-pass',
     });
     expect(seen.authHeader).toBe(`Bearer ${token}`);
+    expect(seen.shiftAuthHeader).toBe(`Bearer ${token}`);
     expect(seen.protectedBody).toBe(null);
   });
 
@@ -82,6 +97,7 @@ describe('smokeManganBearer', () => {
       loginBody: null,
       authHeader: null,
       protectedBody: null,
+      shiftAuthHeader: null,
     };
     const token = 'mock-user-token';
 
@@ -106,6 +122,14 @@ describe('smokeManganBearer', () => {
           return;
         }
 
+        if (req.method === 'POST' && req.url === '/driver/shift') {
+          seen.shiftAuthHeader = req.headers.authorization || null;
+          const payload = body ? JSON.parse(body) : null;
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ code: 1, details: { shift: { schedule_uuid: 'schedule-uuid-2' }, echoed: payload } }));
+          return;
+        }
+
         res.writeHead(404, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ code: 0, msg: 'not found' }));
       });
@@ -121,12 +145,18 @@ describe('smokeManganBearer', () => {
 
     try {
       const { smokeManganBearer } = require('../scripts/smoke-mangan-bearer');
-      await smokeManganBearer({
+      const out = await smokeManganBearer({
         username: 'demo-driver',
         password: 'demo-pass',
         baseUrl: `http://127.0.0.1:${port}`,
         protectedPath: '/driver/profile',
         protectedBody: { order_uuid: 'uuid-1' },
+      });
+      expect(out).toEqual({
+        baseUrl: `http://127.0.0.1:${port}`,
+        userToken: token,
+        driverUuid: 'driver-uuid-2',
+        scheduleUuid: 'schedule-uuid-2',
       });
     } finally {
       console.log = originalLog;
@@ -140,6 +170,7 @@ describe('smokeManganBearer', () => {
       api_key: 'api-key-xyz',
     });
     expect(seen.authHeader).toBe(`Bearer ${token}`);
+    expect(seen.shiftAuthHeader).toBe(`Bearer ${token}`);
     expect(seen.protectedBody).toEqual({
       order_uuid: 'uuid-1',
       api_key: 'api-key-xyz',

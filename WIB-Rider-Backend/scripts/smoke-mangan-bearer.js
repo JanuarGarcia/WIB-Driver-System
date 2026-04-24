@@ -16,6 +16,12 @@
  *   MANGAN_SMOKE_PATH - default protected path when 4th arg omitted (default /driver/profile)
  *   MANGAN_SMOKE_METHOD - optional method for protected call (default POST)
  *   MANGAN_SMOKE_BODY - optional JSON body for the protected call
+ *   MANGAN_PROFILE_PATH - optional profile endpoint for driver_uuid discovery (default /driver/profile)
+ *   MANGAN_PROFILE_METHOD - optional method for profile discovery (default POST)
+ *   MANGAN_PROFILE_BODY - optional JSON body for profile discovery
+ *   MANGAN_SHIFT_PATH - optional shift endpoint for schedule_uuid discovery (default /driver/shift)
+ *   MANGAN_SHIFT_METHOD - optional method for shift discovery (default POST)
+ *   MANGAN_SHIFT_BODY - optional JSON body for shift discovery
  */
 'use strict';
 
@@ -109,6 +115,82 @@ function parseOptionalJson(raw) {
   }
 }
 
+function normalizePath(v, fallback) {
+  const s = String(v || '').trim();
+  if (!s) return fallback;
+  return s.startsWith('/') ? s : `/${s}`;
+}
+
+function getPathValue(obj, dottedPath) {
+  const parts = String(dottedPath || '')
+    .split('.')
+    .map((p) => p.trim())
+    .filter(Boolean);
+  let cur = obj;
+  for (const part of parts) {
+    if (!cur || typeof cur !== 'object' || !(part in cur)) return undefined;
+    cur = cur[part];
+  }
+  return cur;
+}
+
+function pickUuidCandidate(json, candidatePaths) {
+  for (const path of candidatePaths) {
+    const raw = getPathValue(json, path);
+    if (raw != null && String(raw).trim() !== '') return String(raw).trim();
+  }
+  return null;
+}
+
+function extractDriverUuid(json) {
+  return pickUuidCandidate(json, [
+    'details.driver_uuid',
+    'data.driver_uuid',
+    'driver_uuid',
+    'details.driver.driver_uuid',
+    'details.driver.uuid',
+    'details.driverUuid',
+    'data.driver.driver_uuid',
+    'data.driver.uuid',
+    'details.uuid',
+    'data.uuid',
+  ]);
+}
+
+function extractScheduleUuid(json) {
+  return pickUuidCandidate(json, [
+    'details.schedule_uuid',
+    'data.schedule_uuid',
+    'schedule_uuid',
+    'details.shift.schedule_uuid',
+    'details.shift.uuid',
+    'details.schedule.uuid',
+    'details.schedule.schedule_uuid',
+    'details.current_shift.schedule_uuid',
+    'details.current_shift.uuid',
+    'data.shift.schedule_uuid',
+    'data.shift.uuid',
+    'data.schedule.uuid',
+    'data.schedule.schedule_uuid',
+  ]);
+}
+
+async function requestProtectedJson(baseUrl, token, path, method, body, apiKey) {
+  const url = `${baseUrl}${path.startsWith('/') ? path : `/${path}`}`;
+  const nextBody =
+    body && typeof body === 'object' && !Array.isArray(body)
+      ? { ...body }
+      : body;
+  if (apiKey && includeApiKeyOnActions() && nextBody && typeof nextBody === 'object' && nextBody.api_key == null) {
+    nextBody.api_key = apiKey;
+  }
+  return requestJson(url, {
+    method,
+    headers: { Authorization: `Bearer ${token}` },
+    body: nextBody,
+  });
+}
+
 async function smokeManganBearer(opts) {
   const username = opts.username;
   const password = opts.password;
@@ -116,6 +198,12 @@ async function smokeManganBearer(opts) {
   const protectedPath = String(opts.protectedPath || '/driver/profile').trim() || '/driver/profile';
   const protectedMethod = String(opts.protectedMethod || 'POST').trim().toUpperCase() || 'POST';
   const protectedBody = opts.protectedBody;
+  const profilePath = normalizePath(opts.profilePath || process.env.MANGAN_PROFILE_PATH || '/driver/profile', '/driver/profile');
+  const profileMethod = String(opts.profileMethod || process.env.MANGAN_PROFILE_METHOD || 'POST').trim().toUpperCase() || 'POST';
+  const profileBody = opts.profileBody !== undefined ? opts.profileBody : parseOptionalJson(process.env.MANGAN_PROFILE_BODY);
+  const shiftPath = normalizePath(opts.shiftPath || process.env.MANGAN_SHIFT_PATH || '/driver/shift', '/driver/shift');
+  const shiftMethod = String(opts.shiftMethod || process.env.MANGAN_SHIFT_METHOD || 'POST').trim().toUpperCase() || 'POST';
+  const shiftBody = opts.shiftBody !== undefined ? opts.shiftBody : parseOptionalJson(process.env.MANGAN_SHIFT_BODY);
   const apiKey = optionalApiKey();
 
   if (!username || !password) {
@@ -155,18 +243,7 @@ async function smokeManganBearer(opts) {
 
   const protectedUrl = `${baseUrl}${protectedPath.startsWith('/') ? protectedPath : `/${protectedPath}`}`;
   console.log(`Protected: ${protectedMethod} ${protectedUrl}`);
-  const nextBody =
-    protectedBody && typeof protectedBody === 'object' && !Array.isArray(protectedBody)
-      ? { ...protectedBody }
-      : protectedBody;
-  if (apiKey && includeApiKeyOnActions() && nextBody && typeof nextBody === 'object' && nextBody.api_key == null) {
-    nextBody.api_key = apiKey;
-  }
-  const protectedRes = await requestJson(protectedUrl, {
-    method: protectedMethod,
-    headers: { Authorization: `Bearer ${token}` },
-    body: nextBody,
-  });
+  const protectedRes = await requestProtectedJson(baseUrl, token, protectedPath, protectedMethod, protectedBody, apiKey);
 
   assert(protectedRes.status !== 401, `protected endpoint returned 401 (${protectedRes.raw.slice(0, 300)})`);
   assert(protectedRes.status >= 200 && protectedRes.status < 500, `unexpected protected HTTP status ${protectedRes.status}`);
@@ -190,6 +267,51 @@ async function smokeManganBearer(opts) {
   } else {
     console.log('Response: <empty body>');
   }
+
+  let driverUuid = null;
+  let scheduleUuid = null;
+
+  if (normalizePath(protectedPath, protectedPath) === profilePath && protectedRes.json) {
+    driverUuid = extractDriverUuid(protectedRes.json);
+  }
+  if (normalizePath(protectedPath, protectedPath) === shiftPath && protectedRes.json) {
+    scheduleUuid = extractScheduleUuid(protectedRes.json);
+  }
+
+  if (!driverUuid) {
+    const profileRes = await requestProtectedJson(baseUrl, token, profilePath, profileMethod, profileBody, apiKey);
+    assert(profileRes.status !== 401, `profile endpoint returned 401 (${profileRes.raw.slice(0, 300)})`);
+    driverUuid = extractDriverUuid(profileRes.json);
+    if (driverUuid) {
+      console.log(`PASS: profile returned driver_uuid=${driverUuid}`);
+    } else {
+      console.log(`WARN: profile response did not include driver_uuid (path=${profilePath})`);
+    }
+  } else {
+    console.log(`PASS: protected response returned driver_uuid=${driverUuid}`);
+  }
+
+  if (!scheduleUuid) {
+    const shiftRes = await requestProtectedJson(baseUrl, token, shiftPath, shiftMethod, shiftBody, apiKey);
+    assert(shiftRes.status !== 401, `shift endpoint returned 401 (${shiftRes.raw.slice(0, 300)})`);
+    scheduleUuid = extractScheduleUuid(shiftRes.json);
+    if (scheduleUuid) {
+      console.log(`PASS: shift returned schedule_uuid=${scheduleUuid}`);
+    } else {
+      console.log(`WARN: shift response did not include schedule_uuid (path=${shiftPath})`);
+    }
+  } else {
+    console.log(`PASS: protected response returned schedule_uuid=${scheduleUuid}`);
+  }
+
+  const envSummary = {
+    baseUrl,
+    userToken: token,
+    driverUuid,
+    scheduleUuid,
+  };
+  console.log(`Env JSON: ${JSON.stringify(envSummary)}`);
+  return envSummary;
 }
 
 async function main() {
@@ -204,7 +326,10 @@ async function main() {
 }
 
 module.exports = {
+  extractDriverUuid,
+  extractScheduleUuid,
   normalizeBaseUrl,
+  requestProtectedJson,
   requestJson,
   smokeManganBearer,
 };
