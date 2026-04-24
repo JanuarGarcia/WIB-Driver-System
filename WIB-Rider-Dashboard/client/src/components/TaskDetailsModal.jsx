@@ -90,6 +90,11 @@ function displaySanitizedOrDash(raw) {
   return v || '—';
 }
 
+function normalizedProofUrl(raw) {
+  const s = raw != null ? String(raw).trim() : '';
+  return s || null;
+}
+
 /**
  * Per-line unit price for receipts. Prefer a positive discounted_price; when discounted_price is 0
  * (common when the DB means “no discount”), use normal_price so lines do not show ₱0 incorrectly.
@@ -825,7 +830,14 @@ export default function TaskDetailsModal({
     const snap = listTaskSnapshotRef.current;
     const snapshotMatches = listTaskSnapshotMatchesId(snap, taskId);
     if (snapshotMatches) {
-      setData({ task: snap, task_source: snap.task_source });
+      setData({
+        task: snap,
+        task_source: snap.task_source,
+        task_photos: Array.isArray(snap.task_photos) ? snap.task_photos : [],
+        proof_images: Array.isArray(snap.proof_images) ? snap.proof_images : [],
+        proof_receipt_url: normalizedProofUrl(snap.proof_receipt_url),
+        proof_delivery_url: normalizedProofUrl(snap.proof_delivery_url),
+      });
       setOrderHistory(Array.isArray(snap.order_history) ? snap.order_history : []);
       setOrderHistoryProofImages([]);
     } else {
@@ -1479,6 +1491,8 @@ export default function TaskDetailsModal({
   const proofImagesFromTask = Array.isArray(data?.proof_images) ? data.proof_images : [];
   const proofImages =
     proofImagesFromTask.length > 0 ? proofImagesFromTask : orderHistoryProofImages;
+  const proofReceiptUrl = normalizedProofUrl(data?.proof_receipt_url);
+  const proofDeliveryUrl = normalizedProofUrl(data?.proof_delivery_url);
   const historyEntries = (orderHistory || [])
     .filter(Boolean)
     .map((row) => ({
@@ -1513,19 +1527,41 @@ export default function TaskDetailsModal({
         };
       });
     }
-    if (proofImages.length > 0) {
-      return [
-        {
-          type: 'photo',
-          id: 'proof-delivery-bundle',
-          proof_kind: 'delivery',
-          date_created: null,
-          urls: proofImages,
-          photo_rows: [],
-        },
-      ];
+    const entries = [];
+    if (proofReceiptUrl) {
+      entries.push({
+        type: 'photo',
+        id: 'proof-receipt-bundle',
+        proof_kind: 'receipt',
+        date_created: null,
+        urls: [proofReceiptUrl],
+        photo_rows: [],
+      });
     }
-    return [];
+    if (proofDeliveryUrl) {
+      entries.push({
+        type: 'photo',
+        id: 'proof-delivery-bundle',
+        proof_kind: 'delivery',
+        date_created: null,
+        urls: [proofDeliveryUrl],
+        photo_rows: [],
+      });
+    }
+    const remainingProofImages = proofImages.filter(
+      (url) => url && url !== proofReceiptUrl && url !== proofDeliveryUrl
+    );
+    if (remainingProofImages.length > 0) {
+      entries.push({
+        type: 'photo',
+        id: 'proof-images-bundle',
+        proof_kind: entries.some((entry) => entry.proof_kind === 'receipt') ? 'receipt' : 'delivery',
+        date_created: null,
+        urls: remainingProofImages,
+        photo_rows: [],
+      });
+    }
+    return entries;
   })();
   /* Oldest first (initial order at top, successful / latest at bottom) — matches classic rider timeline */
   const combined = [...historyEntries, ...photoEntries].sort((a, b) => {
