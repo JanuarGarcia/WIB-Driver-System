@@ -408,14 +408,19 @@ const DEFAULT_NOTIFY_BODY =
  */
 async function sendCustomerTaskNotify(pool, errandWibPool, driver, body) {
   const b = body || {};
+  const message = String(b.message ?? DEFAULT_NOTIFY_BODY).trim() || DEFAULT_NOTIFY_BODY;
+  const pushTitle = String(b.push_title ?? b.pushTitle ?? DEFAULT_NOTIFY_TITLE).trim() || DEFAULT_NOTIFY_TITLE;
+  const pushType = String(b.push_type ?? b.pushType ?? 'rider_customer_notify').trim() || 'rider_customer_notify';
+  const pushMessage =
+    String(b.push_message ?? b.pushMessage ?? message).trim() || message;
   return sendCustomerTaskMessage(pool, errandWibPool, driver, {
     task_id: b.task_id ?? b.taskId,
     order_id: b.order_id ?? b.orderId,
     app_version: b.app_version ?? b.appVersion,
-    message: DEFAULT_NOTIFY_BODY,
-    push_title: DEFAULT_NOTIFY_TITLE,
-    push_message: DEFAULT_NOTIFY_BODY,
-    push_type: 'rider_customer_notify',
+    message,
+    push_title: pushTitle,
+    push_message: pushMessage,
+    push_type: pushType,
   });
 }
 

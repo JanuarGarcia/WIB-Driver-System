@@ -12,6 +12,7 @@ const {
   deriveErrandDriverTaskStatus,
   mapDeliveryToCanonicalTaskStatus,
 } = require('./errandDriverStatus');
+const { readContractDeliveryAsap } = require('./riderTaskContract');
 
 /** Non-enumerable on the `order_details` array: filtered `st_ordernew_item` rows (SQL order) for name merge. */
 const ERRAND_ORDER_LINES_RAW = Symbol.for('wib.errandOrderLinesRaw');
@@ -781,6 +782,7 @@ function mapStOrderRowToTaskListRow(
       : `Errand order #${safeId}`;
   const created = row.date_created || row.created_at || row.date_modified || null;
   const errandDeliveryTime = pickErrandOrderDeliveryTime(row);
+  const deliveryAsap = readContractDeliveryAsap(row);
 
   const client = Number.isFinite(cid) && cid > 0 ? clientById?.get(String(cid)) : null;
   const customerName = clientDisplayName(client);
@@ -819,6 +821,8 @@ function mapStOrderRowToTaskListRow(
         : null,
     delivery_date: row.delivery_date,
     delivery_time: errandDeliveryTime,
+    delivery_asap: deliveryAsap,
+    deliveryAsap: deliveryAsap === 1,
     order_delivery_time: errandDeliveryTime,
     order_delivery_date: row.delivery_date,
     task_lat: taskLat,
@@ -1977,6 +1981,7 @@ function buildErrandTaskDetailPayload(
   }
 
   const orderDeliveryTime = pickErrandOrderDeliveryTime(row);
+  const deliveryAsap = readContractDeliveryAsap(row);
 
   const payment_type =
     normalizeDriverPaymentType(row) ??
@@ -2009,6 +2014,8 @@ function buildErrandTaskDetailPayload(
         : null,
     delivery_date: row.delivery_date,
     delivery_time: orderDeliveryTime,
+    delivery_asap: deliveryAsap,
+    deliveryAsap: deliveryAsap === 1,
     order_delivery_time: orderDeliveryTime,
     order_delivery_date: row.delivery_date,
     customer_name: custName,
@@ -2041,6 +2048,8 @@ function buildErrandTaskDetailPayload(
     order_payment_status: payment_status_norm,
     delivery_date: row.delivery_date,
     delivery_time: orderDeliveryTime,
+    delivery_asap: deliveryAsap,
+    deliveryAsap: deliveryAsap === 1,
     order_delivery_time: orderDeliveryTime,
     order_delivery_date: row.delivery_date,
     date_created: row.date_created || row.created_at,

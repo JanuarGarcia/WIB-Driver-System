@@ -45,6 +45,7 @@ const { sendCustomerTaskMessage, sendCustomerTaskNotify } = require('../lib/send
 const { notifyCustomerFoodTaskStatusPushFireAndForget } = require('../lib/customerOrderPushDispatch');
 const { notifyRiderOrderPushAfterTaskStatusFireAndForget } = require('../lib/riderOrderPushDispatch');
 const { updateMtOrderStatusIfDeliveryComplete } = require('../lib/mtOrderStatusSync');
+const { shouldIncludeActiveTaskListRow } = require('../lib/riderTaskContract');
 const { buildErrandOrderDetailPayloadForDriver } = require('../lib/errandOrders');
 const { fetchErrandProofsForOrder } = require('../lib/errandProof');
 const {
@@ -398,7 +399,7 @@ async function queryRiderTaskRows(whereSql, params) {
       NULL AS delivery_time, t.delivery_address, t.task_lat, t.task_lng, t.dropoff_merchant,
       COALESCE(NULLIF(TRIM(m.restaurant_name), ''), NULLIF(TRIM(m2.restaurant_name), ''), t.dropoff_merchant) AS merchant_name,
       t.drop_address AS merchant_address,
-      t.status, t.status AS status_raw, NULL AS order_status,
+      t.driver_id, t.status, t.status AS status_raw, NULL AS order_status,
       o.payment_type AS payment_type,
       ${payStatusExpr},
       CAST(COALESCE(o.total_w_tax, o.sub_total) AS CHAR) AS order_total_amount,
@@ -1284,7 +1285,11 @@ async function getDriverSettingsMap() {
 /** Admin toggle: rider → new customer app messaging. Default ON when unset (backward compatible). */
 function isRiderCustomerMessagingEnabled(map) {
   if (!map || typeof map !== 'object') return true;
-  const v = map.enable_rider_customer_message;
+  const v =
+    map.enable_rider_customer_message ??
+    map.allow_send_customer_message ??
+    map.enabled_customer_message ??
+    map.allow_customer_message;
   if (v == null || v === '') return true;
   const s = String(v).trim().toLowerCase();
   if (s === '0' || s === 'false' || s === 'no' || s === 'off') return false;
@@ -1347,8 +1352,8 @@ router.post('/GetAppSettings', validateApiKey, optionalDriver, async (req, res) 
     show_register_button: signupEnabled ? 1 : 0,
     signup_status: signupStatus,
     signup_target: 'mt_driver',
-    valid_token: driver != null,
-    token_present: tokenState !== 'missing',
+    valid_token: tokenState === 'valid' ? 1 : 0,
+    token_present: tokenState === 'missing' ? 0 : 1,
     invalid_token: tokenState === 'invalid' ? 1 : 0,
     token_status: tokenState,
     auth_state: tokenState === 'valid' ? 'authenticated' : 'unauthenticated',
@@ -1616,18 +1621,20 @@ router.post('/GetTaskByDate', validateApiKey, resolveDriver, async (req, res) =>
   const orderIdsForBatch = rows.map((r) => r.order_id);
   const { ordersMap, linesByOrder } = await batchFetchOrdersAndLines(pool, orderIdsForBatch);
   const deliveryByOrderId = await batchFetchLatestDeliveryAddressesByOrderIds(pool, orderIdsForBatch);
-  const data = rows.map((r) => {
-    const out = {
-      ...r,
-      date_created: r.date_created ? new Date(r.date_created).toISOString() : null,
-    };
-    const oid = out.order_id != null ? parseInt(String(out.order_id), 10) : 0;
-    const orderRow = Number.isFinite(oid) && oid > 0 ? ordersMap.get(oid) || null : null;
-    const lineRows = Number.isFinite(oid) && oid > 0 ? linesByOrder.get(oid) || [] : [];
-    const deliveryRow = Number.isFinite(oid) && oid > 0 ? deliveryByOrderId.get(oid) || null : null;
-    attachScheduleLinesAndAliases(out, orderRow, lineRows, deliveryRow);
-    return out;
-  });
+  const data = rows
+    .map((r) => {
+      const out = {
+        ...r,
+        date_created: r.date_created ? new Date(r.date_created).toISOString() : null,
+      };
+      const oid = out.order_id != null ? parseInt(String(out.order_id), 10) : 0;
+      const orderRow = Number.isFinite(oid) && oid > 0 ? ordersMap.get(oid) || null : null;
+      const lineRows = Number.isFinite(oid) && oid > 0 ? linesByOrder.get(oid) || [] : [];
+      const deliveryRow = Number.isFinite(oid) && oid > 0 ? deliveryByOrderId.get(oid) || null : null;
+      attachScheduleLinesAndAliases(out, orderRow, lineRows, deliveryRow);
+      return out;
+    })
+    .filter((row) => shouldIncludeActiveTaskListRow(row, { driverId: req.driver.id }));
   return success(res, { data });
 });
 
@@ -1718,7 +1725,7 @@ async function handleSendCustomerTaskMessage(req, res) {
   try {
     const settingsMap = await getDriverSettingsMap();
     if (!isRiderCustomerMessagingEnabled(settingsMap)) {
-      return error(res, 'Messaging to customer app is disabled by admin');
+      return error(res, 'Messaging to customer app is disabled by admin.');
     }
     const r = await sendCustomerTaskMessage(pool, errandWibPool, req.driver, req.body);
     if (r.err) return error(res, r.err);
@@ -1732,7 +1739,7 @@ async function handleNotifyCustomer(req, res) {
   try {
     const settingsMap = await getDriverSettingsMap();
     if (!isRiderCustomerMessagingEnabled(settingsMap)) {
-      return error(res, 'Messaging to customer app is disabled by admin');
+      return error(res, 'Messaging to customer app is disabled by admin.');
     }
     const r = await sendCustomerTaskNotify(pool, errandWibPool, req.driver, req.body);
     if (r.err) return error(res, r.err);

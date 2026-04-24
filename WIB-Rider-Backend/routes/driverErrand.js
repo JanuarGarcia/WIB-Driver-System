@@ -19,6 +19,7 @@ const {
   ST_ORDERNEW_EXCLUDE_ADMIN_DELETED_SQL,
 } = require('../lib/errandOrders');
 const { normalizeIncomingStatusRaw } = require('../lib/errandDriverStatus');
+const { shouldIncludeActiveTaskListRow } = require('../lib/riderTaskContract');
 const {
   notifyAllDashboardAdmins,
   errandNotifyFromCanonical,
@@ -340,18 +341,25 @@ router.post('/GetErrandOrders', validateApiKey, resolveDriver, async (req, res) 
       .map((id) => parseInt(String(id), 10))
       .filter((n) => Number.isFinite(n) && n > 0);
     const latestHistoryStatusByOrderId = await fetchErrandLatestHistoryStatusByOrderIds(errandWibPool, orderIds);
-    const data = list.map((r) =>
-      mapStOrderRowToTaskListRow(
-        r,
-        errandDriverById,
-        mtDriverNameById,
-        merchantById,
-        clientById,
-        clientAddressesByClientId,
-        latestHistoryStatusByOrderId,
-        teamNameById
+    const data = list
+      .map((r) =>
+        mapStOrderRowToTaskListRow(
+          r,
+          errandDriverById,
+          mtDriverNameById,
+          merchantById,
+          clientById,
+          clientAddressesByClientId,
+          latestHistoryStatusByOrderId,
+          teamNameById
+        )
       )
-    );
+      .filter((row) =>
+        shouldIncludeActiveTaskListRow(row, {
+          driverId,
+          includeUnassigned,
+        })
+      );
     for (const row of data) {
       if (row.order_id != null) {
         const oid = parseInt(String(row.order_id), 10);
