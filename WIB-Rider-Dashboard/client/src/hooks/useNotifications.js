@@ -215,6 +215,7 @@ export function useNotifications() {
   const pollErrorLoggedRef = useRef(false);
   const firstPollDoneRef = useRef(false);
   const baselineMsRef = useRef(null);
+  const unreadServerRowsRef = useRef([]);
 
   const beginDecodeAlertBuffer = useCallback(() => {
     if (typeof window === 'undefined') return;
@@ -436,6 +437,7 @@ export function useNotifications() {
     if (!mountedRef.current) return;
     if (!isAuthenticated()) {
       processedIdsGlobal.clear();
+      unreadServerRowsRef.current = [];
       setItems([]);
       setPollError(null);
       pollErrorLoggedRef.current = false;
@@ -456,6 +458,7 @@ export function useNotifications() {
       setPollError(null);
       pollErrorLoggedRef.current = false;
       const list = Array.isArray(data.notifications) ? data.notifications : [];
+      unreadServerRowsRef.current = list.filter((n) => n && n.id != null);
       const rawNew = list.filter((n) => n && n.id != null && !processedIdsGlobal.has(String(n.id)));
       const freshAll = dedupeNotificationsPreferActor(rawNew);
 
@@ -627,7 +630,7 @@ export function useNotifications() {
   }, [pollTick]);
 
   const markAllRead = useCallback(async () => {
-    const ids = items.map((i) => String(i.id)).filter(Boolean);
+    const ids = notificationIdsSharingDedupeKeysWith(items, unreadServerRowsRef.current);
     if (ids.length) {
       try {
         await markRiderNotificationsViewed(ids);
@@ -636,6 +639,7 @@ export function useNotifications() {
         /* still clear session list */
       }
     }
+    unreadServerRowsRef.current = [];
     setItems([]);
   }, [items]);
 
