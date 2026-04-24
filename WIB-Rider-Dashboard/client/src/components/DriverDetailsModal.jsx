@@ -58,6 +58,15 @@ function formatDateTimeDisplay(v) {
   return d.toLocaleString();
 }
 
+function formatDeliveredAtDisplay(v) {
+  if (!v) return '-';
+  const d = new Date(v);
+  if (Number.isNaN(d.getTime())) return '-';
+  const datePart = d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+  const timePart = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+  return `${datePart} ${timePart}`;
+}
+
 function complianceReasonLabel(reasonRaw) {
   const r = String(reasonRaw ?? '').trim().toLowerCase();
   if (r === 'violation') return 'Violation';
@@ -330,13 +339,14 @@ export default function DriverDetailsModal({
                       <th>Type</th>
                       <th>Address</th>
                       <th>Status</th>
+                      <th>Delivered At</th>
                       <th>Proof</th>
                     </tr>
                   </thead>
                   <tbody>
                     {state.tasks.length === 0 ? (
                       <tr>
-                        <td colSpan={6} className="agent-driver-details-table-empty">
+                        <td colSpan={7} className="agent-driver-details-table-empty">
                           No tasks
                         </td>
                       </tr>
@@ -346,6 +356,7 @@ export default function DriverDetailsModal({
                         const nameRaw = t.customer_name ?? t.task_description;
                         const typeLabel = driverDetailsOrderTypeLabel(t);
                         const proofItems = taskProofPreviewItems(t);
+                        const deliveredAtLabel = formatDeliveredAtDisplay(t.delivered_at);
                         return (
                           <tr key={driverDetailsTaskRowKey(t)}>
                             <td>
@@ -365,6 +376,7 @@ export default function DriverDetailsModal({
                                 {statusLabel(t.status)}
                               </span>
                             </td>
+                            <td className="agent-driver-details-delivered-at">{deliveredAtLabel}</td>
                             <td>
                               <div className="agent-driver-details-proof-list">
                                 {proofItems.length > 0 ? (
@@ -408,6 +420,7 @@ export default function DriverDetailsModal({
                     const nameRaw = t.customer_name ?? t.task_description;
                     const typeLabel = driverDetailsOrderTypeLabel(t);
                     const proofItems = taskProofPreviewItems(t);
+                    const deliveredAtLabel = formatDeliveredAtDisplay(t.delivered_at);
                     return (
                       <li key={driverDetailsTaskRowKey(t)} className="agent-driver-task-card">
                         <div className="agent-driver-task-card-top">
@@ -433,6 +446,10 @@ export default function DriverDetailsModal({
                         <div className="agent-driver-task-card-row agent-driver-task-card-row--address">
                           <span className="agent-driver-task-card-label">Address</span>
                           <span className="agent-driver-task-card-value">{taskFieldDisplay(t.delivery_address)}</span>
+                        </div>
+                        <div className="agent-driver-task-card-row">
+                          <span className="agent-driver-task-card-label">Delivered At</span>
+                          <span className="agent-driver-task-card-value">{deliveredAtLabel}</span>
                         </div>
                         <div className="agent-driver-task-card-row">
                           <span className="agent-driver-task-card-label">Proof</span>

@@ -6217,6 +6217,10 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
 }
 .agent-detail-modal-card--wide .agent-driver-details-table th:nth-child(6),
 .agent-detail-modal-card--wide .agent-driver-details-table td:nth-child(6) {
+  width: 12.5rem;
+}
+.agent-detail-modal-card--wide .agent-driver-details-table th:nth-child(7),
+.agent-detail-modal-card--wide .agent-driver-details-table td:nth-child(7) {
   width: 11rem;
 }
 .agent-driver-details-table thead th {
@@ -6248,6 +6252,10 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
 .agent-driver-details-table-empty {
   text-align: center;
   color: var(--text-muted);
+}
+.agent-driver-details-delivered-at {
+  color: var(--text-muted-strong, var(--text-muted));
+  line-height: 1.35;
 }
 .agent-driver-details-task-link {
   padding: 0;

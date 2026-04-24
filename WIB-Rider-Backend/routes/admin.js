@@ -1963,6 +1963,52 @@ function historyRowEffectiveStatusKey(row) {
   return '';
 }
 
+function isDeliveredTaskStatusKey(statusRaw) {
+  const s = normalizeDashboardHistoryStatusKey(statusRaw);
+  return s === 'successful' || s === 'completed' || s === 'delivered';
+}
+
+function pickHistoryLikeTimestamp(value) {
+  if (value == null) return null;
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value.toISOString();
+  }
+  const s = String(value).trim();
+  if (!s || s.startsWith('0000-00-00')) return null;
+  return s;
+}
+
+function pickDeliveredAtFromHistoryRows(rows) {
+  if (!Array.isArray(rows) || rows.length === 0) return null;
+  for (let i = rows.length - 1; i >= 0; i -= 1) {
+    const row = rows[i];
+    if (!isDeliveredTaskStatusKey(historyRowEffectiveStatusKey(row))) continue;
+    const ts =
+      pickHistoryLikeTimestamp(row?.date_created) ||
+      pickHistoryLikeTimestamp(row?.dateCreated) ||
+      pickHistoryLikeTimestamp(row?.created_at) ||
+      pickHistoryLikeTimestamp(row?.date_updated) ||
+      pickHistoryLikeTimestamp(row?.updated_at);
+    if (ts) return ts;
+  }
+  return null;
+}
+
+function pickDeliveredAtFromProofRows(rows) {
+  if (!Array.isArray(rows) || rows.length === 0) return null;
+  for (let i = rows.length - 1; i >= 0; i -= 1) {
+    const row = rows[i];
+    const proofType = row?.proof_type != null ? String(row.proof_type).trim().toLowerCase() : '';
+    if (proofType && proofType !== 'delivery') continue;
+    const ts =
+      pickHistoryLikeTimestamp(row?.date_created) ||
+      pickHistoryLikeTimestamp(row?.created_at) ||
+      pickHistoryLikeTimestamp(row?.updated_at);
+    if (ts) return ts;
+  }
+  return null;
+}
+
 /**
  * Guardrail for task cards: Ready-for-pickup badge is only valid before pickup/delivery progresses.
  * Even if older timeline rows contain an RFP milestone, hide it once task status moved forward.
@@ -4862,6 +4908,11 @@ router.get('/drivers/:id/details', async (req, res) => {
 
     const taskSelectAttempts = [
       `SELECT t.task_id, t.order_id, t.task_description, t.status, t.delivery_date, t.delivery_address, t.customer_name,
+              t.trans_type, t.date_created, t.date_modified
+       FROM mt_driver_task t
+       WHERE t.driver_id = ? AND (t.delivery_date = ? OR DATE(t.delivery_date) = ?)
+       ORDER BY t.task_id DESC`,
+      `SELECT t.task_id, t.order_id, t.task_description, t.status, t.delivery_date, t.delivery_address, t.customer_name,
               t.trans_type, t.date_created
        FROM mt_driver_task t
        WHERE t.driver_id = ? AND (t.delivery_date = ? OR DATE(t.delivery_date) = ?)
@@ -4914,6 +4965,7 @@ router.get('/drivers/:id/details', async (req, res) => {
       proof_images: Array.isArray(row?.proof_images) ? row.proof_images : [],
       proof_receipt_url: row?.proof_receipt_url || null,
       proof_delivery_url: row?.proof_delivery_url || null,
+      delivered_at: row?.delivered_at || null,
     });
 
     const [foodTasksRaw, errandMapped] = await Promise.all([loadFoodTasks(), loadErrandTasks()]);
@@ -4925,10 +4977,23 @@ router.get('/drivers/:id/details', async (req, res) => {
         if (!Number.isFinite(tid) || tid <= 0) return attachEmptyProofSummary(row);
         try {
           const pack = await fetchTaskProofPhotosWithUrls(pool, tid, Number.isFinite(oid) && oid > 0 ? oid : null);
-          return { ...row, ...pack };
+          let deliveredAt = null;
+          if (isDeliveredTaskStatusKey(row?.status)) {
+            const historyRows = await fetchMergedTaskOrderHistory(pool, tid, Number.isFinite(oid) && oid > 0 ? oid : null);
+            deliveredAt =
+              pickDeliveredAtFromHistoryRows(historyRows) ||
+              pickDeliveredAtFromProofRows(pack?.task_photos) ||
+              pickHistoryLikeTimestamp(row?.date_modified);
+          }
+          return { ...row, ...pack, delivered_at: deliveredAt };
         } catch (e) {
           if (e.code === 'ER_NO_SUCH_TABLE' || e.code === 'ER_BAD_FIELD_ERROR') {
-            return attachEmptyProofSummary(row);
+            let deliveredAt = null;
+            if (isDeliveredTaskStatusKey(row?.status)) {
+              const historyRows = await fetchMergedTaskOrderHistory(pool, tid, Number.isFinite(oid) && oid > 0 ? oid : null);
+              deliveredAt = pickDeliveredAtFromHistoryRows(historyRows) || pickHistoryLikeTimestamp(row?.date_modified);
+            }
+            return attachEmptyProofSummary({ ...row, delivered_at: deliveredAt });
           }
           throw e;
         }
@@ -4947,6 +5012,12 @@ router.get('/drivers/:id/details', async (req, res) => {
         }
         try {
           const proofs = await fetchErrandProofsForOrder(errandWibPool, oid);
+          let deliveredAt = null;
+          if (isDeliveredTaskStatusKey(row?.status)) {
+            const historyRows = await fetchErrandOrderHistory(errandWibPool, oid, row);
+            deliveredAt =
+              pickDeliveredAtFromHistoryRows(historyRows) || pickDeliveredAtFromProofRows(proofs);
+          }
           const task_photos = proofs.map((p) => ({
             id: p.id,
             task_id: row?.task_id ?? null,
@@ -4966,10 +5037,16 @@ router.get('/drivers/:id/details', async (req, res) => {
             proof_images,
             proof_receipt_url: rec.length ? rec[rec.length - 1].proof_url || null : null,
             proof_delivery_url: del.length ? del[del.length - 1].proof_url || null : null,
+            delivered_at: deliveredAt,
           };
         } catch (e) {
           if (e.code === 'ER_NO_SUCH_TABLE' || e.code === 'ER_BAD_FIELD_ERROR') {
-            return attachEmptyProofSummary({ ...row, order_kind: 'mangan' });
+            let deliveredAt = null;
+            if (isDeliveredTaskStatusKey(row?.status)) {
+              const historyRows = await fetchErrandOrderHistory(errandWibPool, oid, row);
+              deliveredAt = pickDeliveredAtFromHistoryRows(historyRows);
+            }
+            return attachEmptyProofSummary({ ...row, order_kind: 'mangan', delivered_at: deliveredAt });
           }
           throw e;
         }
