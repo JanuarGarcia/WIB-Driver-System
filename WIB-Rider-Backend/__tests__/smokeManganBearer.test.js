@@ -15,6 +15,7 @@ describe('smokeManganBearer', () => {
       authHeader: null,
       protectedBody: null,
       shiftAuthHeader: null,
+      currentShiftAuthHeader: null,
     };
     const token = 'mock-user-token';
 
@@ -39,10 +40,17 @@ describe('smokeManganBearer', () => {
           return;
         }
 
-        if (req.method === 'POST' && req.url === '/driver/shift') {
+        if (req.method === 'POST' && req.url === '/driver/getshift') {
           seen.shiftAuthHeader = req.headers.authorization || null;
           res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ code: 1, details: { schedule_uuid: 'schedule-uuid-1' } }));
+          res.end(JSON.stringify({ code: 1, details: { data: [{ schedule_uuid: 'schedule-uuid-1' }] } }));
+          return;
+        }
+
+        if (req.method === 'POST' && req.url === '/driver/currentShift') {
+          seen.currentShiftAuthHeader = req.headers.authorization || null;
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ code: 1, details: { current_shift: { schedule_uuid: 'schedule-uuid-current' } } }));
           return;
         }
 
@@ -85,6 +93,7 @@ describe('smokeManganBearer', () => {
     });
     expect(seen.authHeader).toBe(`Bearer ${token}`);
     expect(seen.shiftAuthHeader).toBe(`Bearer ${token}`);
+    expect(seen.currentShiftAuthHeader).toBeNull();
     expect(seen.protectedBody).toBe(null);
   });
 
@@ -98,6 +107,7 @@ describe('smokeManganBearer', () => {
       authHeader: null,
       protectedBody: null,
       shiftAuthHeader: null,
+      currentShiftAuthHeader: null,
     };
     const token = 'mock-user-token';
 
@@ -122,11 +132,19 @@ describe('smokeManganBearer', () => {
           return;
         }
 
-        if (req.method === 'POST' && req.url === '/driver/shift') {
+        if (req.method === 'POST' && req.url === '/driver/getshift') {
           seen.shiftAuthHeader = req.headers.authorization || null;
           const payload = body ? JSON.parse(body) : null;
           res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ code: 1, details: { shift: { schedule_uuid: 'schedule-uuid-2' }, echoed: payload } }));
+          res.end(JSON.stringify({ code: 1, details: { echoed: payload } }));
+          return;
+        }
+
+        if (req.method === 'POST' && req.url === '/driver/currentShift') {
+          seen.currentShiftAuthHeader = req.headers.authorization || null;
+          const payload = body ? JSON.parse(body) : null;
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ code: 1, details: { current_shift: { schedule_uuid: 'schedule-uuid-2' }, echoed: payload } }));
           return;
         }
 
@@ -171,6 +189,7 @@ describe('smokeManganBearer', () => {
     });
     expect(seen.authHeader).toBe(`Bearer ${token}`);
     expect(seen.shiftAuthHeader).toBe(`Bearer ${token}`);
+    expect(seen.currentShiftAuthHeader).toBe(`Bearer ${token}`);
     expect(seen.protectedBody).toEqual({
       order_uuid: 'uuid-1',
       api_key: 'api-key-xyz',

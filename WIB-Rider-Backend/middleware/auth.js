@@ -1,5 +1,6 @@
 const { pool } = require('../config/db');
 const { error } = require('../lib/response');
+const { authStatePayload, resolveDriverAuthState, resolveSessionContext, touchRiderSession } = require('../lib/riderSessionService');
 
 const STORED_API_KEY_QUERY = "SELECT option_value FROM mt_option WHERE option_name = 'driver_api_hash_key' LIMIT 1";
 
@@ -34,21 +35,37 @@ async function validateApiKey(req, res, next) {
   next();
 }
 
+function sendAuthEnvelope(res, httpStatus, msg, state) {
+  const details = authStatePayload(state);
+  return res.status(httpStatus).json({ code: 2, msg, details });
+}
+
 /** Resolve driver by token (query or body). Attach req.driver. Uses existing table mt_driver. */
 async function resolveDriver(req, res, next) {
   const token = getDriverTokenFromRequest(req);
   if (!token) {
-    return error(res, 'Token required', 2);
+    return sendAuthEnvelope(res, 401, 'Token required', {
+      valid: false,
+      tokenPresent: false,
+      tokenStatus: 'missing',
+      reason: 'missing_token',
+    });
   }
-  const [[driver]] = await pool.query(
-    `SELECT driver_id AS id, username, CONCAT(COALESCE(first_name,''), ' ', COALESCE(last_name,'')) AS full_name, team_id, on_duty, device_id, device_platform FROM mt_driver WHERE token = ?`,
-    [token]
-  );
-  if (!driver) {
-    return error(res, 'Invalid token', 2);
+  const state = await resolveDriverAuthState(pool, token);
+  req.driverTokenState = state.tokenStatus;
+  req.driverTokenReason = state.reason || null;
+  req.driver = state.driver || null;
+  req.driverSession = state.session || null;
+  req.driverAuthToken = token;
+  if (!state.valid || !state.driver) {
+    const msg = state.reason === 'logged_in_on_another_device' ? 'Session expired: logged in on another device' : 'Invalid token';
+    return sendAuthEnvelope(res, state.reason === 'missing_token' ? 401 : 403, msg, state);
   }
-  req.driverTokenState = 'valid';
-  req.driver = driver;
+  await touchRiderSession(pool, token, resolveSessionContext(req.body || {}, {
+    devicePlatform: req.body?.device_platform,
+    appVersion: req.body?.app_version ?? req.body?.appVersion,
+    ipAddress: req.ip || req.connection?.remoteAddress || null,
+  }));
   next();
 }
 
@@ -57,15 +74,25 @@ async function optionalDriver(req, res, next) {
   const token = getDriverTokenFromRequest(req);
   if (!token) {
     req.driverTokenState = 'missing';
+    req.driverTokenReason = 'missing_token';
     req.driver = null;
+    req.driverSession = null;
+    req.driverAuthToken = null;
     return next();
   }
-  const [[driver]] = await pool.query(
-    `SELECT driver_id AS id, username, CONCAT(COALESCE(first_name,''), ' ', COALESCE(last_name,'')) AS full_name, team_id, on_duty FROM mt_driver WHERE token = ?`,
-    [token]
-  );
-  req.driverTokenState = driver ? 'valid' : 'invalid';
-  req.driver = driver || null;
+  const state = await resolveDriverAuthState(pool, token);
+  req.driverTokenState = state.tokenStatus;
+  req.driverTokenReason = state.reason || null;
+  req.driver = state.driver || null;
+  req.driverSession = state.session || null;
+  req.driverAuthToken = token;
+  if (state.valid) {
+    await touchRiderSession(pool, token, resolveSessionContext(req.body || {}, {
+      devicePlatform: req.body?.device_platform,
+      appVersion: req.body?.app_version ?? req.body?.appVersion,
+      ipAddress: req.ip || req.connection?.remoteAddress || null,
+    }));
+  }
   next();
 }
 

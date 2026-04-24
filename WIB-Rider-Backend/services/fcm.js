@@ -2,6 +2,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { fetchActiveRiderDevices } = require('../lib/riderSessionService');
 
 let admin = null;
 let app = null;
@@ -48,38 +49,13 @@ async function resolveDriverFcmToken(pool, driverId) {
   const did = parseInt(String(driverId), 10);
   if (!Number.isFinite(did) || did <= 0) return '';
 
-  const loadFromReg = async (withPushEnabled) => {
-    const pushClause = withPushEnabled
-      ? ` AND (push_enabled IS NULL OR push_enabled = 1 OR push_enabled = '1' OR LOWER(TRIM(CAST(push_enabled AS CHAR))) = 'true')`
-      : '';
-    const [rows] = await pool.query(
-      `SELECT device_id FROM mt_rider_device_reg
-       WHERE driver_id = ?
-         AND device_id IS NOT NULL AND TRIM(device_id) <> ''${pushClause}
-       ORDER BY id DESC
-       LIMIT 1`,
-      [did]
-    );
-    const r = rows && rows[0];
-    return r?.device_id != null && String(r.device_id).trim() ? String(r.device_id).trim() : '';
-  };
-
   try {
-    let t = await loadFromReg(true);
-    if (t) return t;
-    t = await loadFromReg(false);
-    if (t) return t;
+    const devices = await fetchActiveRiderDevices(pool, did);
+    const first = Array.isArray(devices) ? devices[0] : null;
+    const token = first?.device_id != null && String(first.device_id).trim() ? String(first.device_id).trim() : '';
+    if (token) return token;
   } catch (e) {
-    if (e.code === 'ER_NO_SUCH_TABLE') {
-      /* fall through to mt_driver */
-    } else if (e.code === 'ER_BAD_FIELD_ERROR') {
-      try {
-        const t2 = await loadFromReg(false);
-        if (t2) return t2;
-      } catch (e2) {
-        if (e2.code !== 'ER_NO_SUCH_TABLE') throw e2;
-      }
-    } else {
+    if (e.code !== 'ER_NO_SUCH_TABLE' && e.code !== 'ER_BAD_FIELD_ERROR') {
       throw e;
     }
   }

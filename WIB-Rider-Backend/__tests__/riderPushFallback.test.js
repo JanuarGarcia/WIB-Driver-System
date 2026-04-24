@@ -212,4 +212,84 @@ describe('rider push fallback behavior', () => {
       [9, 'Retry insert', 'Body', 'admin_push', null, null]
     );
   });
+
+  test('sendRiderOrderPush targets only the active device tied to the current session', async () => {
+    const query = jest.fn(async (sql, params) => {
+      const text = String(sql);
+      if (/FROM\s+`?mt_option`?/i.test(text)) {
+        return [[{ option_value: JSON.stringify({ enable_push: 1, push_title: 'Assigned', push_body: 'Task body' }) }]];
+      }
+      if (/INFORMATION_SCHEMA\.COLUMNS/i.test(text)) {
+        const table = params && params[0];
+        if (table === 'mt_rider_device_reg') {
+          return [[
+            { c: 'driver_id' },
+            { c: 'device_id' },
+            { c: 'device_platform' },
+            { c: 'push_enabled' },
+            { c: 'is_active' },
+            { c: 'session_id' },
+          ]];
+        }
+        if (table === 'mt_rider_session') {
+          return [[{ c: 'id' }, { c: 'is_active' }, { c: 'revoked_at' }]];
+        }
+        return [[]];
+      }
+      if (/FROM mt_rider_device_reg d[\s\S]*INNER JOIN mt_rider_session s ON s\.id = d\.session_id/i.test(text)) {
+        return [[{ id: 44, device_id: 'active-token', device_platform: 'android' }]];
+      }
+      if (/FROM\s+mt_driver/i.test(text)) {
+        throw new Error('legacy mt_driver fallback should not be used when active session devices exist');
+      }
+      if (/INSERT\s+INTO\s+`?mt_rider_push_logs`?/i.test(text)) {
+        return [{ insertId: 321 }];
+      }
+      if (/INSERT\s+INTO\s+mt_driver_pushlog/i.test(text)) {
+        return [{ insertId: 654 }];
+      }
+      if (/UPDATE\s+`?mt_rider_push_logs`?/i.test(text)) {
+        return [{}];
+      }
+      if (/INSERT\s+INTO\s+mt_rider_order_trigger/i.test(text)) {
+        return [{ insertId: 71 }];
+      }
+      return [[]];
+    });
+
+    const sendPushToDevice = jest.fn().mockResolvedValue({ success: true, messageId: 'm-active' });
+    const maybeDisableBadRiderToken = jest.fn().mockResolvedValue(undefined);
+
+    jest.doMock('../config/db', () => ({ pool: { query } }));
+    jest.doMock('../services/fcm', () => ({
+      sendPushToDevice,
+      logDriverInboxNotification: jest.fn(async (poolArg, payload) => {
+        await poolArg.query(
+          `INSERT INTO mt_driver_pushlog (driver_id, push_title, push_message, push_type, task_id, order_id, date_created, date_process, is_read)
+           VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW(), 0)`,
+          [payload.driverId, payload.title, payload.body, payload.pushType, payload.taskId, payload.orderId]
+        );
+      }),
+    }));
+    jest.doMock('../lib/riderPushFailureHelpers', () => ({ maybeDisableBadRiderToken }));
+
+    const svc = require('../services/riderOrderPushService');
+    const out = await svc.sendRiderOrderPush({
+      orderId: 99,
+      driverId: 12,
+      eventKey: 'RIDER_ORDER_ASSIGNED',
+      orderStatus: 'assigned',
+    });
+
+    expect(out).toEqual({ skipped: false });
+    expect(sendPushToDevice).toHaveBeenCalledTimes(1);
+    expect(sendPushToDevice).toHaveBeenCalledWith(
+      'active-token',
+      expect.objectContaining({
+        title: 'Assigned',
+        body: 'Task body',
+      })
+    );
+    expect(maybeDisableBadRiderToken).not.toHaveBeenCalled();
+  });
 });

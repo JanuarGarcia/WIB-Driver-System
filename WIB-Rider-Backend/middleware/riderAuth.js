@@ -9,7 +9,11 @@ const { validateApiKey, resolveDriver } = require('./auth');
 function requireRiderAuth(req, res, next) {
   validateApiKey(req, res, () => {
     resolveDriver(req, res, () => {
-      req.rider = { driverId: req.driver.id };
+      req.rider = {
+        driverId: req.driver.id,
+        authToken: req.driverAuthToken || null,
+        session: req.driverSession || null,
+      };
       next();
     });
   });

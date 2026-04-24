@@ -1,6 +1,7 @@
 'use strict';
 
 const { pool } = require('../config/db');
+const { fetchActiveRiderDevices } = require('../lib/riderSessionService');
 const { sendPushToDevice, logDriverInboxNotification } = require('./fcm');
 const { maybeDisableBadRiderToken } = require('../lib/riderPushFailureHelpers');
 
@@ -8,16 +9,8 @@ const DEVICE_TABLE = 'mt_rider_device_reg';
 const LOG_TABLE = 'mt_rider_push_logs';
 
 async function fetchRiderDevices(driverId) {
-  const sql = `
-    SELECT id, device_id, device_platform
-    FROM \`${DEVICE_TABLE}\`
-    WHERE driver_id = ?
-      AND push_enabled = 1
-      AND device_id IS NOT NULL
-      AND TRIM(device_id) <> ''
-  `;
   try {
-    const [rows] = await pool.query(sql, [driverId]);
+    const rows = await fetchActiveRiderDevices(pool, driverId);
     if (Array.isArray(rows) && rows.length) return rows;
   } catch (e) {
     if (e.code !== 'ER_NO_SUCH_TABLE' && e.code !== 'ER_BAD_FIELD_ERROR') throw e;

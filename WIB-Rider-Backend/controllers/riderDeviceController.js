@@ -1,6 +1,7 @@
 'use strict';
 
 const { pool } = require('../config/db');
+const { establishSingleDeviceSession, resolveSessionContext } = require('../lib/riderSessionService');
 const { sendPushToDriver } = require('../services/fcm');
 
 function toPositiveInt(value) {
@@ -101,6 +102,11 @@ async function register(req, res) {
         date_modified = CURRENT_TIMESTAMP
     `;
     await pool.query(sql, [driverId, deviceId, platform, deviceUuid, pushEnabled]);
+    const sessionInfo = await establishSingleDeviceSession(pool, driverId, req.rider.authToken, req.body || {}, {
+      devicePlatform: platform || null,
+      pushEnabled,
+      ipAddress: req.ip || req.connection?.remoteAddress || null,
+    });
 
     const [[row]] = await pool.query(
       'SELECT id FROM mt_rider_device_reg WHERE driver_id = ? AND device_id = ? LIMIT 1',
@@ -110,7 +116,12 @@ async function register(req, res) {
     return res.json({
       code: 1,
       msg: 'ok',
-      details: { device_row_id: row?.id ?? null, driver_id: driverId },
+      details: {
+        device_row_id: row?.id ?? null,
+        driver_id: driverId,
+        session_id: sessionInfo?.sessionId ?? req.rider.session?.id ?? null,
+        valid_token: 1,
+      },
     });
   } catch (e) {
     if (e.code === 'ER_NO_SUCH_TABLE') {
@@ -124,19 +135,66 @@ async function register(req, res) {
 async function unregister(req, res) {
   try {
     const driverId = req.rider.driverId;
-    const deviceId = req.body.device_id ? String(req.body.device_id).trim() : null;
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    const sessionCtx = resolveSessionContext(body, {});
+    const deviceId = sessionCtx.pushToken || (body.device_id ? String(body.device_id).trim() : null) || req.rider.session?.pushToken || null;
+    const authToken = req.rider.authToken || null;
+    const matchers = [];
+    const params = [driverId];
+    if (deviceId) {
+      matchers.push('device_id = ?');
+      params.push(deviceId);
+    }
+    if (authToken) {
+      matchers.push('auth_token = ?');
+      params.push(authToken);
+    }
+
+    try {
+      await pool.query(
+        `UPDATE mt_rider_device_reg
+         SET push_enabled = 0,
+             is_active = 0,
+             revoked_at = NOW(),
+             revoked_reason = 'device_unregistered',
+             date_modified = CURRENT_TIMESTAMP
+         WHERE driver_id = ?
+           ${matchers.length ? `AND (${matchers.join(' OR ')})` : ''}`,
+        params
+      );
+    } catch (e) {
+      if (e.code === 'ER_BAD_FIELD_ERROR') {
+        if (deviceId) {
+          await pool.query(
+            'UPDATE mt_rider_device_reg SET push_enabled = 0, date_modified = CURRENT_TIMESTAMP WHERE driver_id = ? AND device_id = ?',
+            [driverId, deviceId]
+          );
+        } else {
+          await pool.query(
+            'UPDATE mt_rider_device_reg SET push_enabled = 0, date_modified = CURRENT_TIMESTAMP WHERE driver_id = ?',
+            [driverId]
+          );
+        }
+      } else if (e.code !== 'ER_NO_SUCH_TABLE') {
+        throw e;
+      }
+    }
+
     if (deviceId) {
       await pool.query(
-        'UPDATE mt_rider_device_reg SET push_enabled = 0, date_modified = CURRENT_TIMESTAMP WHERE driver_id = ? AND device_id = ?',
-        [driverId, deviceId]
-      );
-    } else {
-      await pool.query(
-        'UPDATE mt_rider_device_reg SET push_enabled = 0, date_modified = CURRENT_TIMESTAMP WHERE driver_id = ?',
-        [driverId]
+        'UPDATE mt_driver SET device_id = CASE WHEN device_id = ? THEN NULL ELSE device_id END WHERE driver_id = ?',
+        [deviceId, driverId]
       );
     }
-    return res.json({ code: 1, msg: 'ok', details: null });
+    return res.json({
+      code: 1,
+      msg: 'ok',
+      details: {
+        driver_id: driverId,
+        device_id: deviceId,
+        valid_token: 1,
+      },
+    });
   } catch (e) {
     if (e.code === 'ER_NO_SUCH_TABLE') {
       return res.json({ code: 2, msg: 'mt_rider_device_reg missing — run sql/wib_rider_device_and_push.sql', details: null });

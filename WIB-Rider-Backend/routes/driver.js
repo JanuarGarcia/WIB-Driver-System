@@ -62,8 +62,16 @@ const {
   isComplianceBlocking,
   compliancePayloadForDriver,
 } = require('../services/officeComplianceService');
-const { subscribeDriverSse } = require('../services/driverRealtime');
+const { disconnectDriverSubscribers, subscribeDriverSse } = require('../services/driverRealtime');
 const { issueResetCode, consumeResetCode } = require('../lib/passwordResetStore');
+const {
+  authStatePayload,
+  establishSingleDeviceSession,
+  findActiveSessionForDevice,
+  findReusableDriverSession,
+  resolveSessionContext,
+  revokeSessionByToken,
+} = require('../lib/riderSessionService');
 
 const uploadDir = path.join(getUploadsRoot(), 'profiles');
 if (!fs.existsSync(uploadDir)) {
@@ -793,6 +801,12 @@ function attachScheduleLinesAndAliases(details, orderRow, rawLineRows, deliveryR
   details.orderInfo = { ...orderBase };
 
   if (payForRoot) Object.assign(details, payForRoot);
+  details.delivery_address =
+    normalizeOptionalAddress(details.delivery_address) ||
+    normalizeOptionalAddress(deliveryRow?.formatted_address) ||
+    null;
+  details.formatted_address = normalizeOptionalAddress(deliveryRow?.formatted_address) || details.delivery_address;
+  details.formattedAddress = details.formatted_address;
 
   return details;
 }
@@ -891,14 +905,32 @@ function formatMerchantPickupAddress(m) {
   return fa || '';
 }
 
+function normalizeOptionalAddress(value) {
+  if (value == null) return null;
+  const s = String(value).trim();
+  if (!s) return null;
+  if (s === '-') return null;
+  if (/^(n\/?a|none|null|undefined)$/i.test(s)) return null;
+  return s;
+}
+
+function normalizeDeliveryAddressRow(row) {
+  if (!row || typeof row !== 'object') return row;
+  return {
+    ...row,
+    formatted_address: normalizeOptionalAddress(row.formatted_address),
+    location_name: normalizeOptionalAddress(row.location_name),
+  };
+}
+
 /**
  * Merge order / delivery / merchant / line items into rider task details.
  * Preserves existing keys from queryRiderTaskRows; adds order_subtotal, convenience_fee, nested order, etc.
  */
 async function enrichRiderTaskDetails(pool, taskRow) {
   const details = { ...taskRow };
-  const legacyDropMerchantAddr = details.merchant_address;
-  details.task_drop_address = legacyDropMerchantAddr != null ? String(legacyDropMerchantAddr) : '';
+  const legacyDropMerchantAddr = normalizeOptionalAddress(details.merchant_address);
+  details.task_drop_address = legacyDropMerchantAddr || '';
   details.drop_address = details.task_drop_address;
 
   const orderId = details.order_id != null ? parseInt(String(details.order_id), 10) : 0;
@@ -935,6 +967,7 @@ async function enrichRiderTaskDetails(pool, taskRow) {
       }
     }
   }
+  deliveryRow = normalizeDeliveryAddressRow(deliveryRow);
 
   const midFromOrder = orderRow?.merchant_id != null && String(orderRow.merchant_id).trim() !== '' ? parseInt(String(orderRow.merchant_id), 10) : null;
   const dropoff = details.dropoff_merchant;
@@ -959,6 +992,12 @@ async function enrichRiderTaskDetails(pool, taskRow) {
 
   const pickupFormatted = formatMerchantPickupAddress(merchantRow);
   details.merchant_address = pickupFormatted || details.drop_address || '';
+  details.delivery_address =
+    normalizeOptionalAddress(details.delivery_address) ||
+    normalizeOptionalAddress(deliveryRow?.formatted_address) ||
+    null;
+  details.formatted_address = normalizeOptionalAddress(deliveryRow?.formatted_address) || details.delivery_address;
+  details.formattedAddress = details.formatted_address;
 
   if (merchantRow) {
     details.merchant = {
@@ -1226,7 +1265,11 @@ async function handleDriverApiLogin(req, res) {
   }
 
   const isBcrypt = stored.startsWith('$2a$') || stored.startsWith('$2b$') || stored.startsWith('$2y$');
-  const token = uuidv4();
+  const existingSession = await findReusableDriverSession(pool, driver.id, body, {
+    devicePlatform: device_platform,
+    ipAddress: req.ip || req.connection?.remoteAddress || null,
+  });
+  const token = existingSession?.authToken || uuidv4();
   const nowUnix = Math.floor(Date.now() / 1000);
   const updates = [token, device_id || null, (device_platform || '').toLowerCase() || null, driver.id];
   try {
@@ -1246,8 +1289,21 @@ async function handleDriverApiLogin(req, res) {
     const hash = await bcrypt.hash(password, 10);
     await pool.query('UPDATE mt_driver SET password = ? WHERE driver_id = ?', [hash, driver.id]);
   }
+  const sessionInfo = await establishSingleDeviceSession(pool, driver.id, token, body, {
+    devicePlatform: device_platform,
+    ipAddress: req.ip || req.connection?.remoteAddress || null,
+    revokedReason: 'logged_in_on_another_device',
+    existingSessionId: existingSession?.id ?? null,
+  });
+  disconnectDriverSubscribers(driver.id, {
+    exceptAuthToken: token,
+    reason: 'logged_in_on_another_device',
+  });
   return success(res, {
     token,
+    valid_token: 1,
+    token_reason: null,
+    session_id: sessionInfo?.sessionId ?? null,
     username: driver.username,
     todays_date: todayStr(),
     todays_date_raw: todayRaw(),
@@ -1257,6 +1313,9 @@ async function handleDriverApiLogin(req, res) {
     enabled_push: 1,
     topic_new_task: null,
     topic_alert: null,
+    device_id: sessionInfo?.pushToken ?? resolveSessionContext(body).pushToken ?? device_id ?? null,
+    device_uuid: sessionInfo?.deviceUuid ?? null,
+    device_name: sessionInfo?.deviceName ?? null,
   });
 }
 
@@ -1329,10 +1388,41 @@ async function updateOrderPaymentFields(orderId, payment_type, payment_status) {
 
 router.post('/GetAppSettings', validateApiKey, optionalDriver, async (req, res) => {
   const settings = await getDriverSettingsMap();
-  const driver = req.driver;
-  const tokenState = req.driverTokenState === 'valid' || req.driverTokenState === 'invalid' || req.driverTokenState === 'missing'
+  let driver = req.driver;
+  let driverSession = req.driverSession || null;
+  let authToken = req.driverAuthToken || null;
+  let tokenState = req.driverTokenState === 'valid' || req.driverTokenState === 'invalid' || req.driverTokenState === 'missing'
     ? req.driverTokenState
     : 'missing';
+  let tokenReason =
+    req.driverTokenReason || (tokenState === 'missing' ? 'missing_token' : tokenState === 'invalid' ? 'invalid_token' : null);
+  let recoveredSession = false;
+
+  if (!driver && tokenState === 'invalid') {
+    try {
+      const recovered = await findActiveSessionForDevice(pool, req.body || {}, {
+        devicePlatform: req.body?.device_platform,
+        ipAddress: req.ip || req.connection?.remoteAddress || null,
+      });
+      if (recovered && recovered.driver) {
+        driver = recovered.driver;
+        driverSession = recovered.session || null;
+        authToken = recovered.authToken || authToken;
+        tokenState = 'valid';
+        tokenReason = null;
+        recoveredSession = true;
+      }
+    } catch (_) {
+      // Backward compatible: if recovery lookup fails, fall back to the original invalid state.
+    }
+  }
+
+  const sessionState = {
+    valid: tokenState === 'valid',
+    tokenPresent: tokenState !== 'missing',
+    tokenStatus: tokenState,
+    reason: tokenReason,
+  };
   const signupEnabled = isRiderSignupEnabled(settings);
   const signupStatus = normalizeRiderSignupStatus(settings.signup_status);
   const appName = (settings.app_name != null && String(settings.app_name).trim() !== '') ? String(settings.app_name).trim() : (settings.website_title || 'WIB Driver');
@@ -1352,15 +1442,10 @@ router.post('/GetAppSettings', validateApiKey, optionalDriver, async (req, res) 
     show_register_button: signupEnabled ? 1 : 0,
     signup_status: signupStatus,
     signup_target: 'mt_driver',
-    valid_token: tokenState === 'valid' ? 1 : 0,
-    token_present: tokenState === 'missing' ? 0 : 1,
-    invalid_token: tokenState === 'invalid' ? 1 : 0,
-    token_status: tokenState,
-    auth_state: tokenState === 'valid' ? 'authenticated' : 'unauthenticated',
     todays_date: todayStr(),
     todays_date_raw: todayRaw(),
     on_duty: driver?.on_duty ?? 0,
-    token: driver ? (await getTokenForDriverId(driver.id)) : null,
+    token: driver ? (authToken || (await getTokenForDriverId(driver.id))) : null,
     duty_status: driver?.on_duty,
     location_accuracy: 2,
     enabled_push: 1,
@@ -1371,6 +1456,15 @@ router.post('/GetAppSettings', validateApiKey, optionalDriver, async (req, res) 
     map_provider: 'google',
     translation: {},
   };
+  Object.assign(details, authStatePayload(sessionState), {
+    logged_out_reason: sessionState.reason || null,
+    invalid_token_reason: sessionState.reason || null,
+    session_id: driverSession?.id ?? null,
+    session_device_id: driverSession?.pushToken ?? null,
+    session_device_platform: driverSession?.devicePlatform ?? null,
+    session_device_name: driverSession?.deviceName ?? null,
+    session_recovered: recoveredSession ? 1 : 0,
+  });
   if (mobileApiBase) {
     details.mobile_api_url = mobileApiBase;
   }
@@ -1436,14 +1530,39 @@ async function getTokenForDriverId(driverId) {
 // ---- Protected (api_key + token) ----
 router.post('/Logout', validateApiKey, resolveDriver, async (req, res) => {
   const oldUnix = Math.floor(Date.now() / 1000) - 35 * 60;
+  const deviceToken =
+    resolveSessionContext(req.body || {}, {}).pushToken || req.driverSession?.pushToken || req.driver?.device_id || null;
+  await revokeSessionByToken(pool, req.driverAuthToken, 'logout', {
+    driverId: req.driver.id,
+    pushToken: deviceToken,
+  });
   try {
-    await pool.query('UPDATE mt_driver SET token = NULL, last_online = ? WHERE driver_id = ?', [oldUnix, req.driver.id]);
+    await pool.query(
+      `UPDATE mt_driver
+       SET token = CASE WHEN token = ? THEN NULL ELSE token END,
+           device_id = CASE WHEN device_id = ? THEN NULL ELSE device_id END,
+           last_online = ?
+       WHERE driver_id = ?`,
+      [req.driverAuthToken, deviceToken, oldUnix, req.driver.id]
+    );
   } catch (e) {
     if (e.code === 'ER_BAD_FIELD_ERROR') {
-      await pool.query('UPDATE mt_driver SET token = NULL WHERE driver_id = ?', [req.driver.id]);
+      try {
+        await pool.query(
+          'UPDATE mt_driver SET token = CASE WHEN token = ? THEN NULL ELSE token END WHERE driver_id = ?',
+          [req.driverAuthToken, req.driver.id]
+        );
+      } catch (e2) {
+        if (e2.code === 'ER_BAD_FIELD_ERROR') {
+          await pool.query('UPDATE mt_driver SET token = NULL WHERE driver_id = ? AND token = ?', [req.driver.id, req.driverAuthToken]);
+        } else {
+          throw e2;
+        }
+      }
     } else throw e;
   }
-  return success(res, null);
+  disconnectDriverSubscribers(req.driver.id, { reason: 'logout' });
+  return success(res, { valid_token: 0, token_reason: 'logout' });
 });
 
 router.post('/reRegisterDevice', validateApiKey, resolveDriver, async (req, res) => {
@@ -1452,7 +1571,26 @@ router.post('/reRegisterDevice', validateApiKey, resolveDriver, async (req, res)
     'UPDATE mt_driver SET device_id = ?, device_platform = ? WHERE driver_id = ?',
     [new_device_id || null, (device_platform || '').toLowerCase() || null, req.driver.id]
   );
-  return success(res, null);
+  const sessionInfo = await establishSingleDeviceSession(
+    pool,
+    req.driver.id,
+    req.driverAuthToken,
+    { ...(req.body || {}), device_id: new_device_id || req.body?.device_id || null },
+    {
+      devicePlatform: device_platform,
+      ipAddress: req.ip || req.connection?.remoteAddress || null,
+      revokedReason: 'logged_in_on_another_device',
+    }
+  );
+  disconnectDriverSubscribers(req.driver.id, {
+    exceptAuthToken: req.driverAuthToken,
+    reason: 'logged_in_on_another_device',
+  });
+  return success(res, {
+    valid_token: 1,
+    session_id: sessionInfo?.sessionId ?? req.driverSession?.id ?? null,
+    device_id: sessionInfo?.pushToken ?? new_device_id ?? null,
+  });
 });
 
 router.post('/ChangeDutyStatus', validateApiKey, resolveDriver, async (req, res) => {
@@ -1512,7 +1650,7 @@ router.get('/events', validateApiKey, resolveDriver, async (req, res) => {
   } catch (_) {
     initPayload = { compliance: compliancePayloadForDriver(null) };
   }
-  const r = subscribeDriverSse(res, req.driver.id, initPayload);
+  const r = subscribeDriverSse(res, req.driver.id, req.driverAuthToken, initPayload);
   if (!r.ok) return res.status(400).end();
 });
 
@@ -1627,10 +1765,12 @@ router.post('/GetTaskByDate', validateApiKey, resolveDriver, async (req, res) =>
         ...r,
         date_created: r.date_created ? new Date(r.date_created).toISOString() : null,
       };
+      out.delivery_address = normalizeOptionalAddress(out.delivery_address);
+      out.merchant_address = normalizeOptionalAddress(out.merchant_address) || '';
       const oid = out.order_id != null ? parseInt(String(out.order_id), 10) : 0;
       const orderRow = Number.isFinite(oid) && oid > 0 ? ordersMap.get(oid) || null : null;
       const lineRows = Number.isFinite(oid) && oid > 0 ? linesByOrder.get(oid) || [] : [];
-      const deliveryRow = Number.isFinite(oid) && oid > 0 ? deliveryByOrderId.get(oid) || null : null;
+      const deliveryRow = Number.isFinite(oid) && oid > 0 ? normalizeDeliveryAddressRow(deliveryByOrderId.get(oid) || null) : null;
       attachScheduleLinesAndAliases(out, orderRow, lineRows, deliveryRow);
       return out;
     })

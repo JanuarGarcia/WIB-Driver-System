@@ -19,9 +19,12 @@
  *   MANGAN_PROFILE_PATH - optional profile endpoint for driver_uuid discovery (default /driver/profile)
  *   MANGAN_PROFILE_METHOD - optional method for profile discovery (default POST)
  *   MANGAN_PROFILE_BODY - optional JSON body for profile discovery
- *   MANGAN_SHIFT_PATH - optional shift endpoint for schedule_uuid discovery (default /driver/shift)
+ *   MANGAN_SHIFT_PATH - optional shift endpoint for schedule_uuid discovery (default /driver/getshift)
  *   MANGAN_SHIFT_METHOD - optional method for shift discovery (default POST)
  *   MANGAN_SHIFT_BODY - optional JSON body for shift discovery
+ *   MANGAN_CURRENT_SHIFT_PATH - optional fallback endpoint for schedule_uuid discovery (default /driver/currentShift)
+ *   MANGAN_CURRENT_SHIFT_METHOD - optional method for currentShift discovery (default POST)
+ *   MANGAN_CURRENT_SHIFT_BODY - optional JSON body for currentShift discovery
  */
 'use strict';
 
@@ -162,12 +165,20 @@ function extractScheduleUuid(json) {
     'details.schedule_uuid',
     'data.schedule_uuid',
     'schedule_uuid',
+    'details.data.0.schedule_uuid',
+    'details.data.0.uuid',
+    'details.schedules.0.schedule_uuid',
+    'details.schedules.0.uuid',
     'details.shift.schedule_uuid',
     'details.shift.uuid',
     'details.schedule.uuid',
     'details.schedule.schedule_uuid',
     'details.current_shift.schedule_uuid',
     'details.current_shift.uuid',
+    'data.0.schedule_uuid',
+    'data.0.uuid',
+    'data.current_shift.schedule_uuid',
+    'data.current_shift.uuid',
     'data.shift.schedule_uuid',
     'data.shift.uuid',
     'data.schedule.uuid',
@@ -201,9 +212,17 @@ async function smokeManganBearer(opts) {
   const profilePath = normalizePath(opts.profilePath || process.env.MANGAN_PROFILE_PATH || '/driver/profile', '/driver/profile');
   const profileMethod = String(opts.profileMethod || process.env.MANGAN_PROFILE_METHOD || 'POST').trim().toUpperCase() || 'POST';
   const profileBody = opts.profileBody !== undefined ? opts.profileBody : parseOptionalJson(process.env.MANGAN_PROFILE_BODY);
-  const shiftPath = normalizePath(opts.shiftPath || process.env.MANGAN_SHIFT_PATH || '/driver/shift', '/driver/shift');
+  const shiftPath = normalizePath(opts.shiftPath || process.env.MANGAN_SHIFT_PATH || '/driver/getshift', '/driver/getshift');
   const shiftMethod = String(opts.shiftMethod || process.env.MANGAN_SHIFT_METHOD || 'POST').trim().toUpperCase() || 'POST';
   const shiftBody = opts.shiftBody !== undefined ? opts.shiftBody : parseOptionalJson(process.env.MANGAN_SHIFT_BODY);
+  const currentShiftPath = normalizePath(
+    opts.currentShiftPath || process.env.MANGAN_CURRENT_SHIFT_PATH || '/driver/currentShift',
+    '/driver/currentShift'
+  );
+  const currentShiftMethod =
+    String(opts.currentShiftMethod || process.env.MANGAN_CURRENT_SHIFT_METHOD || 'POST').trim().toUpperCase() || 'POST';
+  const currentShiftBody =
+    opts.currentShiftBody !== undefined ? opts.currentShiftBody : parseOptionalJson(process.env.MANGAN_CURRENT_SHIFT_BODY);
   const apiKey = optionalApiKey();
 
   if (!username || !password) {
@@ -274,7 +293,8 @@ async function smokeManganBearer(opts) {
   if (normalizePath(protectedPath, protectedPath) === profilePath && protectedRes.json) {
     driverUuid = extractDriverUuid(protectedRes.json);
   }
-  if (normalizePath(protectedPath, protectedPath) === shiftPath && protectedRes.json) {
+  const normalizedProtectedPath = normalizePath(protectedPath, protectedPath);
+  if ((normalizedProtectedPath === shiftPath || normalizedProtectedPath === currentShiftPath) && protectedRes.json) {
     scheduleUuid = extractScheduleUuid(protectedRes.json);
   }
 
@@ -292,13 +312,19 @@ async function smokeManganBearer(opts) {
   }
 
   if (!scheduleUuid) {
-    const shiftRes = await requestProtectedJson(baseUrl, token, shiftPath, shiftMethod, shiftBody, apiKey);
-    assert(shiftRes.status !== 401, `shift endpoint returned 401 (${shiftRes.raw.slice(0, 300)})`);
-    scheduleUuid = extractScheduleUuid(shiftRes.json);
-    if (scheduleUuid) {
-      console.log(`PASS: shift returned schedule_uuid=${scheduleUuid}`);
-    } else {
-      console.log(`WARN: shift response did not include schedule_uuid (path=${shiftPath})`);
+    const attempts = [
+      { label: 'shift', path: shiftPath, method: shiftMethod, body: shiftBody },
+      { label: 'currentShift', path: currentShiftPath, method: currentShiftMethod, body: currentShiftBody },
+    ];
+    for (const attempt of attempts) {
+      const shiftRes = await requestProtectedJson(baseUrl, token, attempt.path, attempt.method, attempt.body, apiKey);
+      assert(shiftRes.status !== 401, `${attempt.label} endpoint returned 401 (${shiftRes.raw.slice(0, 300)})`);
+      scheduleUuid = extractScheduleUuid(shiftRes.json);
+      if (scheduleUuid) {
+        console.log(`PASS: ${attempt.label} returned schedule_uuid=${scheduleUuid}`);
+        break;
+      }
+      console.log(`WARN: ${attempt.label} response did not include schedule_uuid (path=${attempt.path})`);
     }
   } else {
     console.log(`PASS: protected response returned schedule_uuid=${scheduleUuid}`);
