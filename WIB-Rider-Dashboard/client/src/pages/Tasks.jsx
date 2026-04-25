@@ -517,18 +517,55 @@ export default function Tasks() {
                   </td>
                   <td className="tasks-actions-cell">
                     <div className="task-row-actions">
-                      <button type="button" className="btn btn-sm btn-ghost" onClick={() => openDetails(t.task_id, t)} title="View details">View</button>
+                      <button
+                        type="button"
+                        className="btn btn-sm task-row-action-btn task-row-action-btn--view"
+                        onClick={() => openDetails(t.task_id, t)}
+                        title="View details"
+                      >
+                        <span className="task-row-action-btn__icon" aria-hidden="true">
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z" strokeLinecap="round" strokeLinejoin="round" />
+                            <circle cx="12" cy="12" r="3" />
+                          </svg>
+                        </span>
+                        <span>View</span>
+                      </button>
                       {(() => {
                         const statusNorm = String(t.status || '').toLowerCase();
                         if (statusNorm !== 'unassigned' && !QUICK_REASSIGNABLE_STATUSES.has(statusNorm)) return null;
                         return (
-                          <button type="button" className="btn btn-sm btn-primary" onClick={() => setAssignTaskId(t.task_id)}>
-                            {statusNorm === 'unassigned' ? 'Assign' : 'Re-assign'}
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-primary task-row-action-btn task-row-action-btn--assign"
+                            onClick={() => setAssignTaskId(t.task_id)}
+                          >
+                            <span className="task-row-action-btn__icon" aria-hidden="true">
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <path d="M12 5v14M5 12h14" strokeLinecap="round" strokeLinejoin="round" />
+                              </svg>
+                            </span>
+                            <span>{statusNorm === 'unassigned' ? 'Assign' : 'Re-assign'}</span>
                           </button>
                         );
                       })()}
                       {(t.delivery_address || '').trim() && (
-                        <a href={`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent((t.delivery_address || '').trim())}`} target="_blank" rel="noopener noreferrer" className="btn btn-sm btn-ghost" title="Open directions">Directions</a>
+                        <a
+                          href={`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent((t.delivery_address || '').trim())}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="btn btn-sm task-row-action-btn task-row-action-btn--directions"
+                          title="Open directions"
+                        >
+                          <span className="task-row-action-btn__icon" aria-hidden="true">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                              <path d="M9 18l6-12" strokeLinecap="round" strokeLinejoin="round" />
+                              <path d="M5 8l4-2 2 4-4 2-2-4z" strokeLinecap="round" strokeLinejoin="round" />
+                              <path d="M13 14l4-2 2 4-4 2-2-4z" strokeLinecap="round" strokeLinejoin="round" />
+                            </svg>
+                          </span>
+                          <span>Directions</span>
+                        </a>
                       )}
                     </div>
                   </td>
