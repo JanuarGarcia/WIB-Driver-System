@@ -937,21 +937,25 @@
   background: rgba(100, 116, 139, 0.25);
   color: #94a3b8;
 }
-[data-theme="dark"] .drivers-listing .table-actions .btn:not(.btn-primary):not(.btn-success):not(.btn-danger) {
+[data-theme="dark"] .drivers-listing .table-actions .btn:not(.btn-primary):not(.btn-success):not(.btn-danger),
+[data-theme="dark"] .tasks-listing .table-actions .btn:not(.btn-primary):not(.btn-success):not(.btn-danger) {
   background: var(--bg-surface-2);
   border-color: var(--border-medium);
   color: var(--text-secondary);
 }
-[data-theme="dark"] .drivers-listing .table-actions .btn:not(.btn-primary):not(.btn-success):not(.btn-danger):hover {
+[data-theme="dark"] .drivers-listing .table-actions .btn:not(.btn-primary):not(.btn-success):not(.btn-danger):hover,
+[data-theme="dark"] .tasks-listing .table-actions .btn:not(.btn-primary):not(.btn-success):not(.btn-danger):hover {
   background: var(--bg-surface-3);
   border-color: var(--color-primary);
   color: var(--text-dark);
 }
-[data-theme="dark"] .drivers-listing .table-actions .btn-success:hover {
+[data-theme="dark"] .drivers-listing .table-actions .btn-success:hover,
+[data-theme="dark"] .tasks-listing .table-actions .btn-success:hover {
   background: var(--color-success);
   color: #fff;
 }
-[data-theme="dark"] .drivers-listing .table-actions .btn-danger:hover {
+[data-theme="dark"] .drivers-listing .table-actions .btn-danger:hover,
+[data-theme="dark"] .tasks-listing .table-actions .btn-danger:hover {
   background: var(--color-danger);
   color: #fff;
 }
@@ -2240,39 +2244,47 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
 .drivers-listing .drivers-mobile-list {
   display: none;
 }
-.drivers-listing .table-actions {
+.drivers-listing .table-actions,
+.tasks-listing .table-actions {
   gap: 0.5rem;
   flex-wrap: wrap;
 }
-.drivers-listing .table-actions .btn {
+.drivers-listing .table-actions .btn,
+.tasks-listing .table-actions .btn {
   min-width: 0;
 }
-.drivers-listing .table-actions .btn-success {
+.drivers-listing .table-actions .btn-success,
+.tasks-listing .table-actions .btn-success {
   background: var(--color-success-bg);
   border-color: var(--color-success);
   color: var(--color-success);
 }
-.drivers-listing .table-actions .btn-success:hover {
+.drivers-listing .table-actions .btn-success:hover,
+.tasks-listing .table-actions .btn-success:hover {
   background: var(--color-success);
   color: #fff;
   border-color: var(--color-success);
 }
-.drivers-listing .table-actions .btn-danger {
+.drivers-listing .table-actions .btn-danger,
+.tasks-listing .table-actions .btn-danger {
   background: var(--color-danger-bg);
   border-color: var(--color-danger);
   color: var(--color-danger);
 }
-.drivers-listing .table-actions .btn-danger:hover {
+.drivers-listing .table-actions .btn-danger:hover,
+.tasks-listing .table-actions .btn-danger:hover {
   background: var(--color-danger);
   color: #fff;
   border-color: var(--color-danger);
 }
-.drivers-listing .table-actions .btn-outline-view {
+.drivers-listing .table-actions .btn-outline-view,
+.tasks-listing .table-actions .btn-outline-view {
   border: 1px solid var(--color-primary);
   color: var(--color-primary);
   background: transparent;
 }
-.drivers-listing .table-actions .btn-outline-view:hover {
+.drivers-listing .table-actions .btn-outline-view:hover,
+.tasks-listing .table-actions .btn-outline-view:hover {
   background: var(--color-primary-tint, rgba(158, 195, 76, 0.12));
   border-color: var(--color-primary);
   color: var(--text-dark);
@@ -2451,77 +2463,6 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
 }
 .task-row-actions .btn { text-decoration: none; }
 .task-row-actions a.btn { display: inline-flex; align-items: center; }
-.tasks-listing .task-row-action-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.35rem;
-  min-width: 0;
-  border-radius: 999px;
-  border: 1px solid transparent;
-  font-weight: 600;
-  letter-spacing: 0.01em;
-  line-height: 1;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
-  transition: background 0.16s ease, border-color 0.16s ease, color 0.16s ease, box-shadow 0.16s ease, transform 0.16s ease;
-}
-.tasks-listing .task-row-action-btn:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.14);
-}
-.tasks-listing .task-row-action-btn__icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-}
-.tasks-listing .task-row-action-btn--view {
-  border-color: rgba(158, 195, 76, 0.4);
-  background: rgba(158, 195, 76, 0.12);
-  color: var(--color-primary);
-}
-.tasks-listing .task-row-action-btn--view:hover {
-  border-color: var(--color-primary);
-  background: rgba(158, 195, 76, 0.18);
-  color: var(--text-dark);
-}
-.tasks-listing .task-row-action-btn--assign.btn-primary {
-  border-color: var(--color-primary);
-  box-shadow: 0 2px 8px rgba(158, 195, 76, 0.22);
-}
-.tasks-listing .task-row-action-btn--assign.btn-primary:hover {
-  box-shadow: 0 4px 12px rgba(158, 195, 76, 0.3);
-}
-.tasks-listing .task-row-action-btn--directions {
-  border-color: var(--border-medium);
-  background: rgba(255, 255, 255, 0.03);
-  color: var(--text-secondary);
-}
-.tasks-listing .task-row-action-btn--directions:hover {
-  border-color: rgba(158, 195, 76, 0.35);
-  background: rgba(158, 195, 76, 0.08);
-  color: var(--text-dark);
-}
-[data-theme="dark"] .tasks-listing .task-row-action-btn--view {
-  border-color: rgba(158, 195, 76, 0.42);
-  background: rgba(158, 195, 76, 0.14);
-  color: #c8df85;
-}
-[data-theme="dark"] .tasks-listing .task-row-action-btn--view:hover {
-  border-color: rgba(158, 195, 76, 0.62);
-  background: rgba(158, 195, 76, 0.2);
-  color: #f3f7e4;
-}
-[data-theme="dark"] .tasks-listing .task-row-action-btn--directions {
-  border-color: rgba(130, 145, 168, 0.46);
-  background: rgba(255, 255, 255, 0.02);
-  color: #d1d8e3;
-}
-[data-theme="dark"] .tasks-listing .task-row-action-btn--directions:hover {
-  border-color: rgba(158, 195, 76, 0.34);
-  background: rgba(158, 195, 76, 0.1);
-  color: #f3f7e4;
-}
 
 .listing-search-input {
   padding: 0.5rem 0.85rem;
