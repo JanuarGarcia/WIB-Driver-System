@@ -49,6 +49,7 @@ const {
 } = require('../lib/dashboardRiderNotify');
 const { insertMtOrderHistoryRow } = require('../lib/mtOrderHistoryInsert');
 const { resolveErrandDriverLink, resolveErrandDriverLinks } = require('../lib/errandDriverLink');
+const { fireManganSync } = require('../lib/manganDriverSync');
 const { notifyDashboardAfterMtTaskHistoryRow } = require('../lib/mtTaskStatusDashboardNotify');
 const {
   normalizeTimelineNotifyKey,
@@ -4309,6 +4310,22 @@ router.put('/errand-orders/:orderId/status', express.json(), async (req, res) =>
         }
       }
     } catch (_) {}
+    if (canon !== 'cancelled') {
+      try {
+        fireManganSync({
+          mainPool: pool,
+          errandPool: errandWibPool,
+          orderId,
+          orderUuid: null,
+          canonical: canon,
+          extras: {
+            reason: remarks || undefined,
+          },
+        });
+      } catch (_) {
+        /* keep admin status update non-blocking */
+      }
+    }
     return res.json({ ok: true, status: canon });
   } catch (e) {
     if (e.errno === 1265 || (e.message && /Data truncated|Incorrect.*enum/i.test(String(e.message)))) {
