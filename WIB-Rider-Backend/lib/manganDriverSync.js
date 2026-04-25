@@ -240,7 +240,7 @@ async function postDriverAction(baseUrl, bearer, action, body) {
       headers: {
         'Content-Type': 'application/json',
         Accept: 'application/json',
-        Authorization: `Bearer ${bearer}`,
+        Authorization: `token ${bearer}`,
       },
       body: JSON.stringify(payload),
     });

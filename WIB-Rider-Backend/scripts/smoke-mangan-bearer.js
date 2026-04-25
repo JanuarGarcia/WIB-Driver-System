@@ -197,7 +197,7 @@ async function requestProtectedJson(baseUrl, token, path, method, body, apiKey) 
   }
   return requestJson(url, {
     method,
-    headers: { Authorization: `Bearer ${token}` },
+    headers: { Authorization: `token ${token}` },
     body: nextBody,
   });
 }
@@ -276,9 +276,9 @@ async function smokeManganBearer(opts) {
     jsonMsg.includes('invalid token') ||
     jsonMsg.includes('not login') ||
     jsonMsg.includes('unauthorized');
-  assert(!authRejected, `protected endpoint rejected bearer token (${protectedRes.raw.slice(0, 300)})`);
+  assert(!authRejected, `protected endpoint rejected token auth (${protectedRes.raw.slice(0, 300)})`);
 
-  console.log(`PASS: bearer request accepted (HTTP ${protectedRes.status})`);
+  console.log(`PASS: token auth request accepted (HTTP ${protectedRes.status})`);
   if (protectedRes.json) {
     console.log(`Response JSON: ${JSON.stringify(protectedRes.json).slice(0, 500)}`);
   } else if (protectedRes.raw) {
