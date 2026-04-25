@@ -13,6 +13,7 @@ const {
   mapDeliveryToCanonicalTaskStatus,
 } = require('./errandDriverStatus');
 const { readContractDeliveryAsap } = require('./riderTaskContract');
+const { resolveErrandDriverLink, resolveErrandDriverLinks } = require('./errandDriverLink');
 
 /** Non-enumerable on the `order_details` array: filtered `st_ordernew_item` rows (SQL order) for name merge. */
 const ERRAND_ORDER_LINES_RAW = Symbol.for('wib.errandOrderLinesRaw');
@@ -2320,17 +2321,21 @@ async function fetchErrandMappedOrdersForDriverDate(errandPool, mainPool, driver
   if (!Number.isFinite(did) || did <= 0) return out;
   const d = String(dateOnly || '').trim().slice(0, 10);
   if (d.length < 10) return out;
+  const link = await resolveErrandDriverLink(mainPool, errandPool, did);
+  const candidateDriverIds = link.candidateDriverIds || [];
+  if (!candidateDriverIds.length) return out;
 
   /** @type {Record<string, unknown>[]|null} */
   let list = null;
   try {
+    const ph = candidateDriverIds.map(() => '?').join(',');
     const [eRows] = await errandPool.query(
       `SELECT * FROM st_ordernew
-       WHERE driver_id = ?
+       WHERE driver_id IN (${ph})
          AND DATE(COALESCE(delivery_date, created_at, date_created, date_modified)) = ?
          ${ST_ORDERNEW_EXCLUDE_ADMIN_DELETED_SQL}
        ORDER BY order_id DESC`,
-      [did, d]
+      [...candidateDriverIds, d]
     );
     list = eRows || [];
   } catch (e) {
@@ -2339,7 +2344,13 @@ async function fetchErrandMappedOrdersForDriverDate(errandPool, mainPool, driver
   }
   if (!list.length) return out;
 
-  const driverIds = [did];
+  const driverIds = [
+    ...new Set(
+      list
+        .map((row) => parseInt(String(row?.driver_id ?? ''), 10))
+        .filter((value) => Number.isFinite(value) && value > 0)
+    ),
+  ];
   const errandDriverById = await fetchErrandStDriversByIds(errandPool, driverIds);
   await attachErrandDriverGroups(errandPool, errandDriverById);
   const needMtNames = driverIds.filter(

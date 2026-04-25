@@ -33,6 +33,11 @@ const {
   getDriverCompliance,
   isComplianceBlocking,
 } = require('../services/officeComplianceService');
+const {
+  resolveErrandDriverLink,
+  orderAssignedToDriverCandidates,
+  orderAssignedDriverId,
+} = require('../lib/errandDriverLink');
 
 async function notifyErrandAdminsIfFreshMilestone(pool, orderId, canonical, payload) {
   if (!payload) return;
@@ -156,6 +161,16 @@ function orderDriverId(row) {
 function isUnassignedOrder(row) {
   const d = orderDriverId(row);
   return d == null || d === 0;
+}
+
+async function resolveReqErrandDriverLink(req) {
+  return await resolveErrandDriverLink(pool, errandWibPool, req?.driver?.id);
+}
+
+function resolveAssignedErrandDriverIdForLink(row, link) {
+  const assigned = orderAssignedDriverId(row);
+  if (!assigned) return null;
+  return orderAssignedToDriverCandidates(row, link?.candidateDriverIds || []) ? assigned : null;
 }
 
 async function getDriverSettingsMap() {
@@ -287,21 +302,36 @@ async function updateErrandOrderPaymentFields(errandPool, orderId, payment_type,
 router.post('/GetErrandOrders', validateApiKey, resolveDriver, async (req, res) => {
   const date = req.body.date || todayStr();
   const includeUnassigned = truthyIncludeUnassigned(req.body.include_unassigned);
-  const driverId = req.driver.id;
+  const link = await resolveReqErrandDriverLink(req);
+  const candidateDriverIds = link.candidateDriverIds || [];
   try {
     const flag = includeUnassigned ? 1 : 0;
-    const [eRows] = await errandWibPool.query(
-      `SELECT * FROM st_ordernew
-       WHERE DATE(COALESCE(delivery_date, created_at, date_created)) = ?
-         AND (
-           driver_id = ?
-           OR (? = 1 AND (driver_id IS NULL OR driver_id = 0))
-         )
-         ${ST_ORDERNEW_EXCLUDE_ADMIN_DELETED_SQL}
-       ORDER BY order_id DESC
-       LIMIT 200`,
-      [date, driverId, flag]
-    );
+    let eRows;
+    if (candidateDriverIds.length) {
+      const ph = candidateDriverIds.map(() => '?').join(',');
+      [eRows] = await errandWibPool.query(
+        `SELECT * FROM st_ordernew
+         WHERE DATE(COALESCE(delivery_date, created_at, date_created)) = ?
+           AND (
+             driver_id IN (${ph})
+             OR (? = 1 AND (driver_id IS NULL OR driver_id = 0))
+           )
+           ${ST_ORDERNEW_EXCLUDE_ADMIN_DELETED_SQL}
+         ORDER BY order_id DESC
+         LIMIT 200`,
+        [date, ...candidateDriverIds, flag]
+      );
+    } else {
+      [eRows] = await errandWibPool.query(
+        `SELECT * FROM st_ordernew
+         WHERE DATE(COALESCE(delivery_date, created_at, date_created)) = ?
+           AND (? = 1 AND (driver_id IS NULL OR driver_id = 0))
+           ${ST_ORDERNEW_EXCLUDE_ADMIN_DELETED_SQL}
+         ORDER BY order_id DESC
+         LIMIT 200`,
+        [date, flag]
+      );
+    }
     const list = eRows || [];
     const driverIds = [
       ...new Set(list.map((r) => r.driver_id).filter((id) => id != null && String(id).trim() !== '')),
@@ -354,12 +384,14 @@ router.post('/GetErrandOrders', validateApiKey, resolveDriver, async (req, res) 
           teamNameById
         )
       )
-      .filter((row) =>
-        shouldIncludeActiveTaskListRow(row, {
-          driverId,
-          includeUnassigned,
-        })
-      );
+      .filter((row) => {
+        const rowDriverId = orderDriverId(row);
+        if (!includeUnassigned) {
+          if (rowDriverId == null || rowDriverId === 0) return false;
+          if (candidateDriverIds.length && !candidateDriverIds.includes(rowDriverId)) return false;
+        }
+        return shouldIncludeActiveTaskListRow(row, { includeUnassigned });
+      });
     for (const row of data) {
       if (row.order_id != null) {
         const oid = parseInt(String(row.order_id), 10);
@@ -385,13 +417,13 @@ router.post('/GetErrandOrders', validateApiKey, resolveDriver, async (req, res) 
 router.post('/GetErrandOrderDetails', validateApiKey, resolveDriver, async (req, res) => {
   const orderId = parseErrandOrderId(req.body);
   if (!orderId) return error(res, 'order_id required (or negative task_id for errand)');
-  const driverId = req.driver.id;
+  const link = await resolveReqErrandDriverLink(req);
   try {
     const row = await loadErrandOrderRow(orderId);
     if (!row) return error(res, 'Order not found');
     const assigned = orderDriverId(row);
     const unassigned = isUnassignedOrder(row);
-    if (!unassigned && assigned !== driverId) {
+    if (!unassigned && !orderAssignedToDriverCandidates(row, link.candidateDriverIds)) {
       return error(res, 'Order not available');
     }
     const details = await buildDetailPayloadForOrder(orderId);
@@ -413,21 +445,24 @@ async function handleAcceptErrandOrder(req, res) {
   }
   const orderId = parseErrandOrderId(req.body);
   if (!orderId) return error(res, 'order_id required');
-  const driverId = req.driver.id;
+  const link = await resolveReqErrandDriverLink(req);
+  if (!link.manganDriverId) {
+    return error(res, 'Your rider account is not linked to a legacy Mangan/Errand driver yet');
+  }
   try {
     let result;
     try {
       [result] = await errandWibPool.query(
         `UPDATE st_ordernew SET driver_id = ?, delivery_status = 'assigned', assigned_at = NOW(), date_modified = NOW()
          WHERE order_id = ? AND (driver_id IS NULL OR driver_id = 0)`,
-        [driverId, orderId]
+        [link.manganDriverId, orderId]
       );
     } catch (e) {
       if (e.code === 'ER_BAD_FIELD_ERROR') {
         [result] = await errandWibPool.query(
           `UPDATE st_ordernew SET driver_id = ?, delivery_status = 'assigned', date_modified = NOW()
            WHERE order_id = ? AND (driver_id IS NULL OR driver_id = 0)`,
-          [driverId, orderId]
+          [link.manganDriverId, orderId]
         );
       } else {
         throw e;
@@ -500,28 +535,29 @@ async function handleChangeErrandOrderStatus(req, res) {
     driverReasonForHistory = vr.reason;
   }
   const sNorm = effectiveRaw.trim().toLowerCase();
-  const driverId = req.driver.id;
+  const link = await resolveReqErrandDriverLink(req);
   const latRaw = latitude ?? lat;
   const lngRaw = longitude ?? lng;
   try {
     const row = await loadErrandOrderRow(orderId);
     if (!row) return error(res, 'Order not found');
+    const assignedDriverId = resolveAssignedErrandDriverIdForLink(row, link);
 
     if (canonical === 'unassigned') {
-      if (orderDriverId(row) !== driverId) {
+      if (!assignedDriverId) {
         return error(res, 'Order not assigned to you');
       }
       let result;
       try {
         [result] = await errandWibPool.query(
           `UPDATE st_ordernew SET driver_id = NULL, delivery_status = ?, date_modified = NOW() WHERE order_id = ? AND driver_id = ?`,
-          [canonical, orderId, driverId]
+          [canonical, orderId, assignedDriverId]
         );
       } catch (e) {
         if (e.code === 'ER_BAD_FIELD_ERROR') {
           [result] = await errandWibPool.query(
             `UPDATE st_ordernew SET driver_id = 0, delivery_status = ? WHERE order_id = ? AND driver_id = ?`,
-            [canonical, orderId, driverId]
+            [canonical, orderId, assignedDriverId]
           );
         } else {
           throw e;
@@ -541,7 +577,7 @@ async function handleChangeErrandOrderStatus(req, res) {
       return success(res, null);
     }
 
-    if (orderDriverId(row) !== driverId) {
+    if (!assignedDriverId) {
       return error(res, 'Order not assigned to you');
     }
 
@@ -559,13 +595,13 @@ async function handleChangeErrandOrderStatus(req, res) {
     try {
       [result] = await errandWibPool.query(
         `UPDATE st_ordernew SET delivery_status = ?, date_modified = NOW() WHERE order_id = ? AND driver_id = ?`,
-        [canonical, orderId, driverId]
+        [canonical, orderId, assignedDriverId]
       );
     } catch (e) {
       if (e.code === 'ER_BAD_FIELD_ERROR') {
         [result] = await errandWibPool.query(
           `UPDATE st_ordernew SET delivery_status = ? WHERE order_id = ? AND driver_id = ?`,
-          [canonical, orderId, driverId]
+          [canonical, orderId, assignedDriverId]
         );
       } else {
         throw e;
@@ -646,7 +682,7 @@ router.post(
       return error(res, 'Invalid proof_type; use receipt or delivery');
     }
     const proofKind = parsedPt ?? defaultProofTypeWhenOmitted();
-    const driverId = req.driver.id;
+    const link = await resolveReqErrandDriverLink(req);
     try {
       const row = await loadErrandOrderRow(orderId);
       if (!row) {
@@ -655,7 +691,8 @@ router.post(
         } catch (_) {}
         return error(res, 'Order not found');
       }
-      if (orderDriverId(row) !== driverId) {
+      const assignedDriverId = resolveAssignedErrandDriverIdForLink(row, link);
+      if (!assignedDriverId) {
         try {
           fs.unlinkSync(req.file.path);
         } catch (_) {}
@@ -673,7 +710,7 @@ router.post(
       fs.renameSync(req.file.path, newPath);
       let insertId;
       try {
-        insertId = await insertErrandProofRow(errandWibPool, orderId, driverId, newName, proofKind);
+        insertId = await insertErrandProofRow(errandWibPool, orderId, assignedDriverId, newName, proofKind);
       } catch (e) {
         try {
           fs.unlinkSync(newPath);
@@ -730,15 +767,16 @@ router.post('/DeleteErrandOrderProof', validateApiKey, resolveDriver, async (req
     return error(res, 'Invalid proof_type; use receipt or delivery');
   }
   if (parsedPt == null) return error(res, 'proof_type required (receipt or delivery)');
-  const driverId = req.driver.id;
+  const link = await resolveReqErrandDriverLink(req);
   try {
     const row = await loadErrandOrderRow(orderId);
     if (!row) return error(res, 'Order not found');
-    if (orderDriverId(row) !== driverId) return error(res, 'Order not assigned to you');
+    const assignedDriverId = resolveAssignedErrandDriverIdForLink(row, link);
+    if (!assignedDriverId) return error(res, 'Order not assigned to you');
     if (!errandOrderAllowsProofUpload(row)) {
       return error(res, 'Proof cannot be removed or replaced for this order status');
     }
-    const removed = await deleteErrandProofSlot(errandWibPool, orderId, driverId, parsedPt);
+    const removed = await deleteErrandProofSlot(errandWibPool, orderId, assignedDriverId, parsedPt);
     unlinkErrandProofFiles(errandProofDir, removed);
     return success(res, { ok: true, order_id: orderId, errand_order_id: orderId, proof_type: parsedPt });
   } catch (e) {

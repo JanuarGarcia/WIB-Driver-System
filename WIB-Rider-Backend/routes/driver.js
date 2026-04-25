@@ -48,6 +48,7 @@ const { updateMtOrderStatusIfDeliveryComplete } = require('../lib/mtOrderStatusS
 const { shouldIncludeActiveTaskListRow } = require('../lib/riderTaskContract');
 const { buildErrandOrderDetailPayloadForDriver } = require('../lib/errandOrders');
 const { fetchErrandProofsForOrder } = require('../lib/errandProof');
+const { resolveErrandDriverLink, orderAssignedToDriverCandidates } = require('../lib/errandDriverLink');
 const {
   createDriverSignup,
   findDriverSignupConflict,
@@ -1788,13 +1789,14 @@ async function tryErrandTaskDetailsForGetTaskDetails(errandPool, mainPool, order
   if (!errandPool || !Number.isFinite(oid) || oid <= 0) return null;
   const [[row]] = await errandPool.query('SELECT driver_id FROM st_ordernew WHERE order_id = ? LIMIT 1', [oid]);
   if (!row) return null;
+  const link = await resolveErrandDriverLink(mainPool, errandPool, driverId);
   let assigned = null;
   if (row.driver_id != null && String(row.driver_id).trim() !== '') {
     const n = parseInt(String(row.driver_id), 10);
     assigned = Number.isFinite(n) ? n : null;
   }
   const unassigned = assigned == null || assigned === 0;
-  if (!unassigned && assigned !== driverId) return 'forbidden';
+  if (!unassigned && !orderAssignedToDriverCandidates(row, link.candidateDriverIds)) return 'forbidden';
   const details = await buildErrandOrderDetailPayloadForDriver(errandPool, mainPool, oid);
   if (!details) return null;
   const proofs = await fetchErrandProofsForOrder(errandPool, oid);

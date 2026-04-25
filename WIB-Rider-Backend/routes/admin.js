@@ -48,6 +48,7 @@ const {
   attachActorToPayload,
 } = require('../lib/dashboardRiderNotify');
 const { insertMtOrderHistoryRow } = require('../lib/mtOrderHistoryInsert');
+const { resolveErrandDriverLink, resolveErrandDriverLinks } = require('../lib/errandDriverLink');
 const { notifyDashboardAfterMtTaskHistoryRow } = require('../lib/mtTaskStatusDashboardNotify');
 const {
   normalizeTimelineNotifyKey,
@@ -1482,12 +1483,25 @@ async function buildAgentDashboardDetails(transactionDate, trackingType, filters
   /* Same driver_id on mt_driver can have Mangan rows in ErrandWib st_ordernew — add to food task count. */
   if (errandWibPool && mtDriverIds.length > 0) {
     try {
-      const ecMt = await fetchErrandOrderTaskCountsByDriver(errandWibPool, mtDriverIds, dateOnly);
-      for (const [k, v] of Object.entries(ecMt)) {
-        const id = Number(k);
-        const add = Number(v) || 0;
-        if (!Number.isFinite(id) || id <= 0) continue;
-        taskCountByDriver[id] = (Number(taskCountByDriver[id]) || 0) + add;
+      const linksByWibId = await resolveErrandDriverLinks(pool, errandWibPool, mtDriverIds);
+      const errandCandidateIds = [
+        ...new Set(
+          [...linksByWibId.values()]
+            .flatMap((link) => link.candidateDriverIds || [])
+            .filter((id) => Number.isFinite(Number(id)) && Number(id) > 0)
+            .map((id) => Number(id))
+        ),
+      ];
+      const ecMt = await fetchErrandOrderTaskCountsByDriver(errandWibPool, errandCandidateIds, dateOnly);
+      for (const driverId of mtDriverIds) {
+        const link = linksByWibId.get(Number(driverId));
+        const add = (link?.candidateDriverIds || []).reduce(
+          (sum, candidateId) => sum + (Number(ecMt[Number(candidateId)]) || 0),
+          0
+        );
+        if (add > 0) {
+          taskCountByDriver[driverId] = (Number(taskCountByDriver[driverId]) || 0) + add;
+        }
       }
     } catch (_) {}
   }
@@ -1612,12 +1626,25 @@ router.get('/driver-queue', async (req, res) => {
       } catch (_) {}
       if (errandWibPool) {
         try {
-          const ec = await fetchErrandOrderTaskCountsByDriver(errandWibPool, driverIds, dateOnly);
-          for (const [k, v] of Object.entries(ec)) {
-            const id = Number(k);
-            const add = Number(v) || 0;
-            if (!Number.isFinite(id) || id <= 0) continue;
-            taskCountByDriver[id] = (Number(taskCountByDriver[id]) || 0) + add;
+          const linksByWibId = await resolveErrandDriverLinks(pool, errandWibPool, driverIds);
+          const errandCandidateIds = [
+            ...new Set(
+              [...linksByWibId.values()]
+                .flatMap((link) => link.candidateDriverIds || [])
+                .filter((id) => Number.isFinite(Number(id)) && Number(id) > 0)
+                .map((id) => Number(id))
+            ),
+          ];
+          const ec = await fetchErrandOrderTaskCountsByDriver(errandWibPool, errandCandidateIds, dateOnly);
+          for (const driverId of driverIds) {
+            const link = linksByWibId.get(Number(driverId));
+            const add = (link?.candidateDriverIds || []).reduce(
+              (sum, candidateId) => sum + (Number(ec[Number(candidateId)]) || 0),
+              0
+            );
+            if (add > 0) {
+              taskCountByDriver[driverId] = (Number(taskCountByDriver[driverId]) || 0) + add;
+            }
           }
         } catch (_) {}
       }
@@ -3997,6 +4024,13 @@ router.put('/errand-orders/:orderId/assign', express.json(), async (req, res) =>
   if (!Number.isFinite(orderId)) return res.status(400).json({ error: 'Invalid order id' });
   if (!Number.isFinite(driverId)) return res.status(400).json({ error: 'driver_id required' });
   try {
+    const link = await resolveErrandDriverLink(pool, errandWibPool, driverId);
+    if (!link.manganDriverId) {
+      return res.status(422).json({
+        error:
+          'Selected rider is not linked to a legacy Mangan/Errand driver yet. Link mt_driver to the matching st_driver first.',
+      });
+    }
     let prevDriverId = null;
     try {
       const [[prevRow]] = await errandWibPool.query('SELECT driver_id FROM st_ordernew WHERE order_id = ? LIMIT 1', [
@@ -4011,13 +4045,13 @@ router.put('/errand-orders/:orderId/assign', express.json(), async (req, res) =>
     try {
       [result] = await errandWibPool.query(
         `UPDATE st_ordernew SET driver_id = ?, delivery_status = 'assigned', assigned_at = NOW(), date_modified = NOW() WHERE order_id = ?`,
-        [driverId, orderId]
+        [link.manganDriverId, orderId]
       );
     } catch (e) {
       if (e.code === 'ER_BAD_FIELD_ERROR') {
         [result] = await errandWibPool.query(
           `UPDATE st_ordernew SET driver_id = ?, delivery_status = 'assigned', date_modified = NOW() WHERE order_id = ?`,
-          [driverId, orderId]
+          [link.manganDriverId, orderId]
         );
       } else {
         throw e;
