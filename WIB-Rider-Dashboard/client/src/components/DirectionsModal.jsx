@@ -145,7 +145,7 @@ function parseGoogleMapStyles(styleJson) {
 
 const GMAP_CENTER = { lat: 16.4023, lng: 120.596 };
 
-function GoogleDirectionsBody({ apiKey, googleMapStyle, origin, destination, destinationCoords, onParsed, onError }) {
+function GoogleDirectionsBody({ apiKey, googleMapStyle, origin, originCoords, destination, destinationCoords, onParsed, onError }) {
   const [directionsResult, setDirectionsResult] = useState(null);
   const handledRef = useRef(false);
   const mapOptions = useMemo(() => {
@@ -156,15 +156,21 @@ function GoogleDirectionsBody({ apiKey, googleMapStyle, origin, destination, des
   }, [googleMapStyle]);
 
   const destForApi = useMemo(() => {
-    const d = (destination || '').trim();
-    if (d) return d;
     if (destinationCoords != null && Number.isFinite(Number(destinationCoords.lat)) && Number.isFinite(Number(destinationCoords.lng))) {
       return { lat: Number(destinationCoords.lat), lng: Number(destinationCoords.lng) };
     }
+    const d = (destination || '').trim();
+    if (d) return d;
     return null;
   }, [destination, destinationCoords]);
 
-  const originForApi = (origin || '').trim();
+  const originForApi = useMemo(() => {
+    if (originCoords != null && Number.isFinite(Number(originCoords.lat)) && Number.isFinite(Number(originCoords.lng))) {
+      return { lat: Number(originCoords.lat), lng: Number(originCoords.lng) };
+    }
+    const text = (origin || '').trim();
+    return text || null;
+  }, [origin, originCoords]);
 
   const dirOptions = useMemo(
     () => ({
@@ -234,6 +240,7 @@ export default function DirectionsModal({
   onClose,
   taskId,
   origin,
+  originCoords,
   destination,
   destinationCoords,
   mapProvider,
@@ -364,10 +371,11 @@ export default function DirectionsModal({
 
         {useGoogleRouting && !error && (
           <GoogleDirectionsBody
-            key={`${origin}|${destination}|${destinationCoords?.lat}|${destinationCoords?.lng}`}
+            key={`${origin}|${originCoords?.lat}|${originCoords?.lng}|${destination}|${destinationCoords?.lat}|${destinationCoords?.lng}`}
             apiKey={gKey}
             googleMapStyle={googleMapStyle}
             origin={origin}
+            originCoords={originCoords}
             destination={destination}
             destinationCoords={destinationCoords}
             onParsed={handleGoogleParsed}

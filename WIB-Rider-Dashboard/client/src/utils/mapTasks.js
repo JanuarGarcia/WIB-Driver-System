@@ -97,6 +97,70 @@ export function taskDropoffLatLng(t, detailPayload) {
   return { lat, lng };
 }
 
+function latLngLiteral(coords) {
+  if (!coords || typeof coords !== 'object') return null;
+  const lat = Number(coords.lat);
+  const lng = Number(coords.lng);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  return `${lat},${lng}`;
+}
+
+function pickupLatLngFromMerchant(detailPayload) {
+  const merchant = detailPayload?.merchant;
+  if (!merchant || typeof merchant !== 'object') return null;
+  const lat = merchant.latitude != null ? Number(merchant.latitude) : NaN;
+  const lngRaw =
+    merchant.longitude != null
+      ? merchant.longitude
+      : merchant.lontitude != null
+        ? merchant.lontitude
+        : merchant.google_lng;
+  const lng = lngRaw != null ? Number(lngRaw) : NaN;
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  return { lat, lng };
+}
+
+export function taskPickupLatLng(t, detailPayload) {
+  if (detailPayload && typeof detailPayload === 'object') {
+    const fromMerchant = pickupLatLngFromMerchant(detailPayload);
+    if (fromMerchant) return fromMerchant;
+  }
+  if (!t || typeof t !== 'object') return null;
+  const pairs = [
+    ['pickup_lat', 'pickup_lng'],
+    ['pickup_latitude', 'pickup_longitude'],
+    ['merchant_lat', 'merchant_lng'],
+    ['merchant_latitude', 'merchant_longitude'],
+    ['drop_lat', 'drop_lng'],
+  ];
+  for (const [la, ln] of pairs) {
+    if (t[la] == null || t[ln] == null) continue;
+    const lat = Number(t[la]);
+    const lng = Number(t[ln]);
+    if (Number.isFinite(lat) && Number.isFinite(lng)) return { lat, lng };
+  }
+  return null;
+}
+
+export function buildGoogleDirectionsUrlForTask(t, detailPayload) {
+  if (!t || typeof t !== 'object') return null;
+  const params = new URLSearchParams({ api: '1' });
+  const destinationCoords = taskDropoffLatLng(t, detailPayload);
+  const destinationText = String(t.delivery_address ?? detailPayload?.formatted_address ?? '').trim();
+  const destinationLiteral = latLngLiteral(destinationCoords);
+  if (destinationLiteral) params.set('destination', destinationLiteral);
+  else if (destinationText) params.set('destination', destinationText);
+  else return null;
+
+  const originCoords = taskPickupLatLng(t, detailPayload);
+  const originText = String(t.pickup_address ?? t.drop_address ?? t.merchant_address ?? '').trim();
+  const originLiteral = latLngLiteral(originCoords);
+  if (originLiteral) params.set('origin', originLiteral);
+  else if (originText) params.set('origin', originText);
+
+  return `https://www.google.com/maps/dir/?${params.toString()}`;
+}
+
 /** Match agent-panel driver row to `drivers/locations` entry (`driver_id`, `lat`, `lng`). */
 export function riderGpsFromLocations(driver, locations) {
   if (!driver || typeof driver !== 'object' || !Array.isArray(locations)) return null;

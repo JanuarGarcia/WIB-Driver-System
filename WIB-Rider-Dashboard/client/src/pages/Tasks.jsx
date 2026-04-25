@@ -8,6 +8,7 @@ import { useTableSort } from '../hooks/useTableSort';
 import TablePaginationControls from '../components/TablePaginationControls';
 import TableSortControls from '../components/TableSortControls';
 import TaskDetailsModal from '../components/TaskDetailsModal';
+import { buildGoogleDirectionsUrlForTask } from '../utils/mapTasks';
 import TaskDetailsModalErrorBoundary from '../components/TaskDetailsModalErrorBoundary';
 import { useTheme } from '../context/ThemeContext';
 
@@ -529,17 +530,21 @@ export default function Tasks() {
                           </button>
                         );
                       })()}
-                      {(t.delivery_address || '').trim() && (
-                        <a
-                          href={`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent((t.delivery_address || '').trim())}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="btn btn-sm"
-                          title="Open directions"
-                        >
-                          Directions
-                        </a>
-                      )}
+                      {(() => {
+                        const directionsUrl = buildGoogleDirectionsUrlForTask(t, null);
+                        if (!directionsUrl) return null;
+                        return (
+                          <a
+                            href={directionsUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="btn btn-sm"
+                            title="Open directions"
+                          >
+                            Directions
+                          </a>
+                        );
+                      })()}
                     </div>
                   </td>
                 </tr>

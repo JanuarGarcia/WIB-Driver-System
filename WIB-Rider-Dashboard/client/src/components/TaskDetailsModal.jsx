@@ -15,7 +15,7 @@ import LocationPreviewModal from './LocationPreviewModal';
 import DirectionsModal from './DirectionsModal';
 import CustomerNotifyButton from './CustomerNotifyButton';
 import { CountryCodeDropdown, COUNTRY_CODES } from './NewTaskModal';
-import { taskDropoffLatLng } from '../utils/mapTasks';
+import { taskDropoffLatLng, taskPickupLatLng, buildGoogleDirectionsUrlForTask } from '../utils/mapTasks';
 import { markNotificationToastSuppressedFromModalHistoryRow } from '../utils/notificationToastDedupe';
 import { listTaskSnapshotMatchesId } from '../utils/taskDetailsSnapshot';
 
@@ -1169,26 +1169,20 @@ export default function TaskDetailsModal({
     const originFromMerchant =
       merchant && [merchant.street, merchant.city, merchant.state, merchant.post_code].filter(Boolean).join(', ');
     const origin = originFromTask || String(originFromMerchant || '').trim();
-    const destinationCoords =
-      t.task_lat != null && t.task_lng != null ? { lat: Number(t.task_lat), lng: Number(t.task_lng) } : null;
+    const destinationCoords = taskDropoffLatLng(t, data);
+    const originCoords = taskPickupLatLng(t, data);
 
     if (!destination && !destinationCoords) {
       window.alert('This task has no delivery address or coordinates to route to.');
       return;
     }
 
-    const pickup = String(t.pickup_address ?? t.drop_address ?? t.merchant_address ?? '').trim();
-    const dest = String(t.delivery_address ?? '').trim();
-    let externalMapsUrl = null;
-    if (dest) {
-      const params = new URLSearchParams({ api: '1', destination: dest });
-      if (pickup) params.set('origin', pickup);
-      externalMapsUrl = `https://www.google.com/maps/dir/?${params.toString()}`;
-    }
+    const externalMapsUrl = buildGoogleDirectionsUrlForTask(t, data);
 
     setDirectionsContext({
       taskId: t.task_id ?? taskId,
       origin,
+      originCoords,
       destination,
       destinationCoords,
       externalMapsUrl,
@@ -1423,12 +1417,7 @@ export default function TaskDetailsModal({
   const directionsUrl = (() => {
     const t = data?.task ?? data;
     if (!t) return null;
-    const pickup = String(t.pickup_address ?? t.drop_address ?? t.merchant_address ?? '').trim();
-    const dest = String(t.delivery_address ?? '').trim();
-    if (!dest) return null;
-    const params = new URLSearchParams({ api: '1', destination: dest });
-    if (pickup) params.set('origin', pickup);
-    return `https://www.google.com/maps/dir/?${params.toString()}`;
+    return buildGoogleDirectionsUrlForTask(t, data);
   })();
 
   const task = data && (data.task ?? data);
@@ -2674,6 +2663,7 @@ export default function TaskDetailsModal({
           onClose={() => setDirectionsContext(null)}
           taskId={directionsContext.taskId}
           origin={directionsContext.origin}
+          originCoords={directionsContext.originCoords}
           destination={directionsContext.destination}
           destinationCoords={directionsContext.destinationCoords}
           mapProvider={directionsMapSettings.mapProvider === 'google' ? 'google' : 'mapbox'}
