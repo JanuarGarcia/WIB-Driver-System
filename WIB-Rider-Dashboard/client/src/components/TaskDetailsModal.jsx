@@ -2035,7 +2035,7 @@ export default function TaskDetailsModal({
                       return (
                         <div className="task-detail-section order-ref-ordered-section">
                           <div className="order-ref-section-heading">Ordered items</div>
-                          <div className="order-ref-card order-ref-card--panel" role="region" aria-label="Ordered items">
+                          <div className="order-ref-card order-ref-card--panel order-ref-card--ordered-panel" role="region" aria-label="Ordered items">
                             {categoryBuckets.map(({ key, label, items }, bucketIdx) => (
                               <div
                                 key={key}

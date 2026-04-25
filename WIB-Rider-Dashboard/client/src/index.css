@@ -8984,6 +8984,9 @@ tr:hover { background: var(--bg-hover) !important; }
 .order-ref-card--panel {
   padding: 0.7rem 1rem 0.5rem;
 }
+.order-ref-card--ordered-panel {
+  padding-top: 0.8rem;
+}
 [data-theme="dark"] .order-ref-card {
   background: var(--bg-surface-1, rgba(0, 0, 0, 0.22));
   border-color: var(--border-medium);
