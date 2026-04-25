@@ -2253,6 +2253,18 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
 .tasks-listing .table-actions .btn {
   min-width: 0;
 }
+.drivers-listing .table-actions .btn:not(.btn-primary):not(.btn-success):not(.btn-danger),
+.tasks-listing .table-actions .btn:not(.btn-primary):not(.btn-success):not(.btn-danger) {
+  background: transparent;
+  border: 1px solid var(--border-soft);
+  color: var(--text-muted);
+}
+.drivers-listing .table-actions .btn:not(.btn-primary):not(.btn-success):not(.btn-danger):hover,
+.tasks-listing .table-actions .btn:not(.btn-primary):not(.btn-success):not(.btn-danger):hover {
+  background: var(--bg-page);
+  border-color: var(--border-medium);
+  color: var(--text-primary);
+}
 .drivers-listing .table-actions .btn-success,
 .tasks-listing .table-actions .btn-success {
   background: var(--color-success-bg);
@@ -2276,6 +2288,18 @@ h1, h2, h3, h4, h5, h6 { font-weight: 400; }
   background: var(--color-danger);
   color: #fff;
   border-color: var(--color-danger);
+}
+.drivers-listing .table-actions .btn-primary,
+.tasks-listing .table-actions .btn-primary {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: #fff;
+}
+.drivers-listing .table-actions .btn-primary:hover,
+.tasks-listing .table-actions .btn-primary:hover {
+  background: var(--color-primary-hover);
+  border-color: var(--color-primary-hover);
+  color: #fff;
 }
 .drivers-listing .table-actions .btn-outline-view,
 .tasks-listing .table-actions .btn-outline-view {
