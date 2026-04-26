@@ -29,6 +29,7 @@ function milestoneDedupeKeyForErrand(orderId, category) {
 /** Maps ErrandWib canonical delivery_status → timeline notify category (subset). */
 function errandCanonicalToMilestoneCategory(canonical) {
   const c = String(canonical || '').trim().toLowerCase();
+  if (c === 'assigned') return 'assigned';
   if (c === 'acknowledged') return 'accepted';
   if (c === 'successful' || c === 'delivered' || c === 'completed') return 'successful';
   return null;

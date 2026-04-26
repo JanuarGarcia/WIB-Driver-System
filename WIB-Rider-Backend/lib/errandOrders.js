@@ -11,6 +11,7 @@ const {
 const {
   deriveErrandDriverTaskStatus,
   mapDeliveryToCanonicalTaskStatus,
+  normalizeErrandStatusForApp,
 } = require('./errandDriverStatus');
 const { readContractDeliveryAsap } = require('./riderTaskContract');
 const { resolveErrandDriverLink, resolveErrandDriverLinks } = require('./errandDriverLink');
@@ -1724,6 +1725,27 @@ function mapErrandHistoryRowForTimeline(row, stOrderRow = null) {
   return out;
 }
 
+function normalizeErrandHistoryRowsForRiderApp(rows) {
+  if (!Array.isArray(rows)) return [];
+  return rows.map((row) => {
+    if (!row || typeof row !== 'object') return row;
+    const rawStatus =
+      row.status_raw != null && String(row.status_raw).trim() !== ''
+        ? String(row.status_raw).trim()
+        : row.status != null && String(row.status).trim() !== ''
+          ? String(row.status).trim()
+          : null;
+    const normalized = normalizeErrandStatusForApp(rawStatus, { poolToAssigned: true });
+    if (!normalized) return row;
+    return {
+      ...row,
+      status: normalized,
+      status_raw: normalized,
+      legacy_status_raw: rawStatus,
+    };
+  });
+}
+
 /**
  * Activity timeline rows from `st_ordernew_history` (ErrandWib).
  * @param {import('mysql2/promise').Pool} errandPool
@@ -1993,7 +2015,18 @@ function buildErrandTaskDetailPayload(
     normalizeDriverPaymentStatus(row) ??
     (row.payment_status != null && String(row.payment_status).trim() !== '' ? String(row.payment_status).trim() : null);
 
+  const historyList = Array.isArray(orderHistoryRows) ? orderHistoryRows : [];
   const pay = computeStOrdernewPaymentFieldsForDriver(row, clientAddressRow);
+  const riderVisibleDeliveryStatus =
+    options && options.forRiderApp === true ? status : row.delivery_status;
+  const riderVisibleHistoryStatus =
+    options && options.forRiderApp === true
+      ? normalizeErrandStatusForApp(latestHistoryStatus, { poolToAssigned: true }) || latestHistoryStatus
+      : latestHistoryStatus;
+  const historyPayload =
+    options && options.forRiderApp === true
+      ? normalizeErrandHistoryRowsForRiderApp(historyList)
+      : historyList;
 
   const task = {
     task_source: 'errand',
@@ -2003,8 +2036,16 @@ function buildErrandTaskDetailPayload(
     order_uuid: row.order_uuid,
     status,
     status_raw,
-    delivery_status: row.delivery_status,
-    errand_history_status: latestHistoryStatus != null && String(latestHistoryStatus).trim() !== '' ? String(latestHistoryStatus).trim() : null,
+    delivery_status: riderVisibleDeliveryStatus,
+    delivery_status_raw: row.delivery_status != null ? String(row.delivery_status) : null,
+    errand_history_status:
+      riderVisibleHistoryStatus != null && String(riderVisibleHistoryStatus).trim() !== ''
+        ? String(riderVisibleHistoryStatus).trim()
+        : null,
+    errand_history_status_raw:
+      latestHistoryStatus != null && String(latestHistoryStatus).trim() !== ''
+        ? String(latestHistoryStatus).trim()
+        : null,
     task_description: desc,
     delivery_address: addressLine,
     formatted_address: shortFormatted || clientAddressFormattedFull(addr) || clientAddrLine || dropAddr || null,
@@ -2076,8 +2117,6 @@ function buildErrandTaskDetailPayload(
       }
     : null;
 
-  const historyList = Array.isArray(orderHistoryRows) ? orderHistoryRows : [];
-
   const rawLines =
     Array.isArray(orderDetails) && ERRAND_ORDER_LINES_RAW in orderDetails ? orderDetails[ERRAND_ORDER_LINES_RAW] : null;
   const histHints =
@@ -2107,6 +2146,15 @@ function buildErrandTaskDetailPayload(
       if (Object.prototype.hasOwnProperty.call(errandOrderPayload, k)) {
         delete errandOrderPayload[k];
       }
+    }
+    if (Object.prototype.hasOwnProperty.call(errandOrderPayload, 'delivery_status')) {
+      const rawDeliveryStatus =
+        errandOrderPayload.delivery_status != null && String(errandOrderPayload.delivery_status).trim() !== ''
+          ? String(errandOrderPayload.delivery_status).trim()
+          : null;
+      errandOrderPayload.delivery_status_raw = rawDeliveryStatus;
+      errandOrderPayload.delivery_status =
+        normalizeErrandStatusForApp(rawDeliveryStatus, { poolToAssigned: true }) || status;
     }
   }
 
@@ -2150,11 +2198,11 @@ function buildErrandTaskDetailPayload(
     orderDetails: lines,
     task_photos: [],
     proof_images: [],
-    order_history: historyList,
-    orderHistory: historyList,
-    mt_order_history: historyList,
-    order_status_list: historyList,
-    order_status_history: historyList,
+    order_history: historyPayload,
+    orderHistory: historyPayload,
+    mt_order_history: historyPayload,
+    order_status_list: historyPayload,
+    order_status_history: historyPayload,
     errand_order: errandOrderPayload,
     client: cl
       ? {

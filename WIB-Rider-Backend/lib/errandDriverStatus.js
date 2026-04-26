@@ -27,13 +27,140 @@ const RANK = {
   acknowledged: 20,
   started: 30,
   inprogress: 40,
-  verification: 40,
-  pending_verification: 40,
+  verification: 50,
+  pending_verification: 60,
   successful: 100,
   failed: 100,
   declined: 100,
   cancelled: 100,
 };
+
+function statusSnake(raw) {
+  return String(raw || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, '_');
+}
+
+function statusCompact(raw) {
+  return statusSnake(raw).replace(/_/g, '');
+}
+
+const POOL_STATUS_ALIASES = new Set([
+  'unassigned',
+  'pending',
+  'available',
+  'open',
+  'pendingaccept',
+  'pool',
+]);
+
+const ACKNOWLEDGED_STATUS_ALIASES = new Set([
+  'accepted',
+  'readyforpickup',
+  'pendingpickup',
+  'forpickup',
+  'awaitingpickup',
+  'waitingfororder',
+  'onthewayvendor',
+  'onthewayrestaurant',
+]);
+
+const STARTED_STATUS_ALIASES = new Set([
+  'started',
+  'arrivedatvendor',
+  'arrivedvendor',
+  'arrivedatrestaurant',
+  'arrivedrestaurant',
+]);
+
+const INPROGRESS_STATUS_ALIASES = new Set([
+  'inprogress',
+  'pickup',
+  'pickedup',
+  'orderpickup',
+  'outfordelivery',
+  'onthewaycustomer',
+  'onthewaytocustomer',
+  'enroutecustomer',
+  'deliveryonitsway',
+]);
+
+const PENDING_VERIFICATION_STATUS_ALIASES = new Set([
+  'pendingverification',
+  'arrivedatcustomer',
+  'arrivedcustomer',
+  'arrivedatdestination',
+  'reacheddestination',
+  'reachedthedestination',
+  'deliveredpendingverification',
+]);
+
+const SUCCESS_STATUS_ALIASES = new Set([
+  'successful',
+  'completed',
+  'complete',
+  'done',
+  'delivered',
+  'orderdelivered',
+  'deliveredtocustomer',
+]);
+
+const FAILED_STATUS_ALIASES = new Set([
+  'failed',
+  'deliveryfailed',
+  'faileddelivery',
+  'failedtodeliver',
+]);
+
+const DECLINED_STATUS_ALIASES = new Set([
+  'declined',
+  'reject',
+  'rejected',
+]);
+
+const CANCELLED_STATUS_ALIASES = new Set([
+  'cancelled',
+  'canceled',
+  'cancelledbycustomer',
+  'canceledbycustomer',
+  'cancelledbyadmin',
+  'canceledbyadmin',
+]);
+
+/**
+ * Normalize legacy/raw Mangan wording to the rider app canonical ladder.
+ * This is used for statuses coming back from ErrandWib / Mangan rows and history.
+ *
+ * @param {unknown} raw
+ * @param {{ poolToAssigned?: boolean }} [options]
+ * @returns {string|null}
+ */
+function normalizeErrandStatusForApp(raw, options = {}) {
+  if (raw == null || String(raw).trim() === '') return null;
+  const snake = statusSnake(raw);
+  const compact = statusCompact(raw);
+  const poolToAssigned = options.poolToAssigned !== false;
+
+  if (CANONICAL.has(snake)) {
+    if (snake === 'unassigned' && poolToAssigned) return 'assigned';
+    return snake;
+  }
+  if (snake === 'pending_verification' || compact === 'pendingverification') return 'pending_verification';
+  if (snake === 'ready_for_pickup') return 'acknowledged';
+  if (POOL_STATUS_ALIASES.has(compact)) return poolToAssigned ? 'assigned' : 'unassigned';
+  if (ACKNOWLEDGED_STATUS_ALIASES.has(compact)) return 'acknowledged';
+  if (STARTED_STATUS_ALIASES.has(compact)) return 'started';
+  if (INPROGRESS_STATUS_ALIASES.has(compact)) return 'inprogress';
+  if (snake === 'verification' || compact === 'verification') return 'verification';
+  if (PENDING_VERIFICATION_STATUS_ALIASES.has(compact)) return 'pending_verification';
+  if (SUCCESS_STATUS_ALIASES.has(compact)) return 'successful';
+  if (FAILED_STATUS_ALIASES.has(compact)) return 'failed';
+  if (DECLINED_STATUS_ALIASES.has(compact)) return 'declined';
+  if (CANCELLED_STATUS_ALIASES.has(compact)) return 'cancelled';
+
+  return null;
+}
 
 /**
  * Normalize app / alias input to canonical status_raw (lowercase snake for multi-word).
@@ -42,18 +169,23 @@ const RANK = {
  */
 function normalizeIncomingStatusRaw(raw) {
   if (raw == null || String(raw).trim() === '') return null;
-  let s = String(raw).trim().toLowerCase().replace(/\s+/g, '_');
-  const c = s.replace(/_/g, '');
+  const s = statusSnake(raw);
+  const c = statusCompact(raw);
 
   if (c === 'new') return 'assigned';
-  if (c === 'reject' || c === 'rejected') return 'declined';
-  if (c === 'accepted') return 'acknowledged';
-  if (c === 'inprogress' || c === 'in_progress') return 'inprogress';
-  if (c === 'completed' || c === 'delivered') return 'successful';
-  if (c === 'canceled') return 'cancelled';
-
   if (CANONICAL.has(s)) return s;
   if (s === 'pendingverification') return 'pending_verification';
+
+  if (POOL_STATUS_ALIASES.has(c)) return 'unassigned';
+  if (ACKNOWLEDGED_STATUS_ALIASES.has(c)) return 'acknowledged';
+  if (STARTED_STATUS_ALIASES.has(c)) return 'started';
+  if (INPROGRESS_STATUS_ALIASES.has(c)) return 'inprogress';
+  if (s === 'verification' || c === 'verification') return 'verification';
+  if (PENDING_VERIFICATION_STATUS_ALIASES.has(c)) return 'pending_verification';
+  if (SUCCESS_STATUS_ALIASES.has(c)) return 'successful';
+  if (FAILED_STATUS_ALIASES.has(c)) return 'failed';
+  if (DECLINED_STATUS_ALIASES.has(c)) return 'declined';
+  if (CANCELLED_STATUS_ALIASES.has(c)) return 'cancelled';
 
   return null;
 }
@@ -72,27 +204,11 @@ function isTerminal(s) {
  * @returns {string}
  */
 function mapDeliveryToCanonicalTaskStatus(deliveryStatus, orderStatus) {
-  if (deliveryStatus != null && String(deliveryStatus).trim() !== '') {
-    const norm = normalizeIncomingStatusRaw(deliveryStatus);
-    if (norm) return norm;
-    const ds = String(deliveryStatus)
-      .toLowerCase()
-      .replace(/\s+/g, '')
-      .replace(/_/g, '');
-    if (ds === 'delivered') return 'successful';
-    if (ds === 'pickedup' || ds === 'picked_up' || ds === 'ontheway' || ds === 'intransit' || ds === 'in_transit') {
-      return 'inprogress';
-    }
-    if (ds === 'pendingverification') return 'pending_verification';
-  }
-  const os = String(orderStatus || '')
-    .toLowerCase()
-    .replace(/\s+/g, '')
-    .replace(/_/g, '');
-  if (os === 'rejected' || os === 'cancelled' || os === 'canceled') return 'cancelled';
-  if (os === 'delivered') return 'successful';
-  if (!String(deliveryStatus || '').trim() && (os === 'new' || os === 'pending')) return 'unassigned';
-  return 'unassigned';
+  const fromDelivery = normalizeErrandStatusForApp(deliveryStatus, { poolToAssigned: true });
+  if (fromDelivery) return fromDelivery;
+  const fromOrder = normalizeErrandStatusForApp(orderStatus, { poolToAssigned: true });
+  if (fromOrder) return fromOrder;
+  return 'assigned';
 }
 
 /**
@@ -102,12 +218,12 @@ function mapDeliveryToCanonicalTaskStatus(deliveryStatus, orderStatus) {
  */
 function parseHistoryToCanonical(historyStatusRaw) {
   if (historyStatusRaw == null || String(historyStatusRaw).trim() === '') return null;
+  const direct = normalizeErrandStatusForApp(historyStatusRaw, { poolToAssigned: true });
+  if (direct) return direct;
+
   const h0 = String(historyStatusRaw).toLowerCase().replace(/\s+/g, ' ').trim();
   const c0 = h0.replace(/\s+/g, '').replace(/_/g, '');
-  if (c0 === 'new' || c0.includes('advanceorder') || h0.includes('advance order')) return 'unassigned';
-
-  const direct = normalizeIncomingStatusRaw(historyStatusRaw);
-  if (direct) return direct;
+  if (c0 === 'new' || c0.includes('advanceorder') || h0.includes('advance order')) return 'assigned';
 
   const h = h0;
   const c = c0;
@@ -119,12 +235,17 @@ function parseHistoryToCanonical(historyStatusRaw) {
   if (c === 'assigned' || c === 'accepted' || h === 'accepted') return 'assigned';
   if (c.includes('acknowledg')) return 'acknowledged';
   if (c === 'started' || h.startsWith('started')) return 'started';
-  if (c === 'inprogress' || c.includes('verification') || c.includes('pendingverification')) {
-    if (c.includes('pending')) return 'pending_verification';
-    if (c.includes('verification')) return 'verification';
+  if (c.includes('pendingverification')) return 'pending_verification';
+  if (c.includes('verification')) return 'verification';
+  if (c === 'inprogress') {
     return 'inprogress';
   }
+  if (c.includes('arrivedatcustomer') || c.includes('reacheddestination')) {
+    return 'pending_verification';
+  }
   if (c.includes('way') || c.includes('transit') || c.includes('ontheway') || h.includes('on its way')) {
+    if (c.includes('customer') || c.includes('delivery')) return 'inprogress';
+    if (c.includes('vendor') || c.includes('restaurant')) return 'acknowledged';
     return 'inprogress';
   }
   if (c.includes('pick') || c.includes('prepar') || c.includes('cooking')) return 'inprogress';
@@ -156,8 +277,7 @@ function deriveErrandDriverTaskStatus(deliveryStatus, orderStatus, latestHistory
 
   const hasDriver = driverId != null && Number.isFinite(Number(driverId)) && Number(driverId) > 0;
   if (!hasDriver) {
-    if (fromDel === 'unassigned' || fromDel === 'assigned') return 'unassigned';
-    return fromHist || fromDel || 'unassigned';
+    return fromHist || fromDel || 'assigned';
   }
 
   const rDel = rankOf(fromDel);
@@ -170,6 +290,7 @@ module.exports = {
   CANONICAL,
   TERMINAL,
   normalizeIncomingStatusRaw,
+  normalizeErrandStatusForApp,
   mapDeliveryToCanonicalTaskStatus,
   parseHistoryToCanonical,
   deriveErrandDriverTaskStatus,

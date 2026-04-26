@@ -18,7 +18,7 @@ const {
   fetchMtDriverTeamNamesByIds,
   ST_ORDERNEW_EXCLUDE_ADMIN_DELETED_SQL,
 } = require('../lib/errandOrders');
-const { normalizeIncomingStatusRaw } = require('../lib/errandDriverStatus');
+const { normalizeIncomingStatusRaw, normalizeErrandStatusForApp } = require('../lib/errandDriverStatus');
 const { shouldIncludeActiveTaskListRow } = require('../lib/riderTaskContract');
 const {
   notifyAllDashboardAdmins,
@@ -131,6 +131,32 @@ function parseManganOverrideAction(body) {
   return ALLOWED_ACTIONS.has(a) ? a : null;
 }
 
+function normalizeErrandListRowForApp(row) {
+  if (!row || typeof row !== 'object') return row;
+  const rawStatus =
+    row.status_raw != null && String(row.status_raw).trim() !== ''
+      ? String(row.status_raw).trim()
+      : row.status != null && String(row.status).trim() !== ''
+        ? String(row.status).trim()
+        : '';
+  const canonical = normalizeErrandStatusForApp(rawStatus, { poolToAssigned: true }) || 'assigned';
+  const rawHistoryStatus =
+    row.errand_history_status != null && String(row.errand_history_status).trim() !== ''
+      ? String(row.errand_history_status).trim()
+      : null;
+  const historyCanonical = normalizeErrandStatusForApp(rawHistoryStatus, { poolToAssigned: true });
+  return {
+    ...row,
+    task_source: row.task_source || 'errand',
+    status: canonical,
+    status_raw: canonical,
+    delivery_status: canonical,
+    delivery_status_raw: row.delivery_status != null ? String(row.delivery_status) : null,
+    errand_history_status: historyCanonical || rawHistoryStatus || canonical,
+    errand_history_status_raw: rawHistoryStatus,
+  };
+}
+
 function truthyIncludeUnassigned(v) {
   if (v == null || v === '') return false;
   if (typeof v === 'boolean') return v;
@@ -227,6 +253,22 @@ async function buildDetailPayloadForOrder(orderId) {
   const st = payload.delivery_status ?? payload.status ?? payload.deliveryStatus;
   payload.proof_editable = taskStatusAllowsProofReceipt(st);
   return payload;
+}
+
+function stampCanonicalStatusOnErrandDetails(payload, canonical) {
+  if (!payload || typeof payload !== 'object' || !canonical) return payload;
+  const normalized = normalizeIncomingStatusRaw(canonical) || canonical;
+  const out = { ...payload, status: normalized, status_raw: normalized };
+  if (out.task && typeof out.task === 'object') {
+    out.task = {
+      ...out.task,
+      status: normalized,
+      status_raw: normalized,
+      delivery_status: normalized,
+      errand_history_status: normalized,
+    };
+  }
+  return out;
 }
 
 async function appendErrandHistory(orderId, statusText) {
@@ -373,15 +415,17 @@ router.post('/GetErrandOrders', validateApiKey, resolveDriver, async (req, res) 
     const latestHistoryStatusByOrderId = await fetchErrandLatestHistoryStatusByOrderIds(errandWibPool, orderIds);
     const data = list
       .map((r) =>
-        mapStOrderRowToTaskListRow(
-          r,
-          errandDriverById,
-          mtDriverNameById,
-          merchantById,
-          clientById,
-          clientAddressesByClientId,
-          latestHistoryStatusByOrderId,
-          teamNameById
+        normalizeErrandListRowForApp(
+          mapStOrderRowToTaskListRow(
+            r,
+            errandDriverById,
+            mtDriverNameById,
+            merchantById,
+            clientById,
+            clientAddressesByClientId,
+            latestHistoryStatusByOrderId,
+            teamNameById
+          )
         )
       )
       .filter((row) => {
@@ -477,7 +521,7 @@ async function handleAcceptErrandOrder(req, res) {
       const lbl = await errandOrderNotifyLabel(errandWibPool, orderId);
       const actor = formatActorFromDriver(req.driver);
       const p = errandNotifyFromCanonical(orderId, lbl, 'assigned', actor);
-      if (p) await notifyAllDashboardAdmins(pool, p).catch(() => {});
+      await notifyErrandAdminsIfFreshMilestone(pool, orderId, 'assigned', p);
     } catch (_) {}
     if (errandWantsManganSync(req.body)) {
       fireManganSync({
@@ -490,7 +534,7 @@ async function handleAcceptErrandOrder(req, res) {
         extras: {},
       });
     }
-    return success(res, details || null);
+    return success(res, details ? stampCanonicalStatusOnErrandDetails(details, 'assigned') : null);
   } catch (e) {
     if (e.code === 'ER_NO_SUCH_TABLE') {
       return error(res, 'Errand orders unavailable');
@@ -523,7 +567,7 @@ async function handleChangeErrandOrderStatus(req, res) {
     lng,
   } = req.body;
   const rawIn = bodyStatusRaw != null ? String(bodyStatusRaw) : '';
-  const effectiveRaw = rawIn.trim() !== '' ? rawIn : 'completed';
+  const effectiveRaw = rawIn.trim() !== '' ? rawIn : 'successful';
   const canonical = normalizeIncomingStatusRaw(effectiveRaw);
   if (!canonical) {
     return error(res, 'Invalid status');
@@ -574,7 +618,8 @@ async function handleChangeErrandOrderStatus(req, res) {
         const p = errandNotifyFromCanonical(orderId, lbl, canonical, actor);
         await notifyErrandAdminsIfFreshMilestone(pool, orderId, canonical, p);
       } catch (_) {}
-      return success(res, null);
+      const details = await buildDetailPayloadForOrder(orderId).catch(() => null);
+      return success(res, details ? stampCanonicalStatusOnErrandDetails(details, canonical) : { status: canonical, status_raw: canonical, order_id: orderId });
     }
 
     if (!assignedDriverId) {
@@ -650,7 +695,8 @@ async function handleChangeErrandOrderStatus(req, res) {
         },
       });
     }
-    return success(res, null);
+    const details = await buildDetailPayloadForOrder(orderId).catch(() => null);
+    return success(res, details ? stampCanonicalStatusOnErrandDetails(details, canonical) : { status: canonical, status_raw: canonical, order_id: orderId });
   } catch (e) {
     return error(res, e.message || 'Status update failed');
   }
