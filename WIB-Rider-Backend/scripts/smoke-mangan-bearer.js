@@ -10,8 +10,8 @@
  *
  * Env:
  *   MANGAN_DRIVER_API_BASE_URL - default base URL when 3rd arg omitted
- *   MANGAN_DRIVER_API_KEY - optional legacy mobile API key
- *   MANGAN_DRIVER_SEND_API_KEY_ON_LOGIN - set to 1/true/on to include `api_key` on /driver/login
+ *   MANGAN_DRIVER_API_KEY - optional mobile API key; sent as Authorization: Bearer on /driver/login
+ *   MANGAN_DRIVER_SEND_API_KEY_ON_LOGIN - set to 1/true/on to also include `api_key` in the /driver/login JSON body
  *   MANGAN_DRIVER_SEND_API_KEY_ON_ACTIONS - set to 1/true/on to include `api_key` on protected action bodies
  *   MANGAN_SMOKE_PATH - default protected path when 4th arg omitted (default /driver/profile)
  *   MANGAN_SMOKE_METHOD - optional method for protected call (default POST)
@@ -238,8 +238,14 @@ async function smokeManganBearer(opts) {
   console.log(`Login: ${loginUrl}`);
   const loginBody = { username, password };
   if (apiKey && includeApiKeyOnLogin()) loginBody.api_key = apiKey;
+  const loginHeaders = {};
+  if (apiKey) {
+    // Live Mangan accepts the mobile API key as Authorization: Bearer on /driver/login.
+    loginHeaders.Authorization = `Bearer ${apiKey}`;
+  }
   const login = await requestJson(loginUrl, {
     method: 'POST',
+    headers: loginHeaders,
     body: loginBody,
   });
 

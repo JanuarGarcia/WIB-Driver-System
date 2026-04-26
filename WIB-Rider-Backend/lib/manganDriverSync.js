@@ -176,9 +176,14 @@ async function loginMangan(baseUrl, username, password) {
   const body = { username, password };
   if (apiKey && includeApiKeyOnLogin()) body.api_key = apiKey;
   const url = new URL('/driver/login', `${baseUrl}/`);
+  const headers = { 'Content-Type': 'application/json', Accept: 'application/json' };
+  if (apiKey) {
+    // Live Mangan accepts the mobile API key as Authorization: Bearer on /driver/login.
+    headers.Authorization = `Bearer ${apiKey}`;
+  }
   const res = await fetch(url, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    headers,
     body: JSON.stringify(body),
   });
   const text = await res.text();

@@ -60,7 +60,7 @@ To enable it:
 
 - **Env**: set `MANGAN_DRIVER_SYNC_ENABLED=1`
 - **Base URL**: (optional) `MANGAN_DRIVER_API_BASE_URL=https://order.wheninbaguioeat.com`
-- **API key**: if the Mangan backoffice “API Access” page shows a mobile API key, you can set `MANGAN_DRIVER_API_KEY`. The current default follows the working Postman collection: `/driver/login` uses only JSON `username` and `password`. Only turn on `MANGAN_DRIVER_SEND_API_KEY_ON_LOGIN=1` or `MANGAN_DRIVER_SEND_API_KEY_ON_ACTIONS=1` if the live API specifically requires `api_key` on those calls.
+- **API key**: if the Mangan backoffice “API Access” page shows a mobile API key, set `MANGAN_DRIVER_API_KEY`. The backend now sends it as `Authorization: Bearer <api_key>` on `/driver/login`, which matches the live Mangan server. Only turn on `MANGAN_DRIVER_SEND_API_KEY_ON_LOGIN=1` or `MANGAN_DRIVER_SEND_API_KEY_ON_ACTIONS=1` if that environment also requires `api_key` inside the JSON body.
 - **Credentials** (recommended): run `sql/st_driver_wib_sync_credentials.sql` on the ErrandWib / Mangan DB and set `st_driver.wib_sync_username` + `st_driver.wib_sync_password` for each rider.
 - **Driver linking** (recommended): run `sql/mt_driver_mangan_link.sql` on the primary WIB DB and set `mt_driver.mangan_driver_id` to the matching legacy `st_driver.driver_id`. This is the safest fix when `mt_driver.driver_id` and `st_driver.driver_id` are not the same number.
 - **Primary DB fallback credentials**: if you already store the Mangan rider login on the WIB primary DB, run `sql/mt_driver_mangan_credentials.sql` and set `mt_driver.mangan_api_username` + `mt_driver.mangan_api_password`. The sync now uses those when `st_driver` does not have explicit WIB sync credentials.

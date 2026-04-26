@@ -18,6 +18,7 @@ describe('manganDriverSync', () => {
   });
 
   test('posts driver action with token auth header and JSON order_uuid body', async () => {
+    process.env.MANGAN_DRIVER_API_KEY = 'mobile-api-key-123';
     const fetchMock = jest.fn()
       .mockResolvedValueOnce({
         text: async () => JSON.stringify({ code: 1, details: { user_token: 'jwt-token-123' } }),
@@ -62,6 +63,18 @@ describe('manganDriverSync', () => {
 
     expect(result).toMatchObject({ ok: true, action: 'acceptorder' });
     expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    const loginCall = fetchMock.mock.calls[0];
+    expect(String(loginCall[0])).toBe('https://order.wheninbaguioeat.com/driver/login');
+    expect(loginCall[1]).toMatchObject({
+      method: 'POST',
+      headers: expect.objectContaining({
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+        Authorization: 'Bearer mobile-api-key-123',
+      }),
+      body: JSON.stringify({ username: 'driver@example.com', password: 'secret123' }),
+    });
 
     const actionCall = fetchMock.mock.calls[1];
     expect(String(actionCall[0])).toBe('https://order.wheninbaguioeat.com/driver/acceptorder');
