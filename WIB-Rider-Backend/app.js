@@ -3,7 +3,8 @@ const express = require('express');
 const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
-const { databaseNames } = require('./config/db');
+const crypto = require('crypto');
+const { pool, databaseNames } = require('./config/db');
 const { getUploadsRoot } = require('./lib/uploadsRoot');
 const driverRoutes = require('./routes/driver');
 const adminRoutes = require('./routes/admin');
@@ -13,6 +14,17 @@ const mobile2NotificationsRoutes = require('./routes/mobile2Notifications');
 const app = express();
 
 app.use(cors());
+
+// Correlation / request id (helps trace 5xx across proxy + app logs).
+app.use((req, res, next) => {
+  const incoming =
+    (req.headers['x-request-id'] || req.headers['x-correlation-id'] || req.headers['cf-ray'] || '').toString().trim() || null;
+  const requestId = incoming || (crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(16).toString('hex'));
+  req.requestId = requestId;
+  res.setHeader('x-request-id', requestId);
+  next();
+});
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -46,11 +58,46 @@ app.use('/api/mobile2', mobile2NotificationsRoutes);
 app.use('/admin/api', adminRoutes);
 
 app.get('/health', (req, res) => {
-  res.json({
-    ok: true,
-    /** Resolved at process start from DB_NAME (primary pool used by driver login). */
-    primary_database: databaseNames.primary,
-  });
+  const deep = String(req.query?.deep || '').trim() === '1';
+  if (!deep) {
+    return res.json({
+      ok: true,
+      /** Resolved at process start from DB_NAME (primary pool used by driver login). */
+      primary_database: databaseNames.primary,
+      request_id: req.requestId,
+    });
+  }
+  pool
+    .query('SELECT 1 AS ok')
+    .then(() =>
+      res.json({
+        ok: true,
+        primary_database: databaseNames.primary,
+        db_ok: true,
+        request_id: req.requestId,
+      })
+    )
+    .catch((e) => {
+      console.error('[health deep] db error', { requestId: req.requestId, code: e.code, message: e.message || String(e) });
+      res.status(503).json({
+        ok: false,
+        primary_database: databaseNames.primary,
+        db_ok: false,
+        msg: 'Service unavailable (database)',
+        request_id: req.requestId,
+      });
+    });
+});
+
+// Always return JSON for uncaught errors (avoid proxy HTML bodies reaching Flutter app).
+// eslint-disable-next-line no-unused-vars
+app.use((err, req, res, next) => {
+  const requestId = req?.requestId || null;
+  console.error('[unhandled express error]', { requestId, path: req?.path, message: err?.message || String(err) });
+  if (res.headersSent) return;
+  res
+    .status(500)
+    .json({ code: 2, msg: 'Server error', details: null, request_id: requestId });
 });
 
 module.exports = app;

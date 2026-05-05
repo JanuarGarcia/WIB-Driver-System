@@ -9,6 +9,14 @@ const PORT = process.env.PORT || 3000;
 
 initFirebase();
 
+process.on('unhandledRejection', (reason) => {
+  console.error('[unhandledRejection]', reason && reason.stack ? reason.stack : reason);
+});
+
+process.on('uncaughtException', (err) => {
+  console.error('[uncaughtException]', err && err.stack ? err.stack : err);
+});
+
 async function start() {
   try {
     await ensureErrandProofTable(errandWibPool);

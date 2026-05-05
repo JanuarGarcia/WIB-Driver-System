@@ -78,6 +78,26 @@ const uploadDir = path.join(getUploadsRoot(), 'profiles');
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
 }
+
+function isDatabaseLikeError(e) {
+  const code = e && e.code ? String(e.code) : '';
+  return (
+    code.startsWith('ER_') ||
+    code === 'PROTOCOL_CONNECTION_LOST' ||
+    code === 'ECONNREFUSED' ||
+    code === 'ETIMEDOUT' ||
+    code === 'ENOTFOUND'
+  );
+}
+
+function respondServerFailure(res, req, httpStatus, msg) {
+  return res.status(httpStatus).json({
+    code: 2,
+    msg,
+    details: null,
+    request_id: req.requestId || null,
+  });
+}
 const upload = multer({
   dest: uploadDir,
   limits: { fileSize: 5 * 1024 * 1024 },
@@ -1752,31 +1772,36 @@ router.post('/UpdateVehicle', validateApiKey, resolveDriver, async (req, res) =>
 });
 
 router.post('/GetTaskByDate', validateApiKey, resolveDriver, async (req, res) => {
-  const date = req.body.date || todayStr();
-  const rows = await queryRiderTaskRows(
-    'WHERE (t.delivery_date = ? OR DATE(t.delivery_date) = ?) AND (t.driver_id IS NULL OR t.driver_id = ?) ORDER BY t.task_id',
-    [date, date, req.driver.id]
-  );
-  const orderIdsForBatch = rows.map((r) => r.order_id);
-  const { ordersMap, linesByOrder } = await batchFetchOrdersAndLines(pool, orderIdsForBatch);
-  const deliveryByOrderId = await batchFetchLatestDeliveryAddressesByOrderIds(pool, orderIdsForBatch);
-  const data = rows
-    .map((r) => {
-      const out = {
-        ...r,
-        date_created: r.date_created ? new Date(r.date_created).toISOString() : null,
-      };
-      out.delivery_address = normalizeOptionalAddress(out.delivery_address);
-      out.merchant_address = normalizeOptionalAddress(out.merchant_address) || '';
-      const oid = out.order_id != null ? parseInt(String(out.order_id), 10) : 0;
-      const orderRow = Number.isFinite(oid) && oid > 0 ? ordersMap.get(oid) || null : null;
-      const lineRows = Number.isFinite(oid) && oid > 0 ? linesByOrder.get(oid) || [] : [];
-      const deliveryRow = Number.isFinite(oid) && oid > 0 ? normalizeDeliveryAddressRow(deliveryByOrderId.get(oid) || null) : null;
-      attachScheduleLinesAndAliases(out, orderRow, lineRows, deliveryRow);
-      return out;
-    })
-    .filter((row) => shouldIncludeActiveTaskListRow(row, { driverId: req.driver.id }));
-  return success(res, { data });
+  try {
+    const date = req.body.date || todayStr();
+    const rows = await queryRiderTaskRows(
+      'WHERE (t.delivery_date = ? OR DATE(t.delivery_date) = ?) AND (t.driver_id IS NULL OR t.driver_id = ?) ORDER BY t.task_id',
+      [date, date, req.driver.id]
+    );
+    const orderIdsForBatch = rows.map((r) => r.order_id);
+    const { ordersMap, linesByOrder } = await batchFetchOrdersAndLines(pool, orderIdsForBatch);
+    const deliveryByOrderId = await batchFetchLatestDeliveryAddressesByOrderIds(pool, orderIdsForBatch);
+    const data = rows
+      .map((r) => {
+        const out = {
+          ...r,
+          date_created: r.date_created ? new Date(r.date_created).toISOString() : null,
+        };
+        out.delivery_address = normalizeOptionalAddress(out.delivery_address);
+        out.merchant_address = normalizeOptionalAddress(out.merchant_address) || '';
+        const oid = out.order_id != null ? parseInt(String(out.order_id), 10) : 0;
+        const orderRow = Number.isFinite(oid) && oid > 0 ? ordersMap.get(oid) || null : null;
+        const lineRows = Number.isFinite(oid) && oid > 0 ? linesByOrder.get(oid) || [] : [];
+        const deliveryRow = Number.isFinite(oid) && oid > 0 ? normalizeDeliveryAddressRow(deliveryByOrderId.get(oid) || null) : null;
+        attachScheduleLinesAndAliases(out, orderRow, lineRows, deliveryRow);
+        return out;
+      })
+      .filter((row) => shouldIncludeActiveTaskListRow(row, { driverId: req.driver.id }));
+    return success(res, { data });
+  } catch (e) {
+    console.error('[GetTaskByDate] failed', { requestId: req.requestId, code: e.code, message: e.message || String(e) });
+    return respondServerFailure(res, req, isDatabaseLikeError(e) ? 503 : 500, 'Failed to load tasks');
+  }
 });
 
 /**
@@ -1817,49 +1842,54 @@ async function tryErrandTaskDetailsForGetTaskDetails(errandPool, mainPool, order
 }
 
 router.post('/GetTaskDetails', validateApiKey, resolveDriver, async (req, res) => {
-  const body = req.body || {};
-  const orderId = parseInt(body.order_id ?? body.orderId, 10);
-  const taskId = parseInt(body.task_id ?? body.taskId, 10);
+  try {
+    const body = req.body || {};
+    const orderId = parseInt(body.order_id ?? body.orderId, 10);
+    const taskId = parseInt(body.task_id ?? body.taskId, 10);
 
-  if (Number.isFinite(taskId) && taskId < 0) {
-    if (!errandWibPool) return error(res, 'order_id or task_id required');
-    try {
-      const out = await tryErrandTaskDetailsForGetTaskDetails(errandWibPool, pool, Math.abs(taskId), req.driver.id);
-      if (out === 'forbidden') return error(res, 'Task not found');
-      if (out) return success(res, out);
-      return error(res, 'Task not found');
-    } catch (e) {
-      return error(res, e.message || 'Failed to load task details');
-    }
-  }
-
-  // Rollout compatibility: if both are provided, order_id wins.
-  let rows = [];
-  if (Number.isFinite(orderId) && orderId > 0) {
-    rows = await queryRiderTaskRows('WHERE t.order_id = ? ORDER BY t.task_id DESC LIMIT 1', [orderId]);
-    if (!rows.length && errandWibPool) {
+    if (Number.isFinite(taskId) && taskId < 0) {
+      if (!errandWibPool) return error(res, 'order_id or task_id required');
       try {
-        const out = await tryErrandTaskDetailsForGetTaskDetails(errandWibPool, pool, orderId, req.driver.id);
+        const out = await tryErrandTaskDetailsForGetTaskDetails(errandWibPool, pool, Math.abs(taskId), req.driver.id);
         if (out === 'forbidden') return error(res, 'Task not found');
         if (out) return success(res, out);
+        return error(res, 'Task not found');
       } catch (e) {
         return error(res, e.message || 'Failed to load task details');
       }
     }
-  } else if (Number.isFinite(taskId) && taskId > 0) {
-    rows = await queryRiderTaskRows('WHERE t.task_id = ? LIMIT 1', [taskId]);
-  } else {
-    return error(res, 'order_id or task_id required');
-  }
 
-  const r = rows[0];
-  if (!r) return error(res, 'Task not found');
-  r.date_created = r.date_created ? new Date(r.date_created).toISOString() : null;
-  try {
-    const details = await enrichRiderTaskDetails(pool, r);
-    return success(res, details);
+    // Rollout compatibility: if both are provided, order_id wins.
+    let rows = [];
+    if (Number.isFinite(orderId) && orderId > 0) {
+      rows = await queryRiderTaskRows('WHERE t.order_id = ? ORDER BY t.task_id DESC LIMIT 1', [orderId]);
+      if (!rows.length && errandWibPool) {
+        try {
+          const out = await tryErrandTaskDetailsForGetTaskDetails(errandWibPool, pool, orderId, req.driver.id);
+          if (out === 'forbidden') return error(res, 'Task not found');
+          if (out) return success(res, out);
+        } catch (e) {
+          return error(res, e.message || 'Failed to load task details');
+        }
+      }
+    } else if (Number.isFinite(taskId) && taskId > 0) {
+      rows = await queryRiderTaskRows('WHERE t.task_id = ? LIMIT 1', [taskId]);
+    } else {
+      return error(res, 'order_id or task_id required');
+    }
+
+    const r = rows[0];
+    if (!r) return error(res, 'Task not found');
+    r.date_created = r.date_created ? new Date(r.date_created).toISOString() : null;
+    try {
+      const details = await enrichRiderTaskDetails(pool, r);
+      return success(res, details);
+    } catch (e) {
+      return error(res, e.message || 'Failed to load task details');
+    }
   } catch (e) {
-    return error(res, e.message || 'Failed to load task details');
+    console.error('[GetTaskDetails] failed', { requestId: req.requestId, code: e.code, message: e.message || String(e) });
+    return respondServerFailure(res, req, isDatabaseLikeError(e) ? 503 : 500, 'Failed to load task details');
   }
 });
 

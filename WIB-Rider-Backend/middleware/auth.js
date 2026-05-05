@@ -24,8 +24,22 @@ function getDriverTokenFromRequest(req) {
 /** Validate api_key against stored API Hash Key (mt_option.driver_api_hash_key). Call after body is parsed. */
 async function validateApiKey(req, res, next) {
   const key = getApiKey(req);
-  const [[row]] = await pool.query(STORED_API_KEY_QUERY);
-  const stored = row?.option_value || process.env.API_HASH_KEY || 'GodissoGood@33';
+  let stored = process.env.API_HASH_KEY || 'GodissoGood@33';
+  try {
+    const [[row]] = await pool.query(STORED_API_KEY_QUERY);
+    stored = row?.option_value || stored;
+  } catch (e) {
+    // Many fresh installs don't have mt_option yet; keep serving the API using env/default key.
+    if (e && e.code !== 'ER_NO_SUCH_TABLE') {
+      console.error('[validateApiKey] db error', { requestId: req.requestId, code: e.code, message: e.message || String(e) });
+      return res.status(503).json({
+        code: 2,
+        msg: 'Service unavailable (database)',
+        details: null,
+        request_id: req.requestId || null,
+      });
+    }
+  }
   if (!key) {
     return error(res, 'API key is required', 2);
   }
@@ -51,7 +65,23 @@ async function resolveDriver(req, res, next) {
       reason: 'missing_token',
     });
   }
-  const state = await resolveDriverAuthState(pool, token);
+  let state;
+  try {
+    state = await resolveDriverAuthState(pool, token);
+  } catch (e) {
+    console.error('[resolveDriver] db error', { requestId: req.requestId, code: e.code, message: e.message || String(e) });
+    return res.status(503).json({
+      code: 2,
+      msg: 'Service unavailable (database)',
+      details: authStatePayload({
+        valid: false,
+        tokenPresent: true,
+        tokenStatus: 'unknown',
+        reason: 'db_unavailable',
+      }),
+      request_id: req.requestId || null,
+    });
+  }
   req.driverTokenState = state.tokenStatus;
   req.driverTokenReason = state.reason || null;
   req.driver = state.driver || null;
@@ -61,11 +91,20 @@ async function resolveDriver(req, res, next) {
     const msg = state.reason === 'logged_in_on_another_device' ? 'Session expired: logged in on another device' : 'Invalid token';
     return sendAuthEnvelope(res, state.reason === 'missing_token' ? 401 : 403, msg, state);
   }
-  await touchRiderSession(pool, token, resolveSessionContext(req.body || {}, {
-    devicePlatform: req.body?.device_platform,
-    appVersion: req.body?.app_version ?? req.body?.appVersion,
-    ipAddress: req.ip || req.connection?.remoteAddress || null,
-  }));
+  try {
+    await touchRiderSession(
+      pool,
+      token,
+      resolveSessionContext(req.body || {}, {
+        devicePlatform: req.body?.device_platform,
+        appVersion: req.body?.app_version ?? req.body?.appVersion,
+        ipAddress: req.ip || req.connection?.remoteAddress || null,
+      })
+    );
+  } catch (e) {
+    // Don't fail the whole request just because we couldn't update "last seen".
+    console.warn('[resolveDriver] could not touch session', { requestId: req.requestId, message: e.message || String(e) });
+  }
   next();
 }
 
@@ -80,18 +119,37 @@ async function optionalDriver(req, res, next) {
     req.driverAuthToken = null;
     return next();
   }
-  const state = await resolveDriverAuthState(pool, token);
+  let state;
+  try {
+    state = await resolveDriverAuthState(pool, token);
+  } catch (e) {
+    console.error('[optionalDriver] db error', { requestId: req.requestId, code: e.code, message: e.message || String(e) });
+    req.driverTokenState = 'unknown';
+    req.driverTokenReason = 'db_unavailable';
+    req.driver = null;
+    req.driverSession = null;
+    req.driverAuthToken = token;
+    return next();
+  }
   req.driverTokenState = state.tokenStatus;
   req.driverTokenReason = state.reason || null;
   req.driver = state.driver || null;
   req.driverSession = state.session || null;
   req.driverAuthToken = token;
   if (state.valid) {
-    await touchRiderSession(pool, token, resolveSessionContext(req.body || {}, {
-      devicePlatform: req.body?.device_platform,
-      appVersion: req.body?.app_version ?? req.body?.appVersion,
-      ipAddress: req.ip || req.connection?.remoteAddress || null,
-    }));
+    try {
+      await touchRiderSession(
+        pool,
+        token,
+        resolveSessionContext(req.body || {}, {
+          devicePlatform: req.body?.device_platform,
+          appVersion: req.body?.app_version ?? req.body?.appVersion,
+          ipAddress: req.ip || req.connection?.remoteAddress || null,
+        })
+      );
+    } catch (e) {
+      console.warn('[optionalDriver] could not touch session', { requestId: req.requestId, message: e.message || String(e) });
+    }
   }
   next();
 }
