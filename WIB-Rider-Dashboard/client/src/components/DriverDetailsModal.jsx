@@ -119,6 +119,7 @@ export default function DriverDetailsModal({
         driver: {
           full_name: s.full_name ?? null,
           phone: s.phone ?? null,
+          tin_id: s.tin_id ?? null,
           email: s.email ?? null,
           team_name: s.team_name ?? null,
           device_platform: s.device ?? null,
@@ -224,6 +225,12 @@ export default function DriverDetailsModal({
                   <div className="agent-driver-details-label">Phone :</div>
                   <div className="agent-driver-details-value">
                     {state.driver?.phone ?? summaryDriver?.phone ?? '—'}
+                  </div>
+                </div>
+                <div className="agent-driver-details-row">
+                  <div className="agent-driver-details-label">TIN ID :</div>
+                  <div className="agent-driver-details-value">
+                    {state.driver?.tin_id ?? summaryDriver?.tin_id ?? '—'}
                   </div>
                 </div>
 

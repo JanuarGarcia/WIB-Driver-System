@@ -93,7 +93,7 @@ export default function Drivers() {
   const [pushDriver, setPushDriver] = useState(null);
   const [teams, setTeams] = useState([]);
   const [driverModal, setDriverModal] = useState(null);
-  const [driverForm, setDriverForm] = useState({ username: '', password: '', first_name: '', last_name: '', email: '', phone: '', team_id: '', vehicle: '', status: 'active' });
+  const [driverForm, setDriverForm] = useState({ username: '', password: '', first_name: '', last_name: '', email: '', phone: '', tin_id: '', team_id: '', vehicle: '', status: 'active' });
   const [driverSaving, setDriverSaving] = useState(false);
   const [editDriverLoading, setEditDriverLoading] = useState(false);
   const [selectedDriverIds, setSelectedDriverIds] = useState(new Set());
@@ -157,7 +157,7 @@ export default function Drivers() {
 
   const openCreateDriver = () => {
     setDriverModal({});
-    setDriverForm({ username: '', password: '', first_name: '', last_name: '', email: '', phone: '', team_id: '', vehicle: '', status: 'active' });
+    setDriverForm({ username: '', password: '', first_name: '', last_name: '', email: '', phone: '', tin_id: '', team_id: '', vehicle: '', status: 'active' });
   };
 
   const openEditDriver = (d) => {
@@ -167,7 +167,7 @@ export default function Drivers() {
       return;
     }
     setDriverModal({ id });
-    setDriverForm({ username: '', password: '', first_name: '', last_name: '', email: '', phone: '', team_id: '', vehicle: '', status: 'active' });
+    setDriverForm({ username: '', password: '', first_name: '', last_name: '', email: '', phone: '', tin_id: '', team_id: '', vehicle: '', status: 'active' });
     setEditDriverLoading(true);
     api(`drivers/${id}`)
       .then((driver) => {
@@ -179,6 +179,7 @@ export default function Drivers() {
           last_name: driver.last_name ?? '',
           email: driver.email ?? '',
           phone: driver.phone ?? '',
+          tin_id: driver.tin_id ?? '',
           team_id: driver.team_id != null ? String(driver.team_id) : '',
           vehicle: driver.vehicle ?? '',
           status: driver.status ?? 'active',
@@ -205,6 +206,7 @@ export default function Drivers() {
       last_name: (driverForm.last_name || '').trim(),
       email: (driverForm.email || '').trim(),
       phone: (driverForm.phone || '').trim(),
+      tin_id: (driverForm.tin_id || '').trim(),
       team_id: driverForm.team_id || undefined,
       vehicle: (driverForm.vehicle || '').trim(),
       status: (driverForm.status || 'active').trim(),
@@ -326,14 +328,14 @@ export default function Drivers() {
 
   const exportAgentsCsv = () => {
     const list = filteredDrivers;
-    const headers = ['ID', 'Username', 'Name', 'Email', 'Phone', 'Team', 'Vehicle', 'Device', 'Status'];
+    const headers = ['ID', 'Username', 'Name', 'Email', 'Phone', 'TIN ID', 'Team', 'Vehicle', 'Device', 'Status'];
     const escape = (v) => {
       const s = v == null ? '' : String(v);
       return s.includes(',') || s.includes('"') || s.includes('\n') ? `"${s.replace(/"/g, '""')}"` : s;
     };
     const rows = [headers.join(',')].concat(
       list.map((d) =>
-        [d.id ?? d.driver_id, d.username, d.full_name, d.email, d.phone, d.team_name, d.vehicle, d.device, d.status].map(escape).join(',')
+        [d.id ?? d.driver_id, d.username, d.full_name, d.email, d.phone, d.tin_id, d.team_name, d.vehicle, d.device, d.status].map(escape).join(',')
       )
     );
     const blob = new Blob([rows.join('\r\n')], { type: 'text/csv;charset=utf-8' });
@@ -358,11 +360,12 @@ export default function Drivers() {
         const name = (d.full_name ?? '').toLowerCase();
         const email = (d.email ?? '').toLowerCase();
         const phone = (d.phone ?? '').toLowerCase();
+        const tin = (d.tin_id ?? '').toLowerCase();
         const teamName = (d.team_name ?? '').toLowerCase();
         const vehicle = (d.vehicle ?? '').toLowerCase();
         const device = (d.device ?? '').toLowerCase();
         const status = (d.status ?? '').toLowerCase();
-        return [id, username, name, email, phone, teamName, vehicle, device, status].some((v) => v.includes(q));
+        return [id, username, name, email, phone, tin, teamName, vehicle, device, status].some((v) => v.includes(q));
       })
     : filteredByStatus;
 
@@ -522,6 +525,10 @@ export default function Drivers() {
                       <span className="drivers-mobile-card-value">{d.phone ?? '—'}</span>
                     </div>
                     <div className="drivers-mobile-card-field">
+                      <span className="drivers-mobile-card-label">TIN ID</span>
+                      <span className="drivers-mobile-card-value">{d.tin_id ?? '—'}</span>
+                    </div>
+                    <div className="drivers-mobile-card-field">
                       <span className="drivers-mobile-card-label">Vehicle</span>
                       <span className="drivers-mobile-card-value">{d.vehicle ?? '—'}</span>
                     </div>
@@ -579,6 +586,7 @@ export default function Drivers() {
                   <th>Name</th>
                   <th>Email</th>
                   <th>Phone</th>
+                  <th>TIN ID</th>
                   <th>Team</th>
                   <th>Vehicle</th>
                   <th>Device</th>
@@ -607,6 +615,7 @@ export default function Drivers() {
                   <td className="driver-name-cell">{driverDisplayName(d)}</td>
                   <td>{d.email ?? '—'}</td>
                   <td>{d.phone ?? '—'}</td>
+                  <td>{d.tin_id ?? '—'}</td>
                   <td>{d.team_name ?? '—'}</td>
                   <td>{d.vehicle ?? '—'}</td>
                   <td>{d.device ?? '—'}</td>
@@ -723,6 +732,19 @@ export default function Drivers() {
                         <div className="send-push-field">
                           <label className="modal-label" htmlFor="driver-phone">Phone</label>
                           <input id="driver-phone" type="tel" className="form-control send-push-input" value={driverForm.phone} onChange={(e) => setDriverForm((f) => ({ ...f, phone: e.target.value }))} autoComplete="tel" />
+                        </div>
+                        <div className="send-push-field">
+                          <label className="modal-label" htmlFor="driver-tin-id">TIN ID</label>
+                          <input
+                            id="driver-tin-id"
+                            type="text"
+                            inputMode="numeric"
+                            pattern="[0-9-]*"
+                            className="form-control send-push-input"
+                            value={driverForm.tin_id}
+                            onChange={(e) => setDriverForm((f) => ({ ...f, tin_id: e.target.value }))}
+                            placeholder="123-456-789-000"
+                          />
                         </div>
                       </div>
                     </div>
