@@ -1,4 +1,4 @@
-const express = require('express');
+﻿const express = require('express');
 const router = express.Router();
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
@@ -66,6 +66,7 @@ const {
 } = require('../services/officeComplianceService');
 const { disconnectDriverSubscribers, subscribeDriverSse } = require('../services/driverRealtime');
 const { issueResetCode, consumeResetCode } = require('../lib/passwordResetStore');
+const { queryWithTimeout, promiseTimeout } = require('../lib/dbQueryWithTimeout');
 const {
   authStatePayload,
   establishSingleDeviceSession,
@@ -98,6 +99,22 @@ function respondServerFailure(res, req, httpStatus, msg) {
     details: null,
     request_id: req.requestId || null,
   });
+}
+
+function respondApiFailure(res, req, msg, code = 2) {
+  return res.status(200).json({
+    code,
+    msg,
+    details: null,
+    request_id: req.requestId || null,
+  });
+}
+
+function routeTimeoutMs(envName, fallbackMs) {
+  const raw = process.env[envName];
+  const n = parseInt(String(raw ?? ''), 10);
+  if (!Number.isFinite(n) || n <= 0) return fallbackMs;
+  return Math.min(60000, Math.max(500, n));
 }
 const upload = multer({
   dest: uploadDir,
@@ -163,7 +180,7 @@ function driverStatusBlocksLogin(statusRaw) {
 }
 
 /**
- * Canonical driver JSON API base for mobile (…/driver/api, no trailing slash).
+ * Canonical driver JSON API base for mobile (â€¦/driver/api, no trailing slash).
  * If MOBILE_API_URL already ends with /driver/api, it is left as-is (except trailing slash trim).
  */
 function normalizeMobileDriverApiBaseUrl(raw) {
@@ -193,7 +210,7 @@ function shouldAutoFillRiderPasswordBcrypt() {
   return v !== '0' && !/^false$/i.test(String(v));
 }
 
-/** Optional: login by mt_client email when no mt_driver.username match (ordering customer → driver link). */
+/** Optional: login by mt_client email when no mt_driver.username match (ordering customer â†’ driver link). */
 function allowMtClientFallback() {
   const v = process.env.DRIVER_LOGIN_MT_CLIENT_FALLBACK;
   if (v == null || v === '') return false;
@@ -211,7 +228,7 @@ const RELOAD_DRIVER_LOGIN_SQLS = [
   'SELECT driver_id AS id, username, `password` AS password_hash, password_bcrypt, on_duty, client_id FROM mt_driver WHERE driver_id = ?',
   'SELECT driver_id AS id, username, `password` AS password_hash, on_duty, client_id, status FROM mt_driver WHERE driver_id = ?',
   'SELECT driver_id AS id, username, `password` AS password_hash, on_duty, client_id FROM mt_driver WHERE driver_id = ?',
-  /** Legacy `mt_driver` without client_id / password_bcrypt / status / on_duty — still need login row. */
+  /** Legacy `mt_driver` without client_id / password_bcrypt / status / on_duty â€” still need login row. */
   'SELECT driver_id AS id, username, `password` AS password_hash FROM mt_driver WHERE driver_id = ?',
 ];
 
@@ -286,7 +303,7 @@ function mapMtDriverRowForLogin(row) {
   };
 }
 
-/** DB expression: strip formatting and compare digit-only phones (column must be passed safely — known identifiers only). */
+/** DB expression: strip formatting and compare digit-only phones (column must be passed safely â€” known identifiers only). */
 function mtDriverPhoneDigitsExpr(column) {
   return `REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(TRIM(COALESCE(${column}, '')), ' ', ''), '-', ''), '(', ''), ')', ''), '+', '')`;
 }
@@ -466,7 +483,7 @@ function numOrZero(v) {
   return Number.isFinite(n) ? n : null;
 }
 
-/** True when numeric value is non-zero (used to pick a “real” fee among several DB columns). */
+/** True when numeric value is non-zero (used to pick a â€œrealâ€ fee among several DB columns). */
 function isNonZeroMoney(v) {
   const n = numOrZero(v);
   return n != null && n !== 0;
@@ -479,7 +496,7 @@ function pickNonZeroMoneyStr(v) {
 
 /**
  * Pull fee-like scalars from mt_order.json_details when columns are 0/null but checkout JSON has amounts.
- * Shallow + common nested objects (cart, totals, order, …).
+ * Shallow + common nested objects (cart, totals, order, â€¦).
  * @param {Record<string, unknown>|null|undefined} orderRow
  * @returns {Record<string, unknown>}
  */
@@ -747,7 +764,7 @@ function mapDetailRowForRider(row) {
  * @param {Record<string, unknown>} details task row (mutated)
  * @param {Record<string, unknown>|null} orderRow mt_order row or null
  * @param {unknown[]} rawLineRows mt_order_details rows
- * @param {Record<string, unknown>|null} [deliveryRow] mt_order_delivery_address — improves convenience_fee when fee lives only here
+ * @param {Record<string, unknown>|null} [deliveryRow] mt_order_delivery_address â€” improves convenience_fee when fee lives only here
  */
 function attachScheduleLinesAndAliases(details, orderRow, rawLineRows, deliveryRow = null) {
   const lines = Array.isArray(rawLineRows) ? rawLineRows.map(mapDetailRowForRider) : [];
@@ -1083,7 +1100,7 @@ async function enrichRiderTaskDetails(pool, taskRow) {
     details.proof_delivery_url = null;
   }
 
-  /** Activity timeline for Flutter (order_history + aliases; each row has date_created / created_at / …). */
+  /** Activity timeline for Flutter (order_history + aliases; each row has date_created / created_at / â€¦). */
   let orderHistoryForDriver = [];
   if (Number.isFinite(tid) && tid > 0) {
     try {
@@ -1363,7 +1380,7 @@ async function getDriverSettingsMap() {
   return fromOption;
 }
 
-/** Admin toggle: rider → new customer app messaging. Default ON when unset (backward compatible). */
+/** Admin toggle: rider â†’ new customer app messaging. Default ON when unset (backward compatible). */
 function isRiderCustomerMessagingEnabled(map) {
   if (!map || typeof map !== 'object') return true;
   const v =
@@ -1715,38 +1732,89 @@ router.post('/UpdateDriverLocation', validateApiKey, resolveDriver, async (req, 
 });
 
 router.post('/GetProfile', validateApiKey, resolveDriver, async (req, res) => {
-  const [[d]] = await pool.query(
-    `SELECT CONCAT(COALESCE(d.first_name,''), ' ', COALESCE(d.last_name,'')) AS full_name, d.phone, d.mt_tin_id AS tin_id, d.location_address AS address, d.transport_type_id, d.transport_description,
+  const startedAt = Date.now();
+  const requestId = req.requestId || null;
+  const driverId = req?.driver?.id || null;
+  const hardTimeoutMs = routeTimeoutMs('DRIVER_GETPROFILE_TIMEOUT_MS', 9000);
+  const dbTimeoutMs = Math.max(500, Math.min(hardTimeoutMs - 500, routeTimeoutMs('DRIVER_DB_QUERY_TIMEOUT_MS', 8000)));
+
+  console.info('[driver/api/GetProfile] start', { requestId, driverId });
+
+  let timedOut = false;
+  const hardTimer = setTimeout(() => {
+    timedOut = true;
+    if (res.headersSent) return;
+    console.warn('[driver/api/GetProfile] hard timeout', { requestId, driverId, ms: hardTimeoutMs });
+    respondApiFailure(res, req, 'Request timed out. Please try again.', 2);
+  }, hardTimeoutMs);
+
+  try {
+    const dbStartedAt = Date.now();
+    const [[d]] = await promiseTimeout(
+      queryWithTimeout(
+        pool,
+        `SELECT CONCAT(COALESCE(d.first_name,''), ' ', COALESCE(d.last_name,'')) AS full_name, d.phone, d.mt_tin_id AS tin_id, d.location_address AS address, d.transport_type_id, d.transport_description,
       d.licence_plate, d.color, d.profile_photo, d.team_id, t.team_name, d.email
      FROM mt_driver d LEFT JOIN mt_driver_team t ON d.team_id = t.team_id WHERE d.driver_id = ?`,
-    [req.driver.id]
-  );
-  // Hardcoded to match old backend transportType() – no transport_types table
-  const transportList = {
-    '': 'Please select',
-    truck: 'Truck',
-    car: 'Car',
-    bike: 'Bike',
-    bicycle: 'Bicycle',
-    scooter: 'Scooter',
-    walk: 'Walk',
-  };
-  const profilePhoto = d?.profile_photo ? (d.profile_photo.startsWith('http') ? d.profile_photo : `${BASE_URL}${d.profile_photo.startsWith('/') ? '' : '/'}${d.profile_photo}`) : null;
-  return success(res, {
-    full_name: d?.full_name,
-    team_name: d?.team_name,
-    email: d?.email,
-    phone: d?.phone,
-    tin_id: d?.tin_id ?? null,
-    address: d?.address,
-    transport_type_id: d?.transport_type_id,
-    transport_type_id2: d?.transport_type_id,
-    transport_description: d?.transport_description,
-    licence_plate: d?.licence_plate,
-    color: d?.color,
-    profile_photo: profilePhoto,
-    transport_list: transportList,
-  });
+        [req.driver.id],
+        { timeoutMs: dbTimeoutMs, lockWaitTimeoutSec: 5 }
+      ),
+      hardTimeoutMs
+    );
+    const dbMs = Date.now() - dbStartedAt;
+
+    if (timedOut || res.headersSent) return;
+
+    console.info('[driver/api/GetProfile] db ok', { requestId, driverId, db_ms: dbMs });
+
+    const transportList = {
+      '': 'Please select',
+      truck: 'Truck',
+      car: 'Car',
+      bike: 'Bike',
+      bicycle: 'Bicycle',
+      scooter: 'Scooter',
+      walk: 'Walk',
+    };
+    const profilePhoto = d?.profile_photo
+      ? d.profile_photo.startsWith('http')
+        ? d.profile_photo
+        : `${BASE_URL}${d.profile_photo.startsWith('/') ? '' : '/'}${d.profile_photo}`
+      : null;
+
+    console.info('[driver/api/GetProfile] ok', { requestId, driverId, ms: Date.now() - startedAt });
+    return success(res, {
+      full_name: d?.full_name,
+      team_name: d?.team_name,
+      email: d?.email,
+      phone: d?.phone,
+      tin_id: d?.tin_id ?? null,
+      address: d?.address,
+      transport_type_id: d?.transport_type_id,
+      transport_type_id2: d?.transport_type_id,
+      transport_description: d?.transport_description,
+      licence_plate: d?.licence_plate,
+      color: d?.color,
+      profile_photo: profilePhoto,
+      transport_list: transportList,
+    });
+  } catch (e) {
+    if (timedOut || res.headersSent) return;
+    console.error('[driver/api/GetProfile] error', {
+      requestId,
+      driverId,
+      code: e?.code,
+      message: e?.message || String(e),
+      ms: Date.now() - startedAt,
+    });
+    if (String(e?.code || '') === 'ETIMEDOUT') {
+      return respondApiFailure(res, req, 'Request timed out. Please try again.', 2);
+    }
+    return respondApiFailure(res, req, isDatabaseLikeError(e) ? 'Service unavailable. Please try again.' : 'Failed to load profile', 2);
+  } finally {
+    clearTimeout(hardTimer);
+  }
+
 });
 
 router.post('/UpdateProfile', validateApiKey, resolveDriver, async (req, res) => {
@@ -2041,7 +2109,7 @@ async function handleChangeTaskStatus(req, res) {
     try {
       await updateMtOrderStatusIfDeliveryComplete(pool, oid, status);
     } catch (_) {
-      /* mt_order.status optional — do not fail task status */
+      /* mt_order.status optional â€” do not fail task status */
     }
   }
 
@@ -2065,7 +2133,7 @@ async function handleChangeTaskStatus(req, res) {
       longitude: hasGeo ? geoLng : null,
     });
   } catch (_) {
-    /* mt_order_history optional — do not fail status update */
+    /* mt_order_history optional â€” do not fail status update */
   }
 
   try {
@@ -2293,7 +2361,7 @@ router.post('/UploadProfilePhoto', validateApiKey, resolveDriver, upload.single(
 
 /**
  * Proof of receipt vs delivery: multipart "photo" (legacy), or receipt_* / delivery_photo fields.
- * Body: task_id, proof_type=receipt|delivery (optional — defaults to delivery for old clients; receipt-only
+ * Body: task_id, proof_type=receipt|delivery (optional â€” defaults to delivery for old clients; receipt-only
  * field groups infer receipt). Same proof_type replaces the previous file for that task.
  */
 router.post(
