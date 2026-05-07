@@ -1750,17 +1750,28 @@ router.post('/GetProfile', validateApiKey, resolveDriver, async (req, res) => {
 
   try {
     const dbStartedAt = Date.now();
-    const [[d]] = await promiseTimeout(
-      queryWithTimeout(
-        pool,
+    const runProfileQuery = async (sql) =>
+      promiseTimeout(
+        queryWithTimeout(pool, sql, [req.driver.id], { timeoutMs: dbTimeoutMs, lockWaitTimeoutSec: 5 }),
+        hardTimeoutMs
+      );
+
+    let d;
+    try {
+      [[d]] = await runProfileQuery(
         `SELECT CONCAT(COALESCE(d.first_name,''), ' ', COALESCE(d.last_name,'')) AS full_name, d.phone, d.mt_tin_id AS tin_id, d.location_address AS address, d.transport_type_id, d.transport_description,
       d.licence_plate, d.color, d.profile_photo, d.team_id, t.team_name, d.email
-     FROM mt_driver d LEFT JOIN mt_driver_team t ON d.team_id = t.team_id WHERE d.driver_id = ?`,
-        [req.driver.id],
-        { timeoutMs: dbTimeoutMs, lockWaitTimeoutSec: 5 }
-      ),
-      hardTimeoutMs
-    );
+     FROM mt_driver d LEFT JOIN mt_driver_team t ON d.team_id = t.team_id WHERE d.driver_id = ?`
+      );
+    } catch (e) {
+      // Some schemas don't have mt_tin_id yet. Fall back to a compatible select.
+      if (String(e?.code || '') !== 'ER_BAD_FIELD_ERROR') throw e;
+      [[d]] = await runProfileQuery(
+        `SELECT CONCAT(COALESCE(d.first_name,''), ' ', COALESCE(d.last_name,'')) AS full_name, d.phone, NULL AS tin_id, d.location_address AS address, d.transport_type_id, d.transport_description,
+      d.licence_plate, d.color, d.profile_photo, d.team_id, t.team_name, d.email
+     FROM mt_driver d LEFT JOIN mt_driver_team t ON d.team_id = t.team_id WHERE d.driver_id = ?`
+      );
+    }
     const dbMs = Date.now() - dbStartedAt;
 
     if (timedOut || res.headersSent) return;

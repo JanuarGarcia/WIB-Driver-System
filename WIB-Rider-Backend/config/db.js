@@ -64,7 +64,10 @@ const errandOverrides = {
 };
 
 /** @type {string} Legacy primary — unchanged default for existing features. */
-const primaryDatabase = process.env.DB_NAME || 'wib_driver';
+const primaryDatabase =
+  process.env.DB_NAME ||
+  process.env.DB_MERCIFULGOD_NAME ||
+  'wheninba_MercifulGod';
 
 /** wheninba_MercifulGod — use for MercifulGod-only reads (no cross-DB joins in SQL). */
 const mercifulGodDatabase = process.env.DB_MERCIFULGOD_NAME || 'wheninba_MercifulGod';
