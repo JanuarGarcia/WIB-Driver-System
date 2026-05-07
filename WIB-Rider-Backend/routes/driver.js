@@ -17,6 +17,7 @@ const {
 const { findRiderClientAcrossDatabases, MSG_NOT_DRIVER } = require('../lib/riderClientForDriverLogin');
 const { checkDriverLoginRateLimit, clientIp } = require('../lib/driverLoginRateLimit');
 const { success, error } = require('../lib/response');
+const { validateOptionalTinId } = require('../lib/tinId');
 const { validateApiKey, resolveDriver, optionalDriver } = require('../middleware/auth');
 const {
   fetchTaskProofPhotosWithUrls,
@@ -1715,7 +1716,7 @@ router.post('/UpdateDriverLocation', validateApiKey, resolveDriver, async (req, 
 
 router.post('/GetProfile', validateApiKey, resolveDriver, async (req, res) => {
   const [[d]] = await pool.query(
-    `SELECT CONCAT(COALESCE(d.first_name,''), ' ', COALESCE(d.last_name,'')) AS full_name, d.phone, d.location_address AS address, d.transport_type_id, d.transport_description,
+    `SELECT CONCAT(COALESCE(d.first_name,''), ' ', COALESCE(d.last_name,'')) AS full_name, d.phone, d.mt_tin_id AS tin_id, d.location_address AS address, d.transport_type_id, d.transport_description,
       d.licence_plate, d.color, d.profile_photo, d.team_id, t.team_name, d.email
      FROM mt_driver d LEFT JOIN mt_driver_team t ON d.team_id = t.team_id WHERE d.driver_id = ?`,
     [req.driver.id]
@@ -1736,6 +1737,7 @@ router.post('/GetProfile', validateApiKey, resolveDriver, async (req, res) => {
     team_name: d?.team_name,
     email: d?.email,
     phone: d?.phone,
+    tin_id: d?.tin_id ?? null,
     address: d?.address,
     transport_type_id: d?.transport_type_id,
     transport_type_id2: d?.transport_type_id,
@@ -1748,8 +1750,17 @@ router.post('/GetProfile', validateApiKey, resolveDriver, async (req, res) => {
 });
 
 router.post('/UpdateProfile', validateApiKey, resolveDriver, async (req, res) => {
-  const { phone, team_name, username, address, driver_address } = req.body;
+  const { phone, team_name, username, address, driver_address, tin_id, mt_tin_id } = req.body;
   const addr = address || driver_address;
+  if (tin_id !== undefined || mt_tin_id !== undefined) {
+    const tinCheck = validateOptionalTinId(tin_id !== undefined ? tin_id : mt_tin_id);
+    if (!tinCheck.ok) return error(res, null, tinCheck.error);
+    try {
+      await pool.query('UPDATE mt_driver SET mt_tin_id = ? WHERE driver_id = ?', [tinCheck.value, req.driver.id]);
+    } catch (e) {
+      if (e.code !== 'ER_BAD_FIELD_ERROR') throw e;
+    }
+  }
   if (username != null) {
     await pool.query('UPDATE mt_driver SET first_name = ?, last_name = ? WHERE driver_id = ?', [username.trim(), '', req.driver.id]);
   }

@@ -38,6 +38,7 @@ const riderNotificationService = require('../services/riderNotification.service'
 const { insertStOrdernewHistoryRow } = require('../lib/errandHistoryInsert');
 const { enrichOrderDetailsWithSubcategoryAddons } = require('../lib/orderDetailAddons');
 const { attachOrderDetailCategories } = require('../lib/orderDetailCategories');
+const { validateOptionalTinId } = require('../lib/tinId');
 const {
   notifyAllDashboardAdmins,
   notifyAllDashboardAdminsFireAndForget,
@@ -4735,7 +4736,7 @@ router.get('/drivers', async (req, res) => {
     let rows;
     // Prefer last_login for status date/time; fall back to date_modified. Support email or email_address.
     const baseSelect = `d.driver_id AS id, d.username, CONCAT(COALESCE(d.first_name,''), ' ', COALESCE(d.last_name,'')) AS full_name,
-       d.phone, d.on_duty, d.team_id, t.team_name,
+       d.phone, d.mt_tin_id AS tin_id, d.on_duty, d.team_id, t.team_name,
        d.email AS email,
        d.device_platform AS device,
        COALESCE(d.transport_description, d.licence_plate, '') AS vehicle,
@@ -4764,7 +4765,7 @@ router.get('/drivers', async (req, res) => {
         try {
           [rows] = await pool.query(
             `SELECT d.driver_id AS id, d.username, CONCAT(COALESCE(d.first_name,''), ' ', COALESCE(d.last_name,'')) AS full_name,
-             d.phone, d.on_duty, d.team_id, t.team_name,
+             d.phone, d.mt_tin_id AS tin_id, d.on_duty, d.team_id, t.team_name,
              d.email, d.device_platform AS device,
              COALESCE(d.transport_description, d.licence_plate, '') AS vehicle,
              COALESCE(NULLIF(TRIM(d.status), ''), 'active') AS status,
@@ -4775,7 +4776,7 @@ router.get('/drivers', async (req, res) => {
           try {
             [rows] = await pool.query(
               `SELECT d.driver_id AS id, d.username, CONCAT(COALESCE(d.first_name,''), ' ', COALESCE(d.last_name,'')) AS full_name,
-               d.phone, d.on_duty, d.team_id, t.team_name,
+               d.phone, d.mt_tin_id AS tin_id, d.on_duty, d.team_id, t.team_name,
                d.email, d.device_platform AS device,
                COALESCE(d.transport_description, d.licence_plate, '') AS vehicle,
                COALESCE(NULLIF(TRIM(d.status), ''), 'active') AS status,
@@ -4786,7 +4787,7 @@ router.get('/drivers', async (req, res) => {
             try {
               [rows] = await pool.query(
                 `SELECT d.driver_id AS id, d.username, CONCAT(COALESCE(d.first_name,''), ' ', COALESCE(d.last_name,'')) AS full_name,
-                 d.phone, d.on_duty, d.team_id, t.team_name, d.date_modified AS status_updated_at FROM mt_driver d
+                 d.phone, d.mt_tin_id AS tin_id, d.on_duty, d.team_id, t.team_name, d.date_modified AS status_updated_at FROM mt_driver d
                  LEFT JOIN mt_driver_team t ON d.team_id = t.team_id ${orderClause}`
               );
             } catch (___) {
@@ -4810,6 +4811,7 @@ router.get('/drivers', async (req, res) => {
           device: d.device ?? null,
           vehicle: d.vehicle ?? null,
           status_updated_at: d.status_updated_at ?? null,
+          tin_id: d.tin_id ?? null,
         }));
       } else throw colErr;
     }
@@ -4893,37 +4895,72 @@ router.post('/drivers/:id/send-push', async (req, res) => {
 router.get('/drivers/:id/details', async (req, res) => {
   // Debug/version marker so we can verify which server code is running in production.
   // Safe to leave in place; it does not expose sensitive data.
-  res.set('X-Driver-Details-Version', '2026-04-15');
+  res.set('X-Driver-Details-Version', '2026-05-07');
   const driverId = parseInt(req.params.id, 10);
   const dateStr = (req.query.date || '').toString().trim() || new Date().toISOString().slice(0, 10);
   if (!Number.isFinite(driverId)) return res.status(400).json({ error: 'Invalid driver id' });
   try {
-    const [driverRows] = await pool.query(
-      `SELECT
-         d.driver_id AS id,
-         d.username,
-         CONCAT(COALESCE(d.first_name,''), ' ', COALESCE(d.last_name,'')) AS full_name,
-         d.first_name,
-         d.last_name,
-         d.email AS email,
-         d.phone,
-         d.on_duty,
-         d.team_id,
-         d.transport_type_id,
-         COALESCE(d.transport_description, '') AS transport_description,
-         COALESCE(d.licence_plate, '') AS licence_plate,
-         COALESCE(d.color, '') AS color,
-         d.device_platform AS device_platform,
-         COALESCE(d.app_version, '') AS app_version,
-         d.location_lat,
-         d.location_lng,
-         COALESCE(d.last_login, d.date_modified) AS last_seen,
-         t.team_name AS team_name
-       FROM mt_driver d
-       LEFT JOIN mt_driver_team t ON d.team_id = t.team_id
-       WHERE d.driver_id = ?`,
-      [driverId]
-    );
+    let driverRows;
+    try {
+      [driverRows] = await pool.query(
+        `SELECT
+           d.driver_id AS id,
+           d.username,
+           CONCAT(COALESCE(d.first_name,''), ' ', COALESCE(d.last_name,'')) AS full_name,
+           d.first_name,
+           d.last_name,
+           d.email AS email,
+           d.phone,
+           d.mt_tin_id AS tin_id,
+           d.on_duty,
+           d.team_id,
+           d.transport_type_id,
+           COALESCE(d.transport_description, '') AS transport_description,
+           COALESCE(d.licence_plate, '') AS licence_plate,
+           COALESCE(d.color, '') AS color,
+           d.device_platform AS device_platform,
+           COALESCE(d.app_version, '') AS app_version,
+           d.location_lat,
+           d.location_lng,
+           COALESCE(d.last_login, d.date_modified) AS last_seen,
+           t.team_name AS team_name
+         FROM mt_driver d
+         LEFT JOIN mt_driver_team t ON d.team_id = t.team_id
+         WHERE d.driver_id = ?`,
+        [driverId]
+      );
+    } catch (e) {
+      if (e.code === 'ER_BAD_FIELD_ERROR') {
+        [driverRows] = await pool.query(
+          `SELECT
+             d.driver_id AS id,
+             d.username,
+             CONCAT(COALESCE(d.first_name,''), ' ', COALESCE(d.last_name,'')) AS full_name,
+             d.first_name,
+             d.last_name,
+             d.email AS email,
+             d.phone,
+             d.on_duty,
+             d.team_id,
+             d.transport_type_id,
+             COALESCE(d.transport_description, '') AS transport_description,
+             COALESCE(d.licence_plate, '') AS licence_plate,
+             COALESCE(d.color, '') AS color,
+             d.device_platform AS device_platform,
+             COALESCE(d.app_version, '') AS app_version,
+             d.location_lat,
+             d.location_lng,
+             COALESCE(d.last_login, d.date_modified) AS last_seen,
+             t.team_name AS team_name
+           FROM mt_driver d
+           LEFT JOIN mt_driver_team t ON d.team_id = t.team_id
+           WHERE d.driver_id = ?`,
+          [driverId]
+        );
+      } else {
+        throw e;
+      }
+    }
 
     if (!driverRows || !driverRows.length) return res.status(404).json({ error: 'Driver not found' });
     const d = driverRows[0];
@@ -4936,6 +4973,7 @@ router.get('/drivers/:id/details', async (req, res) => {
       last_name: d.last_name,
       email: d.email,
       phone: d.phone,
+      tin_id: d.tin_id ?? null,
       on_duty: d.on_duty,
       team_id: d.team_id,
       team_name: d.team_name != null && String(d.team_name).trim() !== '' ? d.team_name : null,
@@ -5133,17 +5171,37 @@ router.get('/drivers/:id', async (req, res) => {
   const driverId = parseInt(req.params.id, 10);
   if (!Number.isFinite(driverId)) return res.status(400).json({ error: 'Invalid driver id' });
   try {
-    const [rows] = await pool.query(
-      `SELECT d.driver_id AS id, d.username, d.first_name, d.last_name,
-       d.email AS email, d.phone, d.team_id, t.team_name,
-       d.device_platform AS device,
-       COALESCE(d.transport_description, d.licence_plate, '') AS vehicle,
-       COALESCE(NULLIF(TRIM(d.status), ''), 'active') AS status,
-       d.profile_photo, d.transport_type_id, d.licence_plate, d.color
-       FROM mt_driver d LEFT JOIN mt_driver_team t ON d.team_id = t.team_id
-       WHERE d.driver_id = ?`,
-      [driverId]
-    );
+    let rows;
+    try {
+      [rows] = await pool.query(
+        `SELECT d.driver_id AS id, d.username, d.first_name, d.last_name,
+         d.email AS email, d.phone, d.mt_tin_id AS tin_id, d.team_id, t.team_name,
+         d.device_platform AS device,
+         COALESCE(d.transport_description, d.licence_plate, '') AS vehicle,
+         COALESCE(NULLIF(TRIM(d.status), ''), 'active') AS status,
+         d.profile_photo, d.transport_type_id, d.licence_plate, d.color
+         FROM mt_driver d LEFT JOIN mt_driver_team t ON d.team_id = t.team_id
+         WHERE d.driver_id = ?`,
+        [driverId]
+      );
+    } catch (e) {
+      if (e.code === 'ER_BAD_FIELD_ERROR') {
+        [rows] = await pool.query(
+          `SELECT d.driver_id AS id, d.username, d.first_name, d.last_name,
+           d.email AS email, d.phone, d.team_id, t.team_name,
+           d.device_platform AS device,
+           COALESCE(d.transport_description, d.licence_plate, '') AS vehicle,
+           COALESCE(NULLIF(TRIM(d.status), ''), 'active') AS status,
+           d.profile_photo, d.transport_type_id, d.licence_plate, d.color
+           FROM mt_driver d LEFT JOIN mt_driver_team t ON d.team_id = t.team_id
+           WHERE d.driver_id = ?`,
+          [driverId]
+        );
+        rows = (rows || []).map((r) => ({ ...r, tin_id: null }));
+      } else {
+        throw e;
+      }
+    }
     if (!rows || !rows.length) return res.status(404).json({ error: 'Driver not found' });
     const driver = rows[0];
     driver.full_name = [driver.first_name, driver.last_name].filter(Boolean).join(' ').trim() || driver.username;
@@ -5164,7 +5222,7 @@ router.get('/drivers/:id', async (req, res) => {
 
 // ---- addAgent (create driver) ----
 router.post('/drivers', express.json(), async (req, res) => {
-  const { username, password, first_name, last_name, email, phone, team_id, vehicle, status } = req.body || {};
+  const { username, password, first_name, last_name, email, phone, tin_id, mt_tin_id, team_id, vehicle, status } = req.body || {};
   const user = (username || '').toString().trim();
   if (!user) return res.status(400).json({ error: 'username required' });
   const pwd = (password || '').toString();
@@ -5175,6 +5233,9 @@ router.post('/drivers', express.json(), async (req, res) => {
     const ln = (last_name || '').toString().trim() || null;
     const em = (email || '').toString().trim() || null;
     const ph = (phone || '').toString().trim() || null;
+    const tinCheck = validateOptionalTinId(tin_id !== undefined ? tin_id : mt_tin_id);
+    if (!tinCheck.ok) return res.status(422).json({ error: tinCheck.error });
+    const tinId = tinCheck.value;
     const tid = team_id != null && team_id !== '' ? parseInt(team_id, 10) : null;
     const veh = (vehicle || '').toString().trim() || null;
     const st = (status || 'active').toString().trim().toLowerCase();
@@ -5188,11 +5249,11 @@ router.post('/drivers', express.json(), async (req, res) => {
       // Most complete schema (matches typical mt_driver columns seen in production).
       {
         sql: `INSERT INTO mt_driver
-          (user_type, user_id, on_duty, first_name, last_name, email, phone, username, password, password_bcrypt,
+          (user_type, user_id, on_duty, first_name, last_name, email, phone, mt_tin_id, username, password, password_bcrypt,
            team_id, transport_type_id, transport_description, licence_plate, color, status,
            enabled_push, is_signup, date_created, date_modified)
          VALUES
-          (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+          (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
         params: () => [
           'driver',
           0,
@@ -5201,6 +5262,7 @@ router.post('/drivers', express.json(), async (req, res) => {
           ln,
           em,
           ph,
+          tinId,
           user,
           hash,
           hash,
@@ -5217,11 +5279,11 @@ router.post('/drivers', express.json(), async (req, res) => {
       // Same but without password_bcrypt.
       {
         sql: `INSERT INTO mt_driver
-          (user_type, user_id, on_duty, first_name, last_name, email, phone, username, password,
+          (user_type, user_id, on_duty, first_name, last_name, email, phone, mt_tin_id, username, password,
            team_id, transport_type_id, transport_description, licence_plate, color, status,
            enabled_push, is_signup, date_created, date_modified)
          VALUES
-          (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+          (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
         params: () => [
           'driver',
           0,
@@ -5230,6 +5292,7 @@ router.post('/drivers', express.json(), async (req, res) => {
           ln,
           em,
           ph,
+          tinId,
           user,
           hash,
           tid,
@@ -5245,19 +5308,19 @@ router.post('/drivers', express.json(), async (req, res) => {
       // Without date_created/date_modified (DB defaults may exist).
       {
         sql: `INSERT INTO mt_driver
-          (user_type, user_id, on_duty, first_name, last_name, email, phone, username, password,
+          (user_type, user_id, on_duty, first_name, last_name, email, phone, mt_tin_id, username, password,
            team_id, transport_description, status, enabled_push, is_signup)
          VALUES
-          (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        params: () => ['driver', 0, 0, fn, ln, em, ph, user, hash, tid, veh, st, 1, 0],
+          (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        params: () => ['driver', 0, 0, fn, ln, em, ph, tinId, user, hash, tid, veh, st, 1, 0],
       },
       // Minimal-but-still-popular schema (legacy deployments).
       {
         sql: `INSERT INTO mt_driver
-          (username, password, first_name, last_name, email, phone, team_id, transport_description, status, on_duty)
+          (username, password, first_name, last_name, email, phone, mt_tin_id, team_id, transport_description, status, on_duty)
          VALUES
-          (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
-        params: () => [user, hash, fn, ln, em, ph, tid, veh, st],
+          (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+        params: () => [user, hash, fn, ln, em, ph, tinId, tid, veh, st],
       },
       // Absolute minimal (very old schemas).
       {
@@ -5392,11 +5455,12 @@ router.post('/drivers/promote-from-client', express.json(), async (req, res) => 
 router.put('/drivers/:id', express.json(), async (req, res) => {
   const driverId = parseInt(req.params.id, 10);
   if (!Number.isFinite(driverId)) return res.status(400).json({ error: 'Invalid driver id' });
-  const { username, password, first_name, last_name, email, phone, team_id, vehicle, status } = req.body || {};
+  const { username, password, first_name, last_name, email, phone, tin_id, mt_tin_id, team_id, vehicle, status } = req.body || {};
   try {
     const [[existing]] = await pool.query('SELECT driver_id FROM mt_driver WHERE driver_id = ?', [driverId]);
     if (!existing) return res.status(404).json({ error: 'Driver not found' });
-    let sql = 'UPDATE mt_driver SET first_name = ?, last_name = ?, email = ?, phone = ?, team_id = ?, transport_description = ?, status = ?';
+    let sql =
+      'UPDATE mt_driver SET first_name = ?, last_name = ?, email = ?, phone = ?, team_id = ?, transport_description = ?, status = ?';
     const params = [
       (first_name || '').toString().trim() || null,
       (last_name || '').toString().trim() || null,
@@ -5406,6 +5470,12 @@ router.put('/drivers/:id', express.json(), async (req, res) => {
       (vehicle || '').toString().trim() || null,
       (status || 'active').toString().trim()
     ];
+    if (tin_id !== undefined || mt_tin_id !== undefined) {
+      const tinCheck = validateOptionalTinId(tin_id !== undefined ? tin_id : mt_tin_id);
+      if (!tinCheck.ok) return res.status(422).json({ error: tinCheck.error });
+      sql += ', mt_tin_id = ?';
+      params.push(tinCheck.value);
+    }
     if (username != null && (username + '').trim()) {
       sql += ', username = ?';
       params.push((username + '').trim());
@@ -5417,7 +5487,37 @@ router.put('/drivers/:id', express.json(), async (req, res) => {
     }
     sql += ' WHERE driver_id = ?';
     params.push(driverId);
-    await pool.query(sql, params);
+    try {
+      await pool.query(sql, params);
+    } catch (e) {
+      if (e.code === 'ER_BAD_FIELD_ERROR') {
+        // Backward-compatible fallback for older schemas without mt_tin_id.
+        let fallbackSql = 'UPDATE mt_driver SET first_name = ?, last_name = ?, email = ?, phone = ?, team_id = ?, transport_description = ?, status = ?';
+        const fallbackParams = [
+          (first_name || '').toString().trim() || null,
+          (last_name || '').toString().trim() || null,
+          (email || '').toString().trim() || null,
+          (phone || '').toString().trim() || null,
+          team_id != null && team_id !== '' ? parseInt(team_id, 10) : null,
+          (vehicle || '').toString().trim() || null,
+          (status || 'active').toString().trim()
+        ];
+        if (username != null && (username + '').trim()) {
+          fallbackSql += ', username = ?';
+          fallbackParams.push((username + '').trim());
+        }
+        if (password != null && (password + '').trim()) {
+          const hash = await bcrypt.hash(password.toString(), 10);
+          fallbackSql += ', password = ?';
+          fallbackParams.push(hash);
+        }
+        fallbackSql += ' WHERE driver_id = ?';
+        fallbackParams.push(driverId);
+        await pool.query(fallbackSql, fallbackParams);
+      } else {
+        throw e;
+      }
+    }
     return res.json({ ok: true });
   } catch (e) {
     if (e.code === 'ER_NO_SUCH_TABLE' || e.code === 'ER_BAD_FIELD_ERROR') {
